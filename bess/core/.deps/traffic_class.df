@@ -1,0 +1,67 @@
+traffic_class.o: traffic_class.cc traffic_class.h task.h gate.h \
+ commands.h message.h pb/bess_msg.pb.h pb/error.pb.h pb/error.pb.h \
+ pb/module_msg.pb.h pb/util_msg.pb.h pktbatch.h utils/copy.h \
+ utils/common.h utils/common.h utils/extended_priority_queue.h \
+ utils/simd.h utils/time.h opts.h scheduler.h module.h event.h metadata.h \
+ snbuf_layout.h packet_pool.h memory.h packet.h worker.h utils/random.h \
+ utils/time.h packet_avx.h
+
+traffic_class.h:
+
+task.h:
+
+gate.h:
+
+commands.h:
+
+message.h:
+
+pb/bess_msg.pb.h:
+
+pb/error.pb.h:
+
+pb/error.pb.h:
+
+pb/module_msg.pb.h:
+
+pb/util_msg.pb.h:
+
+pktbatch.h:
+
+utils/copy.h:
+
+utils/common.h:
+
+utils/common.h:
+
+utils/extended_priority_queue.h:
+
+utils/simd.h:
+
+utils/time.h:
+
+opts.h:
+
+scheduler.h:
+
+module.h:
+
+event.h:
+
+metadata.h:
+
+snbuf_layout.h:
+
+packet_pool.h:
+
+memory.h:
+
+packet.h:
+
+worker.h:
+
+utils/random.h:
+
+utils/time.h:
+
+packet_avx.h:

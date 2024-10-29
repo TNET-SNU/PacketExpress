@@ -1,0 +1,422 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2021 Intel Corporation
+
+package main
+
+import (
+	"time"
+
+	log "github.com/sirupsen/logrus"
+	"github.com/wmnsk/go-pfcp/ie"
+)
+
+// simMode : Type indicating the desired simulation mode.
+type simMode int
+
+const (
+	simModeDisable simMode = iota
+	simModeCreate
+	simModeModify
+	simModeDelete
+	simModeClear
+	simModeCreateAndContinue
+)
+
+func (s *simMode) String() string {
+	switch *s {
+	case simModeDisable:
+		return "disable"
+	case simModeCreate:
+		return "create"
+	case simModeDelete:
+		return "delete"
+	case simModeClear:
+		return "clear"
+	case simModeCreateAndContinue:
+		return "create_continue"
+	default:
+		return "unknown sim mode"
+	}
+}
+
+func (s *simMode) Set(value string) error {
+	switch value {
+	case "disable":
+		*s = simModeDisable
+	case "create":
+		*s = simModeCreate
+	case "delete":
+		*s = simModeDelete
+	case "clear":
+		*s = simModeClear
+	case "create_continue":
+		*s = simModeCreateAndContinue
+	default:
+		return ErrInvalidArgument("sim mode", value)
+	}
+
+	return nil
+}
+
+func (s simMode) create() bool {
+	return s == simModeCreate || s == simModeCreateAndContinue
+}
+
+func (s simMode) modify() bool {
+	return s == simModeModify
+}
+
+func (s simMode) delete() bool {
+	return s == simModeDelete
+}
+
+func (s simMode) clear() bool {
+	return s == simModeClear
+}
+
+func (s simMode) keepGoing() bool {
+	return s == simModeCreateAndContinue
+}
+
+func (s simMode) enable() bool {
+	return s != simModeDisable
+}
+
+// This rules enable 3 clients <--> 3 servers
+// only for test
+func (u *upf) sim(mode simMode, s *SimModeInfo) {
+	log.Infoln(simulate.String(), "sessions:", s.MaxSessions)
+
+	start := time.Now()
+
+	if mode.clear() {
+		u.sendMsgToUPF(upfMsgTypeClear, PacketForwardingRules{}, PacketForwardingRules{})
+	} else {
+		// ueip := s.StartUEIP
+		// ueip2 := s.StartUEIP2
+		ueip3 := s.StartUEIP3
+		// aupfip := s.StartAUPFIP
+		// aupfip2 := s.StartAUPFIP2
+		aupfip3 := s.StartAUPFIP3
+		n3TEID := hex2int(s.StartN3TEID)
+
+		const ng4tMaxUeRan, ng4tMaxEnbRan, ng4tMaxAupf = 10000000, 80, 80
+
+		// for i := uint32(0); i < s.MaxSessions; i++ {
+		for i := uint32(0); i < 1; i++ {
+			// for i := uint32(0); i < 1; i++ {
+			// NG4T-based formula to calculate enodeB IP address against a given UE IP address
+			// il_trafficgen also uses the same scheme
+			// See SimuCPEnbv4Teid(...) in ngic code for more details
+			// ueOfRan := i % ng4tMaxUeRan
+			// ran := i / ng4tMaxUeRan
+			// enbOfRan := ueOfRan % ng4tMaxEnbRan
+			// enbIdx := ran*ng4tMaxEnbRan + enbOfRan
+			// aupfIdx := i % ng4tMaxAupf
+
+			// create/delete downlink pdr
+			// pdrN6DL_0 := pdr{
+			// 	srcIface:     core,
+			// 	srcIfaceMask: 0xFF,
+			// 	// tunnelIP4Dst: ip2int(u.coreIP),
+			// 	// tunnelIP4DstMask: 0xFFFFFFFF,
+			// 	// tunnelTEID: n9TEID + i,
+			// 	// tunnelTEIDMask: 0xFFFFFFFF,
+			// 	appFilter: applicationFilter{
+			// 		srcIP:     ip2int(aupfip),
+			// 		srcIPMask: 0xFFFFFFFF,
+			// 		dstIP:     ip2int(ueip),
+			// 		dstIPMask: 0xFFFFFFFF,
+			// 		// srcPortRange: portRange{
+			// 		// 	low:  uint16(i & 65535),
+			// 		// 	high: uint16(i & 65535),
+			// 		// },
+			// 		// dstPortRange: portRange{
+			// 		// 	low:  (ueport + j) & 65535,
+			// 		// 	high: (ueport + j) & 65535,
+			// 		// },
+			// 	},
+
+			// 	precedence: 236,
+
+			// 	pdrID:     0,
+			// 	fseID:     uint64(n3TEID + i),
+			// 	ctrID:     0,
+			// 	farID:     n3,
+			// 	qerIDList: []uint32{n6, 1},
+			// 	needDecap: 0,
+			// 	// needDecap: 1,
+			// }
+
+			// // create/delete uplink pdr
+			// pdrN6UL_0 := pdr{
+			// 	srcIface:     access,
+			// 	srcIfaceMask: 0xFF,
+			// 	// tunnelIP4Dst: ip2int(u.accessIP),
+			// 	// tunnelIP4DstMask: 0xFFFFFFFF,
+			// 	// tunnelTEID: n3TEID + i,
+			// 	// tunnelTEIDMask: 0xFFFFFFFF,
+			// 	appFilter: applicationFilter{
+			// 		srcIP:     ip2int(ueip),
+			// 		srcIPMask: 0xFFFFFFFF,
+			// 		dstIP:     ip2int(aupfip),
+			// 		dstIPMask: 0xFFFFFFFF,
+			// 		// srcPortRange: portRange{
+			// 		// 	low:  uint16(i & 65535),
+			// 		// 	high: uint16(i & 65535),
+			// 		// },
+			// 		// dstPortRange: portRange{
+			// 		// 	low:  (ueport + j) & 65535,
+			// 		// 	high: (ueport + j) & 65535,
+			// 		// },
+			// 	},
+
+			// 	precedence: 237,
+
+			// 	pdrID:     1,
+			// 	fseID:     uint64(n3TEID + i),
+			// 	ctrID:     1,
+			// 	farID:     n6,
+			// 	qerIDList: []uint32{n6, 1},
+			// 	// needDecap: 1,
+			// 	needDecap: 0,
+			// }
+
+			// pdrN6DL_1 := pdr{
+			// 	srcIface:     core,
+			// 	srcIfaceMask: 0xFF,
+			// 	// tunnelIP4Dst: ip2int(u.coreIP),
+			// 	// tunnelIP4DstMask: 0xFFFFFFFF,
+			// 	// tunnelTEID:     n9TEID + i,
+			// 	// tunnelTEIDMask: 0xFFFFFFFF,
+			// 	appFilter: applicationFilter{
+			// 		srcIP:     ip2int(aupfip2),
+			// 		srcIPMask: 0xFFFFFFFF,
+			// 		dstIP:     ip2int(ueip2),
+			// 		dstIPMask: 0xFFFFFFFF,
+			// 		// srcPortRange: portRange{
+			// 		// 	low:  uint16(i & 65535),
+			// 		// 	high: uint16(i & 65535),
+			// 		// },
+			// 		// dstPortRange: portRange{
+			// 		// 	low:  (ueport + j) & 65535,
+			// 		// 	high: (ueport + j) & 65535,
+			// 		// },
+			// 	},
+
+			// 	precedence: 238,
+
+			// 	pdrID:     2,
+			// 	fseID:     uint64(n3TEID + i),
+			// 	ctrID:     2,
+			// 	farID:     n3,
+			// 	qerIDList: []uint32{n6, 1},
+			// 	needDecap: 0,
+			// 	// needDecap: 1,
+			// }
+
+			// // create/delete uplink pdr
+			// pdrN6UL_1 := pdr{
+			// 	srcIface:     access,
+			// 	srcIfaceMask: 0xFF,
+			// 	// tunnelIP4Dst: ip2int(u.accessIP),
+			// 	// tunnelIP4DstMask: 0xFFFFFFFF,
+			// 	// tunnelTEID:     n3TEID + i,
+			// 	// tunnelTEIDMask: 0xFFFFFFFF,
+			// 	appFilter: applicationFilter{
+			// 		srcIP:     ip2int(ueip2),
+			// 		srcIPMask: 0xFFFFFFFF,
+			// 		dstIP:     ip2int(aupfip2),
+			// 		dstIPMask: 0xFFFFFFFF,
+			// 		// srcPortRange: portRange{
+			// 		// 	low:  uint16(i & 65535),
+			// 		// 	high: uint16(i & 65535),
+			// 		// },
+			// 		// dstPortRange: portRange{
+			// 		// 	low:  (ueport + j) & 65535,
+			// 		// 	high: (ueport + j) & 65535,
+			// 		// },
+			// 	},
+
+			// 	precedence: 239,
+
+			// 	pdrID:     3,
+			// 	fseID:     uint64(n3TEID + i),
+			// 	ctrID:     3,
+			// 	farID:     n6,
+			// 	qerIDList: []uint32{n6, 1},
+			// 	// needDecap: 1,
+			// 	needDecap: 0,
+			// }
+
+			pdrN6DL_2 := pdr{
+				srcIface:     core,
+				srcIfaceMask: 0xFF,
+				// tunnelIP4Dst: ip2int(u.coreIP),
+				// tunnelIP4DstMask: 0xFFFFFFFF,
+				// tunnelTEID:     n9TEID + i,
+				// tunnelTEIDMask: 0xFFFFFFFF,
+				appFilter: applicationFilter{
+					srcIP:     ip2int(aupfip3),
+					srcIPMask: 0xFFFFFFFF,
+					dstIP:     ip2int(ueip3),
+					dstIPMask: 0xFFFFFFFF,
+					// srcPortRange: portRange{
+					// 	low:  uint16(i & 65535),
+					// 	high: uint16(i & 65535),
+					// },
+					// dstPortRange: portRange{
+					// 	low:  (ueport + j) & 65535,
+					// 	high: (ueport + j) & 65535,
+					// },
+				},
+
+				precedence: 240,
+
+				pdrID:     0,
+				fseID:     uint64(n3TEID + i),
+				ctrID:     0,
+				farID:     n3,
+				qerIDList: []uint32{n6, 1},
+				needDecap: 0,
+				// needDecap: 1,
+			}
+
+			// create/delete uplink pdr
+			pdrN6UL_2 := pdr{
+				srcIface:     access,
+				srcIfaceMask: 0xFF,
+				// tunnelIP4Dst: ip2int(u.accessIP),
+				// tunnelIP4DstMask: 0xFFFFFFFF,
+				// tunnelTEID:     n3TEID + i,
+				// tunnelTEIDMask: 0xFFFFFFFF,
+				appFilter: applicationFilter{
+					srcIP:     ip2int(ueip3),
+					srcIPMask: 0xFFFFFFFF,
+					dstIP:     ip2int(aupfip3),
+					dstIPMask: 0xFFFFFFFF,
+					// srcPortRange: portRange{
+					// 	low:  uint16(i & 65535),
+					// 	high: uint16(i & 65535),
+					// },
+					// dstPortRange: portRange{
+					// 	low:  (ueport + j) & 65535,
+					// 	high: (ueport + j) & 65535,
+					// },
+				},
+
+				precedence: 241,
+
+				pdrID:     1,
+				fseID:     uint64(n3TEID + i),
+				ctrID:     1,
+				farID:     n6,
+				qerIDList: []uint32{n6, 1},
+				// needDecap: 1,
+				needDecap: 0,
+			}
+
+			pdrs := []pdr{
+				// pdrN6DL_0, pdrN6UL_0,
+				// pdrN6DL_1, pdrN6UL_1,
+				pdrN6DL_2, pdrN6UL_2,
+			}
+
+			// create/delete downlink far
+			farDown := far{
+				farID: n3,
+				fseID: uint64(n3TEID + i),
+
+				applyAction: ActionForward,
+				dstIntf:     ie.DstInterfaceAccess,
+				// tunnelType:   0x0, // Access
+				// tunnelIP4Src: ip2int(u.accessIP),
+				// tunnelIP4Dst: ip2int(enbip) + enbIdx,
+				// tunnelTEID:   n3TEID + i,
+				// tunnelPort:   tunnelGTPUPort,
+			}
+
+			// create/delete uplink far
+			farN6Up := far{
+				farID: n6,
+				fseID: uint64(n3TEID + i),
+
+				applyAction: ActionForward,
+				dstIntf:     ie.DstInterfaceCore,
+			}
+
+			// farN9Up := far{
+			// 	farID: n9,
+			// 	fseID: uint64(n3TEID + i),
+
+			// 	applyAction:  ActionForward,
+			// 	dstIntf:      ie.DstInterfaceCore,
+			// 	tunnelType:   0x1, // Core
+			// 	tunnelIP4Src: ip2int(u.coreIP),
+			// 	tunnelIP4Dst: ip2int(aupfip) + aupfIdx,
+			// 	tunnelTEID:   n9TEID + i,
+			// 	tunnelPort:   tunnelGTPUPort,
+			// }
+
+			// fars := []far{farDown, farN6Up, farN9Up}
+			// fars := []far{farDown, farN9Up}
+			fars := []far{farDown, farN6Up}
+
+			// create/delete uplink qer
+			qerN6 := qer{
+				qerID: n6,
+				fseID: uint64(n3TEID + i),
+				qfi:   9,
+				ulGbr: 200000000,
+				ulMbr: 200000000,
+				dlGbr: 200000000,
+				dlMbr: 200000000,
+			}
+
+			// qerN9 := qer{
+			// 	qerID: n9,
+			// 	fseID: uint64(n3TEID + i),
+			// 	qfi:   8,
+			// 	ulGbr: 5000000,
+			// 	ulMbr: 6000000,
+			// 	dlGbr: 7000000,
+			// 	dlMbr: 9000000,
+			// }
+
+			// qers := []qer{qerN6, qerN9}
+			// qers := []qer{qerN9}
+			qers := []qer{qerN6}
+
+			// create/delete session qers
+			sessionQer := qer{
+				qerID:    1,
+				fseID:    uint64(n3TEID + i),
+				qosLevel: SessionQos,
+				qfi:      0,
+				ulGbr:    200000000,
+				ulMbr:    200000000,
+				dlGbr:    200000000,
+				dlMbr:    200000000,
+			}
+
+			qers = append(qers, sessionQer)
+
+			allRules := PacketForwardingRules{
+				pdrs: pdrs,
+				fars: fars,
+				qers: qers,
+			}
+
+			if mode.create() {
+				u.sendMsgToUPF(upfMsgTypeAdd, allRules, PacketForwardingRules{})
+			} else if mode.modify() {
+				u.sendMsgToUPF(upfMsgTypeMod, allRules, allRules)
+			} else if mode.delete() {
+				u.sendMsgToUPF(upfMsgTypeDel, allRules, PacketForwardingRules{})
+			} else {
+				log.Fatalln("Unsupported method", mode)
+			}
+		}
+	}
+	log.Infoln("Sessions/s:", float64(s.MaxSessions)/time.Since(start).Seconds())
+}

@@ -1,0 +1,8 @@
+utils/pcap_handle.o: utils/pcap_handle.cc utils/pcap_handle.h \
+ utils/common.h utils/pcap.h
+
+utils/pcap_handle.h:
+
+utils/common.h:
+
+utils/pcap.h:

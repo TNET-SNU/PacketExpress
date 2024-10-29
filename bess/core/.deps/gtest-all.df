@@ -1,0 +1,1 @@
+gtest-all.o: /usr/src/gtest/src/gtest-all.cc

@@ -1,0 +1,10 @@
+memory_test.o: memory_test.cc memory.h utils/random.h utils/time.h \
+ utils/time.h
+
+memory.h:
+
+utils/random.h:
+
+utils/time.h:
+
+utils/time.h:

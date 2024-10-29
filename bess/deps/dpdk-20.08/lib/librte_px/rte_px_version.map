@@ -1,0 +1,42 @@
+DPDK_20.0 {
+	global:
+
+	default_eth_conf;
+	px_eth_conf;
+	px_init;
+	px_deinit;
+	px_add_rule;
+	px_del_rule;
+	px_unlink;
+	px_gro_configure;
+	px_eth_dev_configure;
+	px_eth_stats_get;
+	px_update_stats;
+	px_print_stats;
+	px_stat_cb;
+	px_eth_rx_queue_setup;
+	px_eth_tx_queue_setup;
+	px_eth_rx_burst;
+	px_eth_rx_burst_stall;
+	px_eth_tx_burst;
+	px_pktmbuf_free;
+	px_pktmbuf_free_bulk;
+	px_parse_batch;
+	px_setup_tso_burst;
+	reflect_4tuple;
+
+	hp_eth_dev_configure;
+	hp_queue_setup;
+	hp_context_init;
+	hp_context_destroy;
+	hp_create_rule;
+	hp_delete_rule;
+	hp_stat_rule;
+	hp_nic_cache_stat;
+	hp_host_hash_stat;
+	
+	nm_eth_conf;
+	nm_eth_rx_queue_setup;
+	
+	local: *;
+};

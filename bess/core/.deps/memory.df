@@ -1,0 +1,7 @@
+memory.o: memory.cc memory.h utils/common.h utils/format.h
+
+memory.h:
+
+utils/common.h:
+
+utils/format.h:

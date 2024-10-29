@@ -1,0 +1,5 @@
+modules/sequential_update.o: \
+ /home/junghan/Samsung-Research---2nd-Result/bess/plugins/sample_plugin/modules/sequential_update.cc \
+ /home/junghan/Samsung-Research---2nd-Result/bess/plugins/sample_plugin/modules/sequential_update.h
+
+/home/junghan/Samsung-Research---2nd-Result/bess/plugins/sample_plugin/modules/sequential_update.h:

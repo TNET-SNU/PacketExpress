@@ -1,0 +1,1148 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2021 Intel Corporation
+
+package main
+
+import (
+	"time"
+
+	log "github.com/sirupsen/logrus"
+	"github.com/wmnsk/go-pfcp/ie"
+)
+
+// simMode : Type indicating the desired simulation mode.
+type simMode int
+
+const (
+	simModeDisable simMode = iota
+	simModeCreate
+	simModeModify
+	simModeDelete
+	simModeClear
+	simModeCreateAndContinue
+)
+
+func (s *simMode) String() string {
+	switch *s {
+	case simModeDisable:
+		return "disable"
+	case simModeCreate:
+		return "create"
+	case simModeDelete:
+		return "delete"
+	case simModeClear:
+		return "clear"
+	case simModeCreateAndContinue:
+		return "create_continue"
+	default:
+		return "unknown sim mode"
+	}
+}
+
+func (s *simMode) Set(value string) error {
+	switch value {
+	case "disable":
+		*s = simModeDisable
+	case "create":
+		*s = simModeCreate
+	case "delete":
+		*s = simModeDelete
+	case "clear":
+		*s = simModeClear
+	case "create_continue":
+		*s = simModeCreateAndContinue
+	default:
+		return ErrInvalidArgument("sim mode", value)
+	}
+
+	return nil
+}
+
+func (s simMode) create() bool {
+	return s == simModeCreate || s == simModeCreateAndContinue
+}
+
+func (s simMode) modify() bool {
+	return s == simModeModify
+}
+
+func (s simMode) delete() bool {
+	return s == simModeDelete
+}
+
+func (s simMode) clear() bool {
+	return s == simModeClear
+}
+
+func (s simMode) keepGoing() bool {
+	return s == simModeCreateAndContinue
+}
+
+func (s simMode) enable() bool {
+	return s != simModeDisable
+}
+
+// This rules enable 2 clients <--> 2 servers
+// but too heavy workload
+func (u *upf) sim(mode simMode, s *SimModeInfo) {
+	log.Infoln(simulate.String(), "sessions:", s.MaxSessions)
+
+	start := time.Now()
+
+	if mode.clear() {
+		u.sendMsgToUPF(upfMsgTypeClear, PacketForwardingRules{}, PacketForwardingRules{})
+	} else {
+		// u.sendMsgToUPF(upfMsgTypePause, PacketForwardingRules{}, PacketForwardingRules{})
+		ueip := s.StartUEIP
+		ueip2 := s.StartUEIP2
+		ueip3 := s.StartUEIP3
+		ueip4 := s.StartUEIP4
+		// ueport := s.StartUEPORT
+		// enbip := s.StartENBIP
+		aupfip := s.StartAUPFIP
+		aupfip2 := s.StartAUPFIP2
+		aupfip3 := s.StartAUPFIP3
+		aupfip4 := s.StartAUPFIP4
+		// aupfport := s.StartAUPFPORT
+		// n9appip := s.N9AppIP
+		// n9appip_dpi := s.N6AppIP
+		n3TEID := hex2int(s.StartN3TEID)
+		// n3TEID_dpi := hex2int(s.StartN3TEID_DPI)
+		// n9TEID := hex2int(s.StartN9TEID)
+		// n9TEID_dpi := hex2int(s.StartN9TEID_DPI)
+
+		const ng4tMaxUeRan, ng4tMaxEnbRan, ng4tMaxAupf = 10000000, 80, 80
+
+		for i := uint32(0); i < s.MaxSessions; i++ {
+			// for i := uint32(0); i < 1; i++ {
+			// NG4T-based formula to calculate enodeB IP address against a given UE IP address
+			// il_trafficgen also uses the same scheme
+			// See SimuCPEnbv4Teid(...) in ngic code for more details
+			// ueOfRan := i % ng4tMaxUeRan
+			// ran := i / ng4tMaxUeRan
+			// enbOfRan := ueOfRan % ng4tMaxEnbRan
+			// enbIdx := ran*ng4tMaxEnbRan + enbOfRan
+			// aupfIdx := i % ng4tMaxAupf
+
+			// create/delete downlink pdr
+			pdrTuple0 := pdr{
+				srcIface:         0xFF,
+				srcIfaceMask:     0xFF,
+				tunnelIP4Dst:     0xFFFFFFFF,
+				tunnelIP4DstMask: 0xFFFFFFFF,
+				tunnelTEID:       0xFFFFFFFF,
+				tunnelTEIDMask:   0xFFFFFFFF,
+				appFilter: applicationFilter{
+					srcIP:     i,
+					srcIPMask: 0xFFFFFFFF,
+					dstIP:     i,
+					dstIPMask: 0xFFFFFFFF,
+					srcPortRange: portRange{
+						low:  uint16(i & 65535),
+						high: uint16(i & 65535),
+					},
+					dstPortRange: portRange{
+						low:  uint16(i & 65535),
+						high: uint16(i & 65535),
+					},
+				},
+
+				precedence: 255,
+
+				pdrID:     0xFFFFFFFF,
+				fseID:     0xFFFFFFFFFFFFFFFF,
+				ctrID:     0xFFFFFFFF,
+				farID:     0xFFFFFFFF,
+				qerIDList: []uint32{0xFFFFFFFF, 0xFFFFFFFF},
+				needDecap: 0x00,
+			}
+
+			pdrTuple1 := pdr{
+				srcIface:         0xFF,
+				srcIfaceMask:     0xFF,
+				tunnelIP4Dst:     0xFFFFFFFF,
+				tunnelIP4DstMask: 0xFFFFFFFF,
+				tunnelTEID:       0xFFFFFFFF,
+				tunnelTEIDMask:   0xFFFFFFFF,
+				appFilter: applicationFilter{
+					srcIP:     i,
+					srcIPMask: 0xFFFFFFFF,
+					dstIP:     i,
+					dstIPMask: 0xFFFFFFFF,
+					srcPortRange: portRange{
+						low:  uint16(i & 65535),
+						high: uint16(i & 65535),
+					},
+					// dstPortRange: portRange{
+					// 	low:  0xFFFF,
+					// 	high: 0xFFFF,
+					// },
+				},
+
+				precedence: 254,
+
+				pdrID:     0xFFFFFFFF,
+				fseID:     0xFFFFFFFFFFFFFFFF,
+				ctrID:     0xFFFFFFFF,
+				farID:     0xFFFFFFFF,
+				qerIDList: []uint32{0xFFFFFFFF, 0xFFFFFFFF},
+				needDecap: 0x00,
+			}
+
+			pdrTuple2 := pdr{
+				srcIface:         0xFF,
+				srcIfaceMask:     0xFF,
+				tunnelIP4Dst:     0xFFFFFFFF,
+				tunnelIP4DstMask: 0xFFFFFFFF,
+				tunnelTEID:       0xFFFFFFFF,
+				tunnelTEIDMask:   0xFFFFFFFF,
+				appFilter: applicationFilter{
+					srcIP:     i,
+					srcIPMask: 0xFFFFFFFF,
+					dstIP:     i,
+					dstIPMask: 0xFFFFFFFF,
+					// srcPortRange: portRange{
+					// 	low:  0xFFFF,
+					// 	high: 0xFFFF,
+					// },
+					dstPortRange: portRange{
+						low:  uint16(i & 65535),
+						high: uint16(i & 65535),
+					},
+				},
+
+				precedence: 253,
+
+				pdrID:     0xFFFFFFFF,
+				fseID:     0xFFFFFFFFFFFFFFFF,
+				ctrID:     0xFFFFFFFF,
+				farID:     0xFFFFFFFF,
+				qerIDList: []uint32{0xFFFFFFFF, 0xFFFFFFFF},
+				needDecap: 0x00,
+			}
+
+			pdrTuple3 := pdr{
+				srcIface:         0xFF,
+				srcIfaceMask:     0xFF,
+				tunnelIP4Dst:     0xFFFFFFFF,
+				tunnelIP4DstMask: 0xFFFFFFFF,
+				tunnelTEID:       0xFFFFFFFF,
+				tunnelTEIDMask:   0xFFFFFFFF,
+				appFilter: applicationFilter{
+					srcIP:     i,
+					srcIPMask: 0xFFFFFFFF,
+					// dstIP:     0xFFFFFFFF,
+					// dstIPMask: 0xFFFFFFFF,
+					srcPortRange: portRange{
+						low:  uint16(i & 65535),
+						high: uint16(i & 65535),
+					},
+					dstPortRange: portRange{
+						low:  uint16(i & 65535),
+						high: uint16(i & 65535),
+					},
+				},
+
+				precedence: 252,
+
+				pdrID:     0xFFFFFFFF,
+				fseID:     0xFFFFFFFFFFFFFFFF,
+				ctrID:     0xFFFFFFFF,
+				farID:     0xFFFFFFFF,
+				qerIDList: []uint32{0xFFFFFFFF, 0xFFFFFFFF},
+				needDecap: 0x00,
+			}
+
+			pdrTuple4 := pdr{
+				srcIface:         0xFF,
+				srcIfaceMask:     0xFF,
+				tunnelIP4Dst:     0xFFFFFFFF,
+				tunnelIP4DstMask: 0xFFFFFFFF,
+				tunnelTEID:       0xFFFFFFFF,
+				tunnelTEIDMask:   0xFFFFFFFF,
+				appFilter: applicationFilter{
+					// srcIP:     0xFFFFFFFF,
+					// srcIPMask: 0xFFFFFFFF,
+					dstIP:     i,
+					dstIPMask: 0xFFFFFFFF,
+					srcPortRange: portRange{
+						low:  uint16(i & 65535),
+						high: uint16(i & 65535),
+					},
+					dstPortRange: portRange{
+						low:  uint16(i & 65535),
+						high: uint16(i & 65535),
+					},
+				},
+
+				precedence: 251,
+
+				pdrID:     0xFFFFFFFF,
+				fseID:     0xFFFFFFFFFFFFFFFF,
+				ctrID:     0xFFFFFFFF,
+				farID:     0xFFFFFFFF,
+				qerIDList: []uint32{0xFFFFFFFF, 0xFFFFFFFF},
+				needDecap: 0x00,
+			}
+
+			pdrTuple5 := pdr{
+				srcIface:         0xFF,
+				srcIfaceMask:     0xFF,
+				tunnelIP4Dst:     0xFFFFFFFF,
+				tunnelIP4DstMask: 0xFFFFFFFF,
+				// tunnelTEID: 0xFFFFFFFF,
+				// tunnelTEIDMask: 0xFFFFFFFF,
+				appFilter: applicationFilter{
+					srcIP:     i,
+					srcIPMask: 0xFFFFFFFF,
+					dstIP:     i,
+					dstIPMask: 0xFFFFFFFF,
+					srcPortRange: portRange{
+						low:  uint16(i & 65535),
+						high: uint16(i & 65535),
+					},
+					dstPortRange: portRange{
+						low:  uint16(i & 65535),
+						high: uint16(i & 65535),
+					},
+				},
+
+				precedence: 250,
+
+				pdrID:     0xFFFFFFFF,
+				fseID:     0xFFFFFFFFFFFFFFFF,
+				ctrID:     0xFFFFFFFF,
+				farID:     0xFFFFFFFF,
+				qerIDList: []uint32{0xFFFFFFFF, 0xFFFFFFFF},
+				needDecap: 0x00,
+			}
+
+			pdrTuple6 := pdr{
+				srcIface:     0xFF,
+				srcIfaceMask: 0xFF,
+				// tunnelIP4Dst: 0xFFFFFFFF,
+				// tunnelIP4DstMask: 0xFFFFFFFF,
+				tunnelTEID:     0xFFFFFFFF,
+				tunnelTEIDMask: 0xFFFFFFFF,
+				appFilter: applicationFilter{
+					srcIP:     i,
+					srcIPMask: 0xFFFFFFFF,
+					dstIP:     i,
+					dstIPMask: 0xFFFFFFFF,
+					srcPortRange: portRange{
+						low:  uint16(i & 65535),
+						high: uint16(i & 65535),
+					},
+					dstPortRange: portRange{
+						low:  uint16(i & 65535),
+						high: uint16(i & 65535),
+					},
+				},
+
+				precedence: 249,
+
+				pdrID:     0xFFFFFFFF,
+				fseID:     0xFFFFFFFFFFFFFFFF,
+				ctrID:     0xFFFFFFFF,
+				farID:     0xFFFFFFFF,
+				qerIDList: []uint32{0xFFFFFFFF, 0xFFFFFFFF},
+				needDecap: 0x00,
+			}
+
+			pdrTuple7 := pdr{
+				srcIface:         0xFF,
+				srcIfaceMask:     0xFF,
+				tunnelIP4Dst:     0xFFFFFFFF,
+				tunnelIP4DstMask: 0xFFFFFFFF,
+				tunnelTEID:       0xFFFFFFFF,
+				tunnelTEIDMask:   0xFFFFFFFF,
+				appFilter: applicationFilter{
+					srcIP:     i,
+					srcIPMask: 0xFFFFFFFF,
+					// dstIP:     i,
+					// dstIPMask: 0xFFFFFFFF,
+					srcPortRange: portRange{
+						low:  uint16(i & 65535),
+						high: uint16(i & 65535),
+					},
+					// dstPortRange: portRange{
+					// 	low:  uint16(i & 65535),
+					// 	high: uint16(i & 65535),
+					// },
+				},
+
+				precedence: 248,
+
+				pdrID:     0xFFFFFFFF,
+				fseID:     0xFFFFFFFFFFFFFFFF,
+				ctrID:     0xFFFFFFFF,
+				farID:     0xFFFFFFFF,
+				qerIDList: []uint32{0xFFFFFFFF, 0xFFFFFFFF},
+				needDecap: 0x00,
+			}
+
+			pdrTuple8 := pdr{
+				srcIface:         0xFF,
+				srcIfaceMask:     0xFF,
+				tunnelIP4Dst:     0xFFFFFFFF,
+				tunnelIP4DstMask: 0xFFFFFFFF,
+				tunnelTEID:       0xFFFFFFFF,
+				tunnelTEIDMask:   0xFFFFFFFF,
+				appFilter: applicationFilter{
+					// srcIP:     i,
+					// srcIPMask: 0xFFFFFFFF,
+					dstIP:     i,
+					dstIPMask: 0xFFFFFFFF,
+					srcPortRange: portRange{
+						low:  uint16(i & 65535),
+						high: uint16(i & 65535),
+					},
+					// dstPortRange: portRange{
+					// 	low:  0xFFFF,
+					// 	high: 0xFFFF,
+					// },
+				},
+
+				precedence: 247,
+
+				pdrID:     0xFFFFFFFF,
+				fseID:     0xFFFFFFFFFFFFFFFF,
+				ctrID:     0xFFFFFFFF,
+				farID:     0xFFFFFFFF,
+				qerIDList: []uint32{0xFFFFFFFF, 0xFFFFFFFF},
+				needDecap: 0x00,
+			}
+
+			pdrTuple9 := pdr{
+				srcIface:     0xFF,
+				srcIfaceMask: 0xFF,
+				// tunnelIP4Dst:     0xFFFFFFFF,
+				// tunnelIP4DstMask: 0xFFFFFFFF,
+				// tunnelTEID:       0xFFFFFFFF,
+				// tunnelTEIDMask:   0xFFFFFFFF,
+				appFilter: applicationFilter{
+					srcIP:     i,
+					srcIPMask: 0xFFFFFFFF,
+					dstIP:     i,
+					dstIPMask: 0xFFFFFFFF,
+					srcPortRange: portRange{
+						low:  uint16(i & 65535),
+						high: uint16(i & 65535),
+					},
+					// dstPortRange: portRange{
+					// 	low:  0xFFFF,
+					// 	high: 0xFFFF,
+					// },
+				},
+
+				precedence: 246,
+
+				pdrID:     0xFFFFFFFF,
+				fseID:     0xFFFFFFFFFFFFFFFF,
+				ctrID:     0xFFFFFFFF,
+				farID:     0xFFFFFFFF,
+				qerIDList: []uint32{0xFFFFFFFF, 0xFFFFFFFF},
+				needDecap: 0x00,
+			}
+
+			// pdrTuple10 := pdr{
+			// 	srcIface:         0xFF,
+			// 	srcIfaceMask:     0xFF,
+			// 	tunnelIP4Dst:     i,
+			// 	tunnelIP4DstMask: 0xFFFFFFFF,
+			// 	tunnelTEID:       0xFFFFFFFF,
+			// 	tunnelTEIDMask:   0xFFFFFFFF,
+			// 	appFilter: applicationFilter{
+			// 		srcIP:     i,
+			// 		srcIPMask: 0xFFFFFFFF,
+			// 		dstIP:     i,
+			// 		dstIPMask: 0xFFFFFFFF,
+			// 		srcPortRange: portRange{
+			// 			low:  uint16(i & 65535),
+			// 			high: uint16(i & 65535),
+			// 		},
+			// 		dstPortRange: portRange{
+			// 			low:  uint16(i & 65535),
+			// 			high: uint16(i & 65535),
+			// 		},
+			// 	},
+
+			// 	precedence: 245,
+
+			// 	pdrID:     0xFFFFFFFF,
+			// 	fseID:     0xFFFFFFFFFFFFFFFF,
+			// 	ctrID:     0xFFFFFFFF,
+			// 	farID:     0xFFFFFFFF,
+			// 	qerIDList: []uint32{0xFFFFFFFF, 0xFFFFFFFF},
+			// 	needDecap: 0x00,
+			// }
+
+			// pdrTuple11 := pdr{
+			// 	srcIface:         0xFF,
+			// 	srcIfaceMask:     0xFF,
+			// 	tunnelIP4Dst:     0xFFFFFFFF,
+			// 	tunnelIP4DstMask: 0xFFFFFFFF,
+			// 	tunnelTEID:       i,
+			// 	tunnelTEIDMask:   0xFFFFFFFF,
+			// 	appFilter: applicationFilter{
+			// 		srcIP:     i,
+			// 		srcIPMask: 0xFFFFFFFF,
+			// 		dstIP:     i,
+			// 		dstIPMask: 0xFFFFFFFF,
+			// 		srcPortRange: portRange{
+			// 			low:  uint16(i & 65535),
+			// 			high: uint16(i & 65535),
+			// 		},
+			// 		dstPortRange: portRange{
+			// 			low:  uint16(i & 65535),
+			// 			high: uint16(i & 65535),
+			// 		},
+			// 	},
+
+			// 	precedence: 244,
+
+			// 	pdrID:     0xFFFFFFFF,
+			// 	fseID:     0xFFFFFFFFFFFFFFFF,
+			// 	ctrID:     0xFFFFFFFF,
+			// 	farID:     0xFFFFFFFF,
+			// 	qerIDList: []uint32{0xFFFFFFFF, 0xFFFFFFFF},
+			// 	needDecap: 0x00,
+			// }
+
+			// pdrTuple12 := pdr{
+			// 	srcIface:         0xFF,
+			// 	srcIfaceMask:     0xFF,
+			// 	tunnelIP4Dst:     0xFFFFFFFF,
+			// 	tunnelIP4DstMask: 0xFFFFFFFF,
+			// 	tunnelTEID:       0xFFFFFFFF,
+			// 	tunnelTEIDMask:   0xFFFFFFFF,
+			// 	appFilter: applicationFilter{
+			// 		// srcIP:     i,
+			// 		// srcIPMask: 0xFFFFFFFF,
+			// 		dstIP:     i,
+			// 		dstIPMask: 0xFFFFFFFF,
+			// 		// srcPortRange: portRange{
+			// 		// 	low:  uint16(i & 65535),
+			// 		// 	high: uint16(i & 65535),
+			// 		// },
+			// 		dstPortRange: portRange{
+			// 			low:  uint16(i & 65535),
+			// 			high: uint16(i & 65535),
+			// 		},
+			// 	},
+
+			// 	precedence: 243,
+
+			// 	pdrID:     0xFFFFFFFF,
+			// 	fseID:     0xFFFFFFFFFFFFFFFF,
+			// 	ctrID:     0xFFFFFFFF,
+			// 	farID:     0xFFFFFFFF,
+			// 	qerIDList: []uint32{0xFFFFFFFF, 0xFFFFFFFF},
+			// 	needDecap: 0x00,
+			// }
+			// pdrTuple13 := pdr{
+			// 	srcIface:         0xFF,
+			// 	srcIfaceMask:     0xFF,
+			// 	tunnelIP4Dst:     0xFFFFFFFF,
+			// 	tunnelIP4DstMask: 0xFFFFFFFF,
+			// 	// tunnelTEID:       0xFFFFFFFF,
+			// 	// tunnelTEIDMask:   0xFFFFFFFF,
+			// 	appFilter: applicationFilter{
+			// 		srcIP:     i,
+			// 		srcIPMask: 0xFFFFFFFF,
+			// 		dstIP:     i,
+			// 		dstIPMask: 0xFFFFFFFF,
+			// 		// srcPortRange: portRange{
+			// 		// 	low:  0xFFFF,
+			// 		// 	high: 0xFFFF,
+			// 		// },
+			// 		dstPortRange: portRange{
+			// 			low:  uint16(i & 65535),
+			// 			high: uint16(i & 65535),
+			// 		},
+			// 	},
+
+			// 	precedence: 242,
+
+			// 	pdrID:     0xFFFFFFFF,
+			// 	fseID:     0xFFFFFFFFFFFFFFFF,
+			// 	ctrID:     0xFFFFFFFF,
+			// 	farID:     0xFFFFFFFF,
+			// 	qerIDList: []uint32{0xFFFFFFFF, 0xFFFFFFFF},
+			// 	needDecap: 0x00,
+			// }
+			// pdrTuple14 := pdr{
+			// 	srcIface:     0xFF,
+			// 	srcIfaceMask: 0xFF,
+			// 	// tunnelIP4Dst:     0xFFFFFFFF,
+			// 	// tunnelIP4DstMask: 0xFFFFFFFF,
+			// 	tunnelTEID:     0xFFFFFFFF,
+			// 	tunnelTEIDMask: 0xFFFFFFFF,
+			// 	appFilter: applicationFilter{
+			// 		srcIP:     i,
+			// 		srcIPMask: 0xFFFFFFFF,
+			// 		dstIP:     i,
+			// 		dstIPMask: 0xFFFFFFFF,
+			// 		// srcPortRange: portRange{
+			// 		// 	low:  0xFFFF,
+			// 		// 	high: 0xFFFF,
+			// 		// },
+			// 		dstPortRange: portRange{
+			// 			low:  uint16(i & 65535),
+			// 			high: uint16(i & 65535),
+			// 		},
+			// 	},
+
+			// 	precedence: 241,
+
+			// 	pdrID:     0xFFFFFFFF,
+			// 	fseID:     0xFFFFFFFFFFFFFFFF,
+			// 	ctrID:     0xFFFFFFFF,
+			// 	farID:     0xFFFFFFFF,
+			// 	qerIDList: []uint32{0xFFFFFFFF, 0xFFFFFFFF},
+			// 	needDecap: 0x00,
+			// }
+			// pdrTuple15 := pdr{
+			// 	srcIface:     0xFF,
+			// 	srcIfaceMask: 0xFF,
+			// 	// tunnelIP4Dst:     0xFFFFFFFF,
+			// 	// tunnelIP4DstMask: 0xFFFFFFFF,
+			// 	// tunnelTEID:       0xFFFFFFFF,
+			// 	// tunnelTEIDMask:   0xFFFFFFFF,
+			// 	appFilter: applicationFilter{
+			// 		srcIP:     i,
+			// 		srcIPMask: 0xFFFFFFFF,
+			// 		dstIP:     i,
+			// 		dstIPMask: 0xFFFFFFFF,
+			// 		srcPortRange: portRange{
+			// 			low:  uint16(i & 65535),
+			// 			high: uint16(i & 65535),
+			// 		},
+			// 		// dstPortRange: portRange{
+			// 		// 	low:  uint16(i & 65535),
+			// 		// 	high: uint16(i & 65535),
+			// 		// },
+			// 	},
+
+			// 	precedence: 240,
+
+			// 	pdrID:     0xFFFFFFFF,
+			// 	fseID:     0xFFFFFFFFFFFFFFFF,
+			// 	ctrID:     0xFFFFFFFF,
+			// 	farID:     0xFFFFFFFF,
+			// 	qerIDList: []uint32{0xFFFFFFFF, 0xFFFFFFFF},
+			// 	needDecap: 0x00,
+			// }
+
+			pdrDL0 := pdr{
+				srcIface:     core,
+				srcIfaceMask: 0xFF,
+				// tunnelIP4Dst: ip2int(u.coreIP),
+				// tunnelIP4DstMask: 0xFFFFFFFF,
+				// tunnelTEID: n9TEID + i,
+				// tunnelTEIDMask: 0xFFFFFFFF,
+				appFilter: applicationFilter{
+					srcIP:     ip2int(aupfip) + (i & 0xFFFF0000),
+					srcIPMask: 0xFFFFFFFF,
+					dstIP:     ip2int(ueip) + (i & 0xFFFF0000),
+					dstIPMask: 0xFFFFFFFF,
+					srcPortRange: portRange{
+						low:  uint16(i & 0xFFFF),
+						high: uint16(i & 0xFFFF),
+					},
+					// dstPortRange: portRange{
+					// 	low:  (ueport + j) & 0xFFFF,
+					// 	high: (ueport + j) & 0xFFFF,
+					// },
+				},
+
+				precedence: 246,
+
+				pdrID:     0,
+				fseID:     uint64(n3TEID + i),
+				ctrID:     8 * i,
+				farID:     dl0,
+				qerIDList: []uint32{n6, 1},
+				needDecap: 0,
+				// needDecap: 1,
+			}
+
+			// create/delete uplink pdr
+			pdrUL0 := pdr{
+				srcIface:     access,
+				srcIfaceMask: 0xFF,
+				// tunnelIP4Dst: ip2int(u.accessIP),
+				// tunnelIP4DstMask: 0xFFFFFFFF,
+				// tunnelTEID: n3TEID + i,
+				// tunnelTEIDMask: 0xFFFFFFFF,
+				appFilter: applicationFilter{
+					srcIP:     ip2int(ueip) + (i & 0xFFFF0000),
+					srcIPMask: 0xFFFFFFFF,
+					dstIP:     ip2int(aupfip) + (i & 0xFFFF0000),
+					dstIPMask: 0xFFFFFFFF,
+					srcPortRange: portRange{
+						low:  uint16(i & 0xFFFF),
+						high: uint16(i & 0xFFFF),
+					},
+					// dstPortRange: portRange{
+					// 	low:  (ueport + j) & 0xFFFF,
+					// 	high: (ueport + j) & 0xFFFF,
+					// },
+				},
+
+				precedence: 246,
+
+				pdrID:     1,
+				fseID:     uint64(n3TEID + i),
+				ctrID:     8*i + 1,
+				farID:     ul0,
+				qerIDList: []uint32{n6, 1},
+				// needDecap: 1,
+				needDecap: 0,
+			}
+
+			pdrDL1 := pdr{
+				srcIface:     core,
+				srcIfaceMask: 0xFF,
+				// tunnelIP4Dst: ip2int(u.accessIP),
+				// tunnelIP4DstMask: 0xFFFFFFFF,
+				// tunnelTEID: n3TEID + i,
+				// tunnelTEIDMask: 0xFFFFFFFF,
+				appFilter: applicationFilter{
+					srcIP:     ip2int(aupfip2) + (i & 0xFFFF0000),
+					srcIPMask: 0xFFFFFFFF,
+					dstIP:     ip2int(ueip2) + (i & 0xFFFF0000),
+					dstIPMask: 0xFFFFFFFF,
+					srcPortRange: portRange{
+						low:  uint16(i & 0xFFFF),
+						high: uint16(i & 0xFFFF),
+					},
+					// dstPortRange: portRange{
+					// 	low:  (ueport + j) & 0xFFFF,
+					// 	high: (ueport + j) & 0xFFFF,
+					// },
+				},
+
+				precedence: 246,
+
+				pdrID:     0,
+				fseID:     uint64(n3TEID + i),
+				ctrID:     8*i + 2,
+				farID:     dl1,
+				qerIDList: []uint32{n6, 1},
+				needDecap: 0,
+				// needDecap: 1,
+			}
+
+			// create/delete uplink pdr
+			pdrUL1 := pdr{
+				srcIface:     access,
+				srcIfaceMask: 0xFF,
+				// tunnelIP4Dst: ip2int(u.accessIP),
+				// tunnelIP4DstMask: 0xFFFFFFFF,
+				// tunnelTEID: n3TEID + i,
+				// tunnelTEIDMask: 0xFFFFFFFF,
+				appFilter: applicationFilter{
+					srcIP:     ip2int(ueip2) + (i & 0xFFFF0000),
+					srcIPMask: 0xFFFFFFFF,
+					dstIP:     ip2int(aupfip2) + (i & 0xFFFF0000),
+					dstIPMask: 0xFFFFFFFF,
+					srcPortRange: portRange{
+						low:  uint16(i & 0xFFFF),
+						high: uint16(i & 0xFFFF),
+					},
+					// dstPortRange: portRange{
+					// 	low:  (ueport + j) & 0xFFFF,
+					// 	high: (ueport + j) & 0xFFFF,
+					// },
+				},
+
+				precedence: 246,
+
+				pdrID:     1,
+				fseID:     uint64(n3TEID + i),
+				ctrID:     8*i + 3,
+				farID:     ul1,
+				qerIDList: []uint32{n6, 1},
+				// needDecap: 1,
+				needDecap: 0,
+			}
+
+			pdrDL2 := pdr{
+				srcIface:     core,
+				srcIfaceMask: 0xFF,
+				// tunnelIP4Dst: ip2int(u.accessIP),
+				// tunnelIP4DstMask: 0xFFFFFFFF,
+				// tunnelTEID: n3TEID + i,
+				// tunnelTEIDMask: 0xFFFFFFFF,
+				appFilter: applicationFilter{
+					srcIP:     ip2int(aupfip3) + (i & 0xFFFF0000),
+					srcIPMask: 0xFFFFFFFF,
+					dstIP:     ip2int(ueip3) + (i & 0xFFFF0000),
+					dstIPMask: 0xFFFFFFFF,
+					srcPortRange: portRange{
+						low:  uint16(i & 0xFFFF),
+						high: uint16(i & 0xFFFF),
+					},
+					// dstPortRange: portRange{
+					// 	low:  (ueport + j) & 0xFFFF,
+					// 	high: (ueport + j) & 0xFFFF,
+					// },
+				},
+
+				precedence: 246,
+
+				pdrID:     0,
+				fseID:     uint64(n3TEID + i),
+				ctrID:     8*i + 4,
+				farID:     dl2,
+				qerIDList: []uint32{n6, 1},
+				needDecap: 0,
+				// needDecap: 1,
+			}
+
+			// create/delete uplink pdr
+			pdrUL2 := pdr{
+				srcIface:     access,
+				srcIfaceMask: 0xFF,
+				// tunnelIP4Dst: ip2int(u.accessIP),
+				// tunnelIP4DstMask: 0xFFFFFFFF,
+				// tunnelTEID: n3TEID + i,
+				// tunnelTEIDMask: 0xFFFFFFFF,
+				appFilter: applicationFilter{
+					srcIP:     ip2int(ueip3) + (i & 0xFFFF0000),
+					srcIPMask: 0xFFFFFFFF,
+					dstIP:     ip2int(aupfip3) + (i & 0xFFFF0000),
+					dstIPMask: 0xFFFFFFFF,
+					srcPortRange: portRange{
+						low:  uint16(i & 0xFFFF),
+						high: uint16(i & 0xFFFF),
+					},
+					// dstPortRange: portRange{
+					// 	low:  (ueport + j) & 0xFFFF,
+					// 	high: (ueport + j) & 0xFFFF,
+					// },
+				},
+
+				precedence: 246,
+
+				pdrID:     1,
+				fseID:     uint64(n3TEID + i),
+				ctrID:     8*i + 5,
+				farID:     ul2,
+				qerIDList: []uint32{n6, 1},
+				// needDecap: 1,
+				needDecap: 0,
+			}
+
+			pdrDL3 := pdr{
+				srcIface:     core,
+				srcIfaceMask: 0xFF,
+				// tunnelIP4Dst: ip2int(u.accessIP),
+				// tunnelIP4DstMask: 0xFFFFFFFF,
+				// tunnelTEID: n3TEID + i,
+				// tunnelTEIDMask: 0xFFFFFFFF,
+				appFilter: applicationFilter{
+					srcIP:     ip2int(aupfip4) + (i & 0xFFFF0000),
+					srcIPMask: 0xFFFFFFFF,
+					dstIP:     ip2int(ueip4) + (i & 0xFFFF0000),
+					dstIPMask: 0xFFFFFFFF,
+					srcPortRange: portRange{
+						low:  uint16(i & 0xFFFF),
+						high: uint16(i & 0xFFFF),
+					},
+					// dstPortRange: portRange{
+					// 	low:  (ueport + j) & 0xFFFF,
+					// 	high: (ueport + j) & 0xFFFF,
+					// },
+				},
+
+				precedence: 246,
+
+				pdrID:     0,
+				fseID:     uint64(n3TEID + i),
+				ctrID:     8*i + 6,
+				farID:     dl3,
+				qerIDList: []uint32{n6, 1},
+				needDecap: 0,
+				// needDecap: 1,
+			}
+
+			// create/delete uplink pdr
+			pdrUL3 := pdr{
+				srcIface:     access,
+				srcIfaceMask: 0xFF,
+				// tunnelIP4Dst: ip2int(u.accessIP),
+				// tunnelIP4DstMask: 0xFFFFFFFF,
+				// tunnelTEID: n3TEID + i,
+				// tunnelTEIDMask: 0xFFFFFFFF,
+				appFilter: applicationFilter{
+					srcIP:     ip2int(ueip4) + (i & 0xFFFF0000),
+					srcIPMask: 0xFFFFFFFF,
+					dstIP:     ip2int(aupfip4) + (i & 0xFFFF0000),
+					dstIPMask: 0xFFFFFFFF,
+					srcPortRange: portRange{
+						low:  uint16(i & 0xFFFF),
+						high: uint16(i & 0xFFFF),
+					},
+					// dstPortRange: portRange{
+					// 	low:  (ueport + j) & 0xFFFF,
+					// 	high: (ueport + j) & 0xFFFF,
+					// },
+				},
+
+				precedence: 246,
+
+				pdrID:     1,
+				fseID:     uint64(n3TEID + i),
+				ctrID:     8*i + 7,
+				farID:     ul3,
+				qerIDList: []uint32{n6, 1},
+				// needDecap: 1,
+				needDecap: 0,
+			}
+
+			// pdrs := []pdr{pdrN9Down, pdrN9Up}
+			// pdrs := []pdr{pdrN9Down_DPI, pdrN9Down, pdrN9Up_DPI, pdrN9Up}
+			// pdrs := []pdr{pdrN6Down, pdrN6Up, pdrN6Down_, pdrN6Up_}
+			pdrs := []pdr{
+				// below are used to maximise number of tuples
+				pdrTuple0, pdrTuple1, pdrTuple2, pdrTuple3,
+				pdrTuple4, pdrTuple5, pdrTuple6, pdrTuple7,
+				pdrTuple8, pdrTuple9, // pdrTuple10, pdrTuple11,
+				// pdrTuple12, pdrTuple13, pdrTuple14, pdrTuple15,
+				// below are used to make real rule
+				pdrDL0, pdrUL0, pdrDL1, pdrUL1,
+				pdrDL2, pdrUL2, pdrDL3, pdrUL3,
+			}
+			// pdrs := []pdr{
+			// 	pdrUL0,
+			// }
+
+			// create/delete downlink far
+
+			// farDown := far{
+			// 	farID: n3,
+			// 	fseID: uint64(n3TEID + i),
+
+			// 	applyAction: ActionForward,
+			// 	dstIntf:     ie.DstInterfaceAccess,
+			// 	// tunnelType:   0x0, // Access
+			// 	// tunnelIP4Src: ip2int(u.accessIP),
+			// 	// tunnelIP4Dst: ip2int(enbip) + enbIdx,
+			// 	// tunnelTEID:   n3TEID + i,
+			// 	// tunnelPort:   tunnelGTPUPort,
+			// }
+
+			// create/delete uplink far
+			// farN6Up := far{
+			// 	farID: n6,
+			// 	fseID: uint64(n3TEID + i),
+
+			// 	applyAction: ActionForward,
+			// 	dstIntf:     ie.DstInterfaceCore,
+			// }
+
+			// farN9Up := far{
+			// 	farID: n9,
+			// 	fseID: uint64(n3TEID + i),
+
+			// 	applyAction:  ActionForward,
+			// 	dstIntf:      ie.DstInterfaceCore,
+			// 	tunnelType:   0x1, // Core
+			// 	tunnelIP4Src: ip2int(u.coreIP),
+			// 	tunnelIP4Dst: ip2int(aupfip) + aupfIdx,
+			// 	tunnelTEID:   n9TEID + i,
+			// 	tunnelPort:   tunnelGTPUPort,
+			// }
+
+			farDL0 := far{
+				farID: dl0,
+				fseID: uint64(n3TEID + i),
+
+				applyAction:  ActionForward,
+				dstIntf:      ie.DstInterfaceAccess,
+				tunnelType:   0x1, // need encap
+				tunnelIP4Src: ip2int(u.accessIP),
+				tunnelIP4Dst: ip2int(ueip),
+				tunnelTEID:   n3TEID + i,
+				tunnelPort:   tunnelGTPUPort,
+			}
+
+			farUL0 := far{
+				farID: ul0,
+				fseID: uint64(n3TEID + i),
+
+				applyAction:  ActionForward,
+				dstIntf:      ie.DstInterfaceCore,
+				tunnelType:   0x1, // need encap
+				tunnelIP4Src: ip2int(u.coreIP),
+				tunnelIP4Dst: ip2int(aupfip),
+				tunnelTEID:   n3TEID + i,
+				tunnelPort:   tunnelGTPUPort,
+			}
+
+			farDL1 := far{
+				farID: dl1,
+				fseID: uint64(n3TEID + i),
+
+				applyAction:  ActionForward,
+				dstIntf:      ie.DstInterfaceAccess,
+				tunnelType:   0x1, // need encap
+				tunnelIP4Src: ip2int(u.accessIP),
+				tunnelIP4Dst: ip2int(ueip2),
+				tunnelTEID:   n3TEID + i,
+				tunnelPort:   tunnelGTPUPort,
+			}
+
+			farUL1 := far{
+				farID: ul1,
+				fseID: uint64(n3TEID + i),
+
+				applyAction:  ActionForward,
+				dstIntf:      ie.DstInterfaceCore,
+				tunnelType:   0x1, // need encap
+				tunnelIP4Src: ip2int(u.coreIP),
+				tunnelIP4Dst: ip2int(aupfip2),
+				tunnelTEID:   n3TEID + i,
+				tunnelPort:   tunnelGTPUPort,
+			}
+
+			farDL2 := far{
+				farID: dl2,
+				fseID: uint64(n3TEID + i),
+
+				applyAction:  ActionForward,
+				dstIntf:      ie.DstInterfaceAccess,
+				tunnelType:   0x1, // need encap
+				tunnelIP4Src: ip2int(u.accessIP),
+				tunnelIP4Dst: ip2int(ueip3),
+				tunnelTEID:   n3TEID + i,
+				tunnelPort:   tunnelGTPUPort,
+			}
+
+			farUL2 := far{
+				farID: ul2,
+				fseID: uint64(n3TEID + i),
+
+				applyAction:  ActionForward,
+				dstIntf:      ie.DstInterfaceCore,
+				tunnelType:   0x1, // need encap
+				tunnelIP4Src: ip2int(u.coreIP),
+				tunnelIP4Dst: ip2int(aupfip3),
+				tunnelTEID:   n3TEID + i,
+				tunnelPort:   tunnelGTPUPort,
+			}
+
+			farDL3 := far{
+				farID: dl3,
+				fseID: uint64(n3TEID + i),
+
+				applyAction:  ActionForward,
+				dstIntf:      ie.DstInterfaceAccess,
+				tunnelType:   0x1, // need encap
+				tunnelIP4Src: ip2int(u.accessIP),
+				tunnelIP4Dst: ip2int(ueip4),
+				tunnelTEID:   n3TEID + i,
+				tunnelPort:   tunnelGTPUPort,
+			}
+
+			farUL3 := far{
+				farID: ul3,
+				fseID: uint64(n3TEID + i),
+
+				applyAction:  ActionForward,
+				dstIntf:      ie.DstInterfaceCore,
+				tunnelType:   0x1, // need encap
+				tunnelIP4Src: ip2int(u.coreIP),
+				tunnelIP4Dst: ip2int(aupfip4),
+				tunnelTEID:   n3TEID + i,
+				tunnelPort:   tunnelGTPUPort,
+			}
+
+			// fars := []far{farDown, farN6Up, farN9Up}
+			// fars := []far{farDown, farN9Up}
+			// fars := []far{farDown, farN6Up}
+			fars := []far{
+				farDL0, farUL0,
+				farDL1, farUL1,
+				farDL2, farUL2,
+				farDL3, farUL3,
+			}
+
+			// create/delete uplink qer
+			qerN6 := qer{
+				qerID:    n6,
+				fseID:    uint64(n3TEID + i),
+				qosLevel: ApplicationQos,
+				qfi:      9,
+				ulGbr:    20000, // 2Gbps
+				ulMbr:    20000, // 2Gbps
+				dlGbr:    20000, // 2Gbps
+				dlMbr:    20000, // 2Gbps
+			}
+
+			// qerN9 := qer{
+			// 	qerID: n9,
+			// 	fseID: uint64(n3TEID + i),
+			// 	qosLevel: ApplicationQos,
+			// 	qfi:   8,
+			// 	ulGbr: 2000000, // 2Gbps
+			// 	ulMbr: 2000000, // 2Gbps
+			// 	dlGbr: 2000000, // 2Gbps
+			// 	dlMbr: 2000000, // 2Gbps
+			// }
+
+			// qers := []qer{qerN6, qerN9}
+			// qers := []qer{qerN9}
+			qers := []qer{qerN6}
+
+			// create/delete session qers
+			sessionQer := qer{
+				qerID:    1,
+				fseID:    uint64(n3TEID + i),
+				qosLevel: SessionQos,
+				qfi:      0,
+				ulGbr:    2000000, // 2Gbps
+				ulMbr:    2000000, // 2Gbps
+				dlGbr:    2000000, // 2Gbps
+				dlMbr:    2000000, // 2Gbps
+			}
+
+			qers = append(qers, sessionQer)
+			var allRules PacketForwardingRules
+			// if i == uint32(0) {
+			// 	allRules = PacketForwardingRules{
+			// 		pdrs: pdrsTuple,
+			// 		fars: fars,
+			// 		qers: qers,
+			// 	}
+
+			// } else {
+			// 	allRules = PacketForwardingRules{
+			// 		pdrs: pdrs,
+			// 		fars: fars,
+			// 		qers: qers,
+			// 	}
+			// }
+			allRules = PacketForwardingRules{
+				pdrs: pdrs,
+				fars: fars,
+				qers: qers,
+			}
+
+			if mode.create() {
+				u.sendMsgToUPF(upfMsgTypeAdd, allRules, PacketForwardingRules{})
+			} else if mode.modify() {
+				u.sendMsgToUPF(upfMsgTypeMod, allRules, allRules)
+			} else if mode.delete() {
+				u.sendMsgToUPF(upfMsgTypeDel, allRules, PacketForwardingRules{})
+			} else {
+				log.Fatalln("Unsupported method", mode)
+			}
+		}
+		// u.sendMsgToUPF(upfMsgTypeResume, PacketForwardingRules{}, PacketForwardingRules{})
+	}
+
+	log.Infoln("Sessions/s:", float64(s.MaxSessions)/time.Since(start).Seconds())
+}

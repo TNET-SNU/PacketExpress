@@ -1,0 +1,16 @@
+message.o: message.cc message.h pb/bess_msg.pb.h pb/error.pb.h \
+ pb/error.pb.h pb/module_msg.pb.h pb/util_msg.pb.h utils/format.h
+
+message.h:
+
+pb/bess_msg.pb.h:
+
+pb/error.pb.h:
+
+pb/error.pb.h:
+
+pb/module_msg.pb.h:
+
+pb/util_msg.pb.h:
+
+utils/format.h:

@@ -1,0 +1,5 @@
+utils/copy.o: utils/copy.cc utils/copy.h utils/common.h
+
+utils/copy.h:
+
+utils/common.h:

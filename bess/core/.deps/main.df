@@ -1,0 +1,86 @@
+main.o: main.cc bessctl.h bessd.h debug.h opts.h packet_pool.h memory.h \
+ packet.h metadata.h snbuf_layout.h worker.h gate.h commands.h message.h \
+ pb/bess_msg.pb.h pb/error.pb.h pb/error.pb.h pb/module_msg.pb.h \
+ pb/util_msg.pb.h pktbatch.h utils/copy.h utils/common.h utils/common.h \
+ traffic_class.h task.h utils/extended_priority_queue.h utils/simd.h \
+ utils/time.h utils/random.h utils/time.h packet_avx.h port.h module.h \
+ event.h pb/port_msg.pb.h utils/ether.h utils/endian.h utils/copy.h \
+ utils/format.h version.h
+
+bessctl.h:
+
+bessd.h:
+
+debug.h:
+
+opts.h:
+
+packet_pool.h:
+
+memory.h:
+
+packet.h:
+
+metadata.h:
+
+snbuf_layout.h:
+
+worker.h:
+
+gate.h:
+
+commands.h:
+
+message.h:
+
+pb/bess_msg.pb.h:
+
+pb/error.pb.h:
+
+pb/error.pb.h:
+
+pb/module_msg.pb.h:
+
+pb/util_msg.pb.h:
+
+pktbatch.h:
+
+utils/copy.h:
+
+utils/common.h:
+
+utils/common.h:
+
+traffic_class.h:
+
+task.h:
+
+utils/extended_priority_queue.h:
+
+utils/simd.h:
+
+utils/time.h:
+
+utils/random.h:
+
+utils/time.h:
+
+packet_avx.h:
+
+port.h:
+
+module.h:
+
+event.h:
+
+pb/port_msg.pb.h:
+
+utils/ether.h:
+
+utils/endian.h:
+
+utils/copy.h:
+
+utils/format.h:
+
+version.h:

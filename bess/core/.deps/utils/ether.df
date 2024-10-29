@@ -1,0 +1,16 @@
+utils/ether.o: utils/ether.cc utils/ether.h utils/endian.h utils/copy.h \
+ utils/common.h utils/format.h utils/random.h utils/time.h
+
+utils/ether.h:
+
+utils/endian.h:
+
+utils/copy.h:
+
+utils/common.h:
+
+utils/format.h:
+
+utils/random.h:
+
+utils/time.h:

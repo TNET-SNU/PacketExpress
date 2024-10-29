@@ -1,0 +1,165 @@
+{
+    "": "Vdev or sim support. Enable `\"mode\": \"af_xdp\"` to enable AF_XDP mode, or `\"mode\": \"af_packet\"` to enable AF_PACKET mode, `\"mode\": \"sim\"` to generate synthetic traffic from BESS's Source module or \"mode\": \"\" when running with UP4",
+    "": "mode: af_xdp",
+    "": "mode: af_packet",
+    "": "mode: sim",
+    "mode": "dpdk",
+
+    "table_sizes": {
+        "": "Example sizes based on sim mode and 50K sessions. Customize as per your control plane",
+        "": "50K per unique tuple, we send 4 unique PDR patterns",
+        "pdrLookup": 4000000,
+        "": "4 PDRs per session",
+        "flowMeasure": 4000000,
+        "": "there are 2 QERs and 2 entries per QER",
+        "appQERLookup": 500000,
+        "": "there is 1 session QER and 2 entries per session QER",
+        "sessionQERLookup": 500000,
+        "": "there are 3 FARs",
+        "farLookup": 500000
+    },
+
+    "": "Set the log level to one of \"panic\", \"fatal\", \"error\", \"warning\", \"info\", \"debug\", \"trace\"",
+    "log_level": "info",
+
+    "": "Use the sim block to enable simulation using either Source module or via il_trafficgen",
+    "sim": {
+        "": "At this point we can simulate either N3/N6 or N3/N9 traffic, so choose n6 or n9 below",
+        "core": "n6",
+        "original_max": 250000,
+        "max_sessions": 25000,
+        "start_ue_ip": "10.1.90.2",
+        "start_ue_ip2": "10.2.90.2",
+        "start_ue_ip3": "10.3.90.2",
+        "start_ue_ip4": "10.4.90.2",
+        "start_ue_port": 5001,
+        "start_enb_ip": "11.1.1.128",
+        "start_aupf_ip": "10.1.95.2",
+        "start_aupf_ip2": "10.2.95.2",
+        "start_aupf_ip3": "10.3.95.2",
+        "start_aupf_ip4": "10.4.95.2",
+        "start_aupf_port": 5001,
+        "access_iface_ip": "10.1.90.1",
+        "access_iface_ip2": "10.2.90.1",
+        "access_iface_ip3": "10.3.90.1",
+        "access_iface_ip4": "10.4.90.1",
+        "core_iface_ip": "10.1.95.1",
+        "core_iface_ip2": "10.2.95.1",
+        "core_iface_ip3": "10.3.95.1",
+        "core_iface_ip4": "10.4.95.1",
+        "n6_app_ip": "10.0.45.10",
+        "n9_app_ip": "10.0.45.110",
+        "start_n3_teid": "0x30000000",
+        "start_n3_teid_dpi": "0x60000000",
+        "start_n9_teid": "0x90000000",
+        "start_n9_teid_dpi": "0xc0000000",
+        "pkt_size": 128,
+        "total_flows": 5000
+    },
+
+    "": "max IP frag table entries (for IPv4 reassembly). Update the line below to `\"max_ip_defrag_flows\": 1000` to enable",
+    "": "max_ip_defrag_flows: 1000",
+
+    "": "Update the line below to `\"ip_frag_with_eth_mtu\": 1518` to enable",
+    "": "ip_frag_with_eth_mtu: 1518",
+
+    "": "Enable hardware offload of checksum. Might disable vector PMD",
+    "hwcksum": true,
+
+    "": "Enable PDU Session Container extension",
+    "gtppsc": true,
+
+    "": "Enable Intel Dynamic Device Personalization (DDP)",
+    "ddp": false,
+
+    "": "Telemetrics-See this link for details: https://github.com/NetSys/bess/blob/master/bessctl/module_tests/timestamp.py",
+    "measure_upf": true,
+
+    "": "Whether to enable flow measurement feature",
+    "measure_flow": false,
+
+    "": "Gateway interfaces",
+    "access": {
+        "ifname": "eth0"
+    },
+
+    "": "UE IP Natting. Update the line below to `\"ip_masquerade\": \"<ip> [or <ip>]\"` to enable",
+    "core": {
+        "ifname": "eth0",
+        "": "ip_masquerade: 18.0.0.1 or 18.0.0.2 or 18.0.0.3"
+    },
+
+    "": "Number of worker threads. Default: 1",
+    "workers": 1,
+
+    "": "Number of NIC ports. Default: 2",
+    "num_ports": 4,
+
+    "": "Parameters for handling outgoing requests",
+    "max_req_retries": 5,
+    "resp_timeout": "2s",
+
+    "": "Whether to enable Network Token Functions",
+    "enable_ntf": false,
+
+    "": "Whether to enable End Marker Support",
+    "enable_end_marker": false,
+
+    "": "Whether to enable Notify BESS feature",
+    "enable_notify_bess": false,
+
+    "": "Whether to enable P4Runtime feature",
+    "enable_p4rt": false,
+    "" : "conn_timeout: 1000",
+    "" : "read_timeout: 25",
+    "notify_sockaddr" : "/tmp/notifycp",
+    "endmarker_sockaddr" : "/tmp/pfcpport",
+
+    "": "Whether to enable UPF HeartBeatTimer feature",
+    "enable_hbTimer": false,
+    "": "heart_beat_interval: 5s",
+
+    "qci_qos_config": [
+        {
+            "": "Default values for QERs with QCI/QFI not listed below",
+            "qci": 0,
+            "cbs": 100000000,
+            "ebs": 100000000,
+            "pbs": 100000000,
+            "burst_duration_ms": 10,
+            "priority": 7
+        },
+        {
+            "qci": 9,
+            "cbs": 20480000,
+            "ebs": 20480000,
+            "pbs": 20480000,
+            "priority": 6
+        },
+        {
+            "qci": 8,
+            "cbs": 20480000,
+            "ebs": 20480000,
+            "pbs": 20480000,
+            "priority": 5
+        }
+    ],
+
+    "": "Control plane controller settings",
+    "cpiface": {
+        "peers": ["148.162.12.214"],
+        "dnn": "internet",
+        "http_port": "8080",
+        "enable_ue_ip_alloc": false,
+        "ue_ip_pool": "10.250.0.0/16",
+        "" : "use_fqdn: true",
+        "" : "hostname: upf-0"
+    },
+
+    "": "p4rtc interface settings",
+    "p4rtciface": {
+        "access_ip": "172.17.0.1/32",
+        "p4rtc_server": "onos",
+        "p4rtc_port": "51001"
+    }
+}

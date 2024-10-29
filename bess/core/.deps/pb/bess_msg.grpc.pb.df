@@ -1,0 +1,8 @@
+pb/bess_msg.grpc.pb.o: pb/bess_msg.grpc.pb.cc pb/bess_msg.pb.h \
+ pb/error.pb.h pb/bess_msg.grpc.pb.h
+
+pb/bess_msg.pb.h:
+
+pb/error.pb.h:
+
+pb/bess_msg.grpc.pb.h:

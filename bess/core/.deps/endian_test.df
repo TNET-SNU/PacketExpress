@@ -1,0 +1,3 @@
+endian_test.o: utils/endian_test.cc utils/endian.h
+
+utils/endian.h:

@@ -1,0 +1,10 @@
+pb/service.grpc.pb.o: pb/service.grpc.pb.cc pb/service.pb.h \
+ pb/bess_msg.pb.h pb/error.pb.h pb/service.grpc.pb.h
+
+pb/service.pb.h:
+
+pb/bess_msg.pb.h:
+
+pb/error.pb.h:
+
+pb/service.grpc.pb.h:

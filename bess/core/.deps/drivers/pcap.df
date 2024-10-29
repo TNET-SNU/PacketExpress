@@ -1,0 +1,88 @@
+drivers/pcap.o: drivers/pcap.cc drivers/pcap.h drivers/../port.h \
+ drivers/../message.h drivers/../pb/bess_msg.pb.h \
+ drivers/../pb/error.pb.h drivers/../pb/error.pb.h \
+ drivers/../pb/module_msg.pb.h drivers/../pb/util_msg.pb.h \
+ drivers/../module.h drivers/../commands.h drivers/../event.h \
+ drivers/../gate.h drivers/../pktbatch.h drivers/../utils/copy.h \
+ drivers/../utils/common.h drivers/../utils/common.h \
+ drivers/../metadata.h drivers/../snbuf_layout.h drivers/../packet_pool.h \
+ drivers/../memory.h drivers/../packet.h drivers/../worker.h \
+ drivers/../traffic_class.h drivers/../task.h \
+ drivers/../utils/extended_priority_queue.h drivers/../utils/simd.h \
+ drivers/../utils/time.h drivers/../utils/random.h \
+ drivers/../utils/time.h drivers/../packet_avx.h \
+ drivers/../pb/port_msg.pb.h drivers/../utils/ether.h \
+ drivers/../utils/endian.h drivers/../utils/copy.h \
+ drivers/../utils/pcap_handle.h drivers/../utils/pcap.h
+
+drivers/pcap.h:
+
+drivers/../port.h:
+
+drivers/../message.h:
+
+drivers/../pb/bess_msg.pb.h:
+
+drivers/../pb/error.pb.h:
+
+drivers/../pb/error.pb.h:
+
+drivers/../pb/module_msg.pb.h:
+
+drivers/../pb/util_msg.pb.h:
+
+drivers/../module.h:
+
+drivers/../commands.h:
+
+drivers/../event.h:
+
+drivers/../gate.h:
+
+drivers/../pktbatch.h:
+
+drivers/../utils/copy.h:
+
+drivers/../utils/common.h:
+
+drivers/../utils/common.h:
+
+drivers/../metadata.h:
+
+drivers/../snbuf_layout.h:
+
+drivers/../packet_pool.h:
+
+drivers/../memory.h:
+
+drivers/../packet.h:
+
+drivers/../worker.h:
+
+drivers/../traffic_class.h:
+
+drivers/../task.h:
+
+drivers/../utils/extended_priority_queue.h:
+
+drivers/../utils/simd.h:
+
+drivers/../utils/time.h:
+
+drivers/../utils/random.h:
+
+drivers/../utils/time.h:
+
+drivers/../packet_avx.h:
+
+drivers/../pb/port_msg.pb.h:
+
+drivers/../utils/ether.h:
+
+drivers/../utils/endian.h:
+
+drivers/../utils/copy.h:
+
+drivers/../utils/pcap_handle.h:
+
+drivers/../utils/pcap.h:

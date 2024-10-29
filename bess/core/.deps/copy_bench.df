@@ -1,0 +1,10 @@
+copy_bench.o: utils/copy_bench.cc utils/copy.h utils/common.h \
+ utils/random.h utils/time.h
+
+utils/copy.h:
+
+utils/common.h:
+
+utils/random.h:
+
+utils/time.h:

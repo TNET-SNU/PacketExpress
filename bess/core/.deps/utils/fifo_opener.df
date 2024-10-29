@@ -1,0 +1,6 @@
+utils/fifo_opener.o: utils/fifo_opener.cc utils/fifo_opener.h \
+ utils/syscallthread.h
+
+utils/fifo_opener.h:
+
+utils/syscallthread.h:

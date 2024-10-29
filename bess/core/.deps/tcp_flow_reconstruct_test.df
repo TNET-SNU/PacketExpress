@@ -1,0 +1,72 @@
+tcp_flow_reconstruct_test.o: utils/tcp_flow_reconstruct_test.cc \
+ utils/tcp_flow_reconstruct.h utils/../packet.h utils/../metadata.h \
+ utils/../snbuf_layout.h utils/../worker.h utils/../gate.h \
+ utils/../commands.h utils/../message.h utils/../pb/bess_msg.pb.h \
+ utils/../pb/error.pb.h utils/../pb/error.pb.h \
+ utils/../pb/module_msg.pb.h utils/../pb/util_msg.pb.h \
+ utils/../pktbatch.h utils/../utils/copy.h utils/../utils/common.h \
+ utils/../utils/common.h utils/../traffic_class.h utils/../task.h \
+ utils/../utils/extended_priority_queue.h utils/../utils/simd.h \
+ utils/../utils/time.h utils/../utils/random.h utils/../utils/time.h \
+ utils/../packet_avx.h utils/copy.h utils/ether.h utils/endian.h \
+ utils/ip.h utils/tcp.h
+
+utils/tcp_flow_reconstruct.h:
+
+utils/../packet.h:
+
+utils/../metadata.h:
+
+utils/../snbuf_layout.h:
+
+utils/../worker.h:
+
+utils/../gate.h:
+
+utils/../commands.h:
+
+utils/../message.h:
+
+utils/../pb/bess_msg.pb.h:
+
+utils/../pb/error.pb.h:
+
+utils/../pb/error.pb.h:
+
+utils/../pb/module_msg.pb.h:
+
+utils/../pb/util_msg.pb.h:
+
+utils/../pktbatch.h:
+
+utils/../utils/copy.h:
+
+utils/../utils/common.h:
+
+utils/../utils/common.h:
+
+utils/../traffic_class.h:
+
+utils/../task.h:
+
+utils/../utils/extended_priority_queue.h:
+
+utils/../utils/simd.h:
+
+utils/../utils/time.h:
+
+utils/../utils/random.h:
+
+utils/../utils/time.h:
+
+utils/../packet_avx.h:
+
+utils/copy.h:
+
+utils/ether.h:
+
+utils/endian.h:
+
+utils/ip.h:
+
+utils/tcp.h:

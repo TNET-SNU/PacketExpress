@@ -1,0 +1,6 @@
+pb/module_msg.pb.o: pb/module_msg.pb.cc pb/module_msg.pb.h \
+ pb/util_msg.pb.h
+
+pb/module_msg.pb.h:
+
+pb/util_msg.pb.h:

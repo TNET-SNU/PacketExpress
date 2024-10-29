@@ -1,0 +1,976 @@
+// Copyright (c) 2014-2016, The Regents of the University of California.
+// Copyright (c) 2016-2017, Nefeli Networks, Inc.
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+// list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+// this list of conditions and the following disclaimer in the documentation
+// and/or other materials provided with the distribution.
+//
+// * Neither the names of the copyright holders nor the names of their
+// contributors may be used to endorse or promote products derived from this
+// software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+
+#include "queue_inc.h"
+
+#include "../port.h"
+#include "../utils/format.h"
+const long long NANOS = 1000000000LL;
+const long long MICROS = 1000000LL;
+/*----------------------------------------------------------------------------------*/
+/* ToDo: Make below code a separate BESS module */
+static inline void
+SetMSS(uint8_t *tcpopt, int len, uint16_t new_mss)
+{
+  int opt, optlen;
+  uint16_t *mss;
+  
+  for (int i = 0; i < len; ) {
+		opt = *(tcpopt + i++);
+		if (opt == TCPOPT_EOL) {	// end of option field
+			break;
+		}
+    if (opt == TCPOPT_NOP) {	// no option
+			continue;
+		}
+    optlen = *(tcpopt + i++);
+    if (i + optlen - 2 > len) {
+      break;
+    }
+    if (opt == TCPOPT_MAXSEG) {
+      mss = (uint16_t *)(tcpopt + i);
+      *mss = htons(new_mss);
+      i += 2;
+      break;
+    }
+    if (opt == TCPOPT_WINDOW) {
+      i++;
+      continue;
+    }
+    if (opt == TCPOPT_SACK_PERMITTED) {
+      continue;
+    }
+    if (opt == TCPOPT_TIMESTAMP) {
+      i += 8;
+      continue;
+    }
+    // not handle
+    i += optlen - 2;
+	}
+}
+/*----------------------------------------------------------------------------------*/
+static inline int
+GetMSS(uint8_t *tcpopt, int len)
+{
+  int opt, optlen;
+  uint16_t mss;
+
+  for (int i = 0; i < len; ) {
+		opt = *(tcpopt + i++);
+		if (opt == TCPOPT_EOL) {	// end of option field
+			break;
+		}
+    if (opt == TCPOPT_NOP) {	// no option
+			continue;
+		}
+    optlen = *(tcpopt + i++);
+    if (i + optlen - 2 > len) {
+      break;
+    }
+    if (opt == TCPOPT_MAXSEG) {
+      mss = *(uint16_t *)(tcpopt + i);
+      i += 2;
+      break;
+    }
+    if (opt == TCPOPT_WINDOW) {
+      i++;
+      continue;
+    }
+    if (opt == TCPOPT_SACK_PERMITTED) {
+      continue;
+    }
+    if (opt == TCPOPT_TIMESTAMP) {
+      i += 8;
+      continue;
+    }
+    // not handle
+    i += optlen - 2;
+	}
+
+  return ntohs(mss);
+}
+/*----------------------------------------------------------------------------------*/
+/*
+ * Note:
+ * If packet is encaped with GTP, iph, tcph mean the inner headers of GTP packet.
+ * Otherwise, iph, tcph means outer headers.
+ */
+static inline void
+TranslateMSS(struct rte_mbuf *pkt) {
+  struct rte_tcp_hdr *tcp_hdr = 
+    rte_pktmbuf_mtod_offset(pkt, struct rte_tcp_hdr *,
+                            sizeof(rte_ether_hdr) + sizeof(rte_ipv4_hdr));
+  uint8_t *tcp_option;
+  uint16_t mss, new_mss, tcp_optlen, hdr_len; // len between ETH and TCP option
+    
+  /* mss parsing */
+  tcp_optlen = (tcp_hdr->data_off << 2) - sizeof(struct rte_tcp_hdr);
+  if (!tcp_optlen)
+    return;
+  tcp_option = (uint8_t *)tcp_hdr + sizeof(struct rte_tcp_hdr);
+
+#if 0 /* below is to deceive UE side to use 9000 MTU in real world setup */
+#define BEFORE_MTU 1500
+#define AFTER_MTU 9000
+#else /* below is to deceive PDN side to use 1500 MTU in our testbed setup */
+#define BEFORE_MTU 9000
+#define AFTER_MTU 1500
+#endif
+  /*
+    * In case when packet is like |ETH| ... |TCPOPT|,
+    * hdr_len is the length of | ... |
+    */
+  mss = GetMSS(tcp_option, tcp_optlen);
+  hdr_len = sizeof(struct rte_ipv4_hdr) + sizeof(struct rte_tcp_hdr);
+  if (mss == BEFORE_MTU - hdr_len) {
+    new_mss = AFTER_MTU - hdr_len;
+    SetMSS(tcp_option, tcp_optlen, new_mss);
+    printf("[MSS modify] mss: %u ==> %u\n", mss, new_mss);
+  }
+}
+/*---------------------------------------------------------------------------*/
+/* store the packet into the new item flow */
+/* InsertFlow should be called before InsertItem */
+static inline void
+InsertItem(struct tbl *tbl,
+           struct rte_mbuf *pkt,
+           uint32_t seq,
+           struct item *prev_item)
+{
+  struct item *cur_item;
+
+  cur_item = &tbl->items[tbl->item_num];
+  /* insert new item with the packet */
+  cur_item->firstseg = pkt;
+  cur_item->lastseg = rte_pktmbuf_lastseg(pkt);
+  cur_item->next_pkt_idx = INVALID_ARRAY_INDEX;
+  cur_item->seq = seq;
+  cur_item->merged = 0;
+  if (prev_item) {
+    /* chain them together. */
+    cur_item->next_pkt_idx = prev_item->next_pkt_idx;
+    prev_item->next_pkt_idx = tbl->item_num;
+  }
+  /* increment item array index */
+  tbl->item_num++;
+}
+/*---------------------------------------------------------------------------*/
+/* store the flow into the array */
+static inline void
+InsertFlow(struct tbl *tbl,
+           struct flow_key *key,
+           uint16_t protoid,
+           struct flow *prev_flow)
+{
+  struct flow *cur_flow;
+
+  cur_flow = &tbl->flows[tbl->flow_num];
+  /* insert new flow */
+  cur_flow->protoid = protoid;
+  cur_flow->next_flow_idx = INVALID_ARRAY_INDEX;
+  cur_flow->key = key;
+  cur_flow->start_item_idx = cur_flow->cur_item_idx = tbl->item_num;
+  if (prev_flow) {
+    cur_flow->next_flow_idx = prev_flow->next_flow_idx;
+    prev_flow->next_flow_idx = tbl->flow_num;
+  }
+  /* increment flow array index */
+  tbl->flow_num++;
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * Check if two TCP/IPv4 packets are neighbors.
+ */
+static inline int
+CheckSeqOption(struct item *item,
+               struct rte_tcp_hdr *tcph,
+               uint32_t seq,
+               uint16_t tcp_hl,
+               uint16_t tcp_dl)
+{
+  struct rte_mbuf *pkt_orig;
+  uint16_t tcp_dl_orig;
+  uint16_t optlen;
+  
+  pkt_orig = item->firstseg;
+  tcp_dl_orig = pkt_orig->pkt_len - 
+    (ETH_HLEN + IP_HLEN + pkt_orig->l4_len);
+
+  /* Check if TCP option fields equal */
+  if (unlikely(tcp_hl != pkt_orig->l4_len))
+    return 0;
+  optlen = pkt_orig->l4_len - TCP_HLEN;
+  if (optlen && memcmp(tcph + 1,
+      rte_pktmbuf_mtod_offset(pkt_orig, void *, ETH_HLEN + IP_HLEN + TCP_HLEN),
+      optlen))
+    return 0;
+
+  /* append or pre-pend the new packet */
+  return (seq == (item->seq + tcp_dl_orig)) ? 1 :
+        (((seq + tcp_dl) == item->seq) ? -1 : 0);
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * Merge two TCP/IPv4 packets without updating checksums.
+ * If cmp is larger than 0, append the new packet to the
+ * original packet. Otherwise, pre-pend the new packet to
+ * the original packet.
+ * Remove ETH|IP|TCP header when TCP flow.
+ */
+static inline int
+MergePacket(struct item *cur_item,
+            struct rte_mbuf *firstseg,
+            struct rte_mbuf *lastseg,
+            int cmp,
+            int seq)
+{
+  struct rte_mbuf *pkt_head, *pkt_tail;
+  uint16_t hdr_len;
+
+  if (cmp > 0) {
+    pkt_head = cur_item->firstseg;
+    pkt_tail = firstseg;
+  }
+  else {
+    pkt_head = firstseg;
+    pkt_tail = cur_item->firstseg;
+  }
+
+  /* check if the IPv4 packet length is greater than the max value */
+  hdr_len = ETH_HLEN + IP_HLEN + pkt_head->l4_len;
+  if (unlikely(pkt_head->pkt_len - ETH_HLEN + 
+               pkt_tail->pkt_len - hdr_len > MAX_IPV4_PKT_LENGTH)) {
+    return 0;
+  }
+
+  /* remove the packet header of tail packet */
+  rte_pktmbuf_adj(pkt_tail, hdr_len);
+
+  /* chain two packets together */
+  if (cmp > 0) {
+    cur_item->lastseg->next = firstseg;
+    cur_item->lastseg = lastseg;
+  }
+  else {
+    lastseg->next = cur_item->firstseg;
+    cur_item->firstseg = firstseg;
+    /* update seq to the smaller value */
+    cur_item->seq = seq;
+  }
+  cur_item->merged++;
+
+  /* update number of segments for the merged packet */
+  pkt_head->nb_segs += pkt_tail->nb_segs;
+  pkt_head->pkt_len += pkt_tail->pkt_len;
+
+  return 1;
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * Merge two UDP/IPv4 packets.
+ * Remove ETH|IP header.
+ */
+static inline int
+ConcatPacket(struct item *cur_item,
+             struct rte_mbuf *pkt)
+{
+  struct rte_mbuf *pkt_head;
+  uint16_t hdr_len;
+
+  pkt_head = cur_item->firstseg;
+
+  /* check if the IPv4 packet length is greater than the max value */
+  hdr_len = ETH_HLEN + IP_HLEN;
+  if (unlikely(pkt_head->pkt_len - ETH_HLEN + 
+               pkt->pkt_len - hdr_len > TX_MTU)) {
+    return 0;
+  }
+
+  /* Concatenation removes the ETH|IP hdr of tail packet */
+  rte_pktmbuf_adj(pkt, ETH_HLEN + IP_HLEN);
+
+  /* chain two UDP datagram together */
+  cur_item->lastseg->next = pkt;
+  cur_item->lastseg = pkt;
+  cur_item->merged++;
+
+  /* update number of segments for the merged packet */
+  pkt_head->nb_segs += pkt->nb_segs;
+  pkt_head->pkt_len += pkt->pkt_len;
+
+  return 1;
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * Link two packets without updating checksums.
+ * Does not remove any headers.
+ */
+static inline void
+LinkPacket(struct item *prev_item,
+           struct item *cur_item)
+{
+  bess::Packet *pkt_head, *pkt_tail;
+
+  pkt_head = (bess::Packet *)prev_item->firstseg;
+  pkt_tail = (bess::Packet *)cur_item->firstseg;
+
+  /*
+   * Save first seg of next item to link manager, and
+   * save last seg of current item to link manager.
+   * This is done in order to help unlinking b/w
+   * last seg of current item and first seg of next item
+   */
+
+  /* add linked segs number */
+  pkt_head->set_nb_link(pkt_head->get_nb_link() + pkt_tail->nb_segs());
+
+  /* add linked segs len */
+  pkt_head->set_len_link(pkt_head->get_len_link() + pkt_tail->total_len());
+  
+  /* link to next pkt */
+  pkt_head->set_link(pkt_tail);
+}
+
+/* setup nb_segs and pkt_len of start item */
+static inline void
+SetupStartItem(struct item *item)
+{
+  bess::Packet *pkt;
+    
+  pkt = (bess::Packet *)item->firstseg;
+  pkt->set_encap_len(0);
+  pkt->set_nb_link(1);
+  pkt->set_len_link(pkt->total_len());
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * if packets are merged or concatenated,
+ * update total_length in ip header
+ */
+static inline void
+UpdateIP(struct rte_mbuf *pkt)
+{
+  rte_pktmbuf_mtod_offset(pkt, struct rte_ipv4_hdr *, ETH_HLEN)->total_length
+   = htons(pkt->pkt_len - ETH_HLEN);
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * Update mbuf fields of a TCP packet.
+ * ToDo: make TSO consider GTP and outer headers
+ */
+static inline void
+UpdateTCPmbuf(struct rte_mbuf *pkt)
+{
+  struct rte_ether_hdr *eth_hdr;
+  struct rte_ipv4_hdr *ipv4_hdr;
+  struct rte_tcp_hdr *tcp_hdr;
+  
+  eth_hdr = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
+  /* not IP */
+  if (unlikely(eth_hdr->ether_type != htons(RTE_ETHER_TYPE_IPV4)))
+    return; // drop
+  ipv4_hdr = (struct rte_ipv4_hdr *)((char *)eth_hdr + ETH_HLEN);
+  /* if IP option exists */
+  if (unlikely(ipv4_hdr->version_ihl != IP_VERSION_IHL))
+    return;
+  tcp_hdr = (struct rte_tcp_hdr *)((char *)ipv4_hdr + IP_HLEN);
+
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+  if (pkt->pkt_len > TX_MTU + RTE_ETHER_HDR_LEN) {
+    /* enable TSO */
+    pkt->l2_len = ETH_HLEN;
+    pkt->l3_len = sizeof(struct rte_ipv4_hdr);
+    pkt->l4_len = tcp_hdr->data_off >> 2;
+    pkt->tso_segsz = TX_MTU - (pkt->l3_len + pkt->l4_len);
+    pkt->ol_flags |= PKT_TX_IPV4 |
+                     PKT_TX_IP_CKSUM |
+                     PKT_TX_TCP_CKSUM |
+                     PKT_TX_TCP_SEG;
+  }
+  else {
+    pkt->ol_flags |= PKT_TX_IPV4 |
+                     PKT_TX_IP_CKSUM |
+                     PKT_TX_UDP_CKSUM;
+  }
+#else
+  if (pkt->pkt_len > TX_MTU + RTE_ETHER_HDR_LEN) {
+    /* enable TSO */
+    pkt->l2_len = ETH_HLEN;
+    pkt->l3_len = ipv4_hdr->ihl << 2;
+    pkt->l4_len = tcp_hdr->data_off >> 2;
+    pkt->tso_segsz = TX_MTU - (pkt->l3_len + pkt->l4_len);
+    pkt->ol_flags |= RTE_MBUF_F_TX_IPV4 |
+                     RTE_MBUF_F_TX_IP_CKSUM |
+                     RTE_MBUF_F_TX_TCP_CKSUM |
+                     RTE_MBUF_F_TX_TCP_SEG;
+  }
+  else {
+    pkt->ol_flags |= RTE_MBUF_F_TX_IPV4 |
+                     RTE_MBUF_F_TX_IP_CKSUM |
+                     RTE_MBUF_F_TX_TCP_CKSUM;
+  }
+#endif
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * if packets are merged,
+ * update mbuf fields
+ */
+static inline void
+UpdateNonTCPmbuf(struct rte_mbuf *pkt)
+{
+  if (pkt->pkt_len > TX_MTU + RTE_ETHER_HDR_LEN) {
+    /*
+     * It should not happen, since only TCP can be GROed over 9000B.
+     * Drop this packet.
+     */
+    fprintf(stderr, "[Error] Larger than Target MTU\n");
+    return;
+  }
+  /*
+   * We already concatenated non-TCP packets under 9KB.
+   * Also, checksums are not changed.
+   */
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+  pkt->ol_flags |= PKT_TX_IPV4 |
+                   PKT_TX_IP_CKSUM |
+                   PKT_TX_UDP_CKSUM;
+#else
+  pkt->ol_flags |= RTE_MBUF_F_TX_IPV4 |
+                   RTE_MBUF_F_TX_IP_CKSUM |
+                   RTE_MBUF_F_TX_UDP_CKSUM;
+#endif
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * Update mbuf fields of one packet
+ */
+static inline void
+UpdateMbuf(struct rte_mbuf *pkt_mbuf)
+{
+  struct rte_ipv4_hdr *ipv4_hdr;
+  bess::Packet *pkt = (bess::Packet *)pkt_mbuf;
+  
+  ipv4_hdr = rte_pktmbuf_mtod_offset(pkt_mbuf, struct rte_ipv4_hdr *, ETH_HLEN);
+  /* TCP */
+  if (ipv4_hdr->next_proto_id == IPPROTO_TCP)
+    UpdateTCPmbuf(pkt_mbuf);
+  else if ((ipv4_hdr->next_proto_id == IPPROTO_UDP) ||
+            (ipv4_hdr->next_proto_id == IPPROTO_SCTP))
+    UpdateNonTCPmbuf(pkt_mbuf);
+  
+  /* clear linkspace */
+  pkt->set_link(NULL);
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * Update mbuf fields of packets in a batch
+ */
+static inline void
+UpdateMbufBatch(bess::Packet **pkts, uint16_t nb_pkts) {
+  for (int i = 0; i < (int)nb_pkts; i++)
+    UpdateMbuf(reinterpret_cast<rte_mbuf **>(pkts)[i]);
+}
+/*---------------------------------------------------------------------------*/
+/* 
+ * Try assemble non-TCP packet to one of existing flows and items
+ * Returns -1, if this packet is (unlikely) not supported format,
+ * so cannot be assembled; we dont handle this packet as an item
+ * Otherwise, returns the number of reduced packets after assemble
+ */
+static inline int
+AssembleNonTcp(struct tbl *tbl, struct rte_mbuf *pkt) {
+  struct flow_key *key;
+  struct item *cur_item;
+  struct flow *cur_flow;
+  uint16_t bucket_idx, start_flow_idx;
+  
+  /* only payload length > 0 */
+  if (unlikely(pkt->pkt_len <= ETH_HLEN + IP_HLEN + UDP_HLEN))
+    return -1;
+  /* get pointer to key (4-tuple) */
+  key = rte_pktmbuf_mtod_offset(pkt, struct flow_key *, ETH_HLEN + ADDR_OFF);
+  // bucket_idx = rte_hash_crc(key, sizeof(struct flow_key), 0) % tbl->array_size;
+  bucket_idx = (pkt->hash.rss >> 4) % tbl->array_size;
+  start_flow_idx = tbl->buckets[bucket_idx];
+  if (start_flow_idx == INVALID_ARRAY_INDEX) {
+    /* nothing in the bucket; allocate new bucket */
+    tbl->buckets[bucket_idx] = tbl->flow_num;
+    InsertFlow(tbl, key, IPPROTO_UDP, NULL);
+    InsertItem(tbl, pkt, 0, NULL);
+    return 0;
+  }
+
+  /* find flow for the input pkt */
+  cur_flow = &tbl->flows[start_flow_idx];
+  while (memcmp(cur_flow->key, key, sizeof(struct flow_key)) ||
+         (cur_flow->protoid != IPPROTO_UDP)) {
+    /* this flow is not for input pkt; collision */
+    if (cur_flow->next_flow_idx == INVALID_ARRAY_INDEX) {
+      /* end of flow list; no flow matched */
+      InsertFlow(tbl, key, IPPROTO_UDP, cur_flow);
+      InsertItem(tbl, pkt, 0, NULL);
+      return 0;
+    }
+    cur_flow = &tbl->flows[cur_flow->next_flow_idx];
+  }
+
+  cur_item = &tbl->items[cur_flow->cur_item_idx];
+  if (!ConcatPacket(cur_item, pkt)) {
+    /* current item length is bigger than 9KB */
+
+    /* update current item index */
+    cur_flow->cur_item_idx = tbl->item_num;
+
+    /* store this packet as a new item */
+    InsertItem(tbl, pkt, 0, cur_item);
+    return 0;
+  }
+
+  return 1;
+}
+/*---------------------------------------------------------------------------*/
+/* 
+ * Try assemble TCP packet to one of existing flows and items
+ * Returns -1, if this packet is (unlikely) not supported format,
+ * so cannot be assembled; we dont handle this packet as an item
+ * Otherwise, returns the number of reduced packets after assemble
+ */
+static inline int
+AssembleTcp(struct tbl *tbl, struct rte_mbuf *pkt) {
+  struct rte_tcp_hdr *tcp_hdr;
+  struct flow_key *key;
+  struct item *cur_item, *prev_item, *merged_item;
+  struct flow *cur_flow;
+  uint16_t bucket_idx, start_flow_idx;
+  uint32_t seq, tcp_hl, tcp_dl;
+  int cmp;
+  
+  /* get pointer to key (4-tuple) */
+  key = rte_pktmbuf_mtod_offset(pkt, struct flow_key *, ETH_HLEN + ADDR_OFF);
+  tcp_hdr = rte_pktmbuf_mtod_offset(pkt, struct rte_tcp_hdr *, ETH_HLEN + IP_HLEN);
+  tcp_hl = pkt->l4_len = tcp_hdr->data_off >> 2;
+  /* only process ACK packet */
+  if (unlikely(tcp_hdr->tcp_flags != RTE_TCP_ACK_FLAG))
+    return -1;
+  /* TCP header length out of range */
+  if (unlikely((tcp_hl < TCP_HLEN) || (tcp_hl > MAX_TCP_HLEN)))
+    return -1;
+
+  /* ToDo: we must handle TCP padding */
+
+  tcp_dl = pkt->pkt_len - (ETH_HLEN + IP_HLEN + tcp_hl);
+  /* only payload length > 0 */
+  if (unlikely(tcp_dl <= 0))
+    return -1;
+  seq = ntohl(tcp_hdr->sent_seq);
+  // bucket_idx = rte_hash_crc(key, sizeof(struct flow_key), 0) % tbl->array_size;
+  bucket_idx = (pkt->hash.rss >> 4) % tbl->array_size;
+  start_flow_idx = tbl->buckets[bucket_idx];
+  if (start_flow_idx == INVALID_ARRAY_INDEX) {
+    /* nothing in the bucket; allocate new bucket */
+    tbl->buckets[bucket_idx] = tbl->flow_num;
+    InsertFlow(tbl, key, IPPROTO_TCP, NULL);
+    InsertItem(tbl, pkt, seq, NULL);
+    return 0;
+  }
+
+  /* find flow for the input pkt */
+  cur_flow = &tbl->flows[start_flow_idx];
+  while (memcmp(cur_flow->key, key, sizeof(struct flow_key)) ||
+         (cur_flow->protoid != IPPROTO_TCP)) {
+    /* this flow is not for input pkt; collision */
+    if (cur_flow->next_flow_idx == INVALID_ARRAY_INDEX) {
+      /* end of flow list; no flow matched */
+      InsertFlow(tbl, key, IPPROTO_TCP, cur_flow);
+      InsertItem(tbl, pkt, seq, NULL);
+      return 0;
+    }
+    cur_flow = &tbl->flows[cur_flow->next_flow_idx];
+  }
+
+  /* find neighbor item for the input pkt */
+  prev_item = cur_item = &tbl->items[cur_flow->start_item_idx];
+  while (!(cmp = CheckSeqOption(cur_item, tcp_hdr,
+                                seq,
+                                tcp_hl, tcp_dl))) {
+    /* this item is not neighbor of input pkt */
+    if (cur_item->next_pkt_idx == INVALID_ARRAY_INDEX) {
+      /* end of item list; no neighbor items matched */
+      InsertItem(tbl, pkt, seq, cur_item);
+      return 0;
+    }
+    prev_item = cur_item;
+    cur_item = &tbl->items[cur_item->next_pkt_idx];
+  }
+
+  /* found neighbor item */
+  if (!MergePacket(cur_item, pkt,
+                   rte_pktmbuf_lastseg(pkt),
+                   cmp, seq)) {
+    /* bigger than 64KB; store this packet as a new item in the given flow */
+    InsertItem(tbl, pkt, seq, cur_item);
+    return 0;
+  }
+
+  /* 
+   * Now pkt is merged to one item; we dont need to insert new item
+   * to solve C -> A -> B (or A -> C -> B) issue,
+   * check if another item can be merged after first merge
+   */
+  merged_item = cur_item;
+  do {
+    /* this item is not neighbor of input pkt */
+    if (cur_item->next_pkt_idx == INVALID_ARRAY_INDEX) {
+      /* end of item list; no neighbor items matched */
+      return 1;
+    }
+    prev_item = cur_item;
+    cur_item = &tbl->items[cur_item->next_pkt_idx];
+  } while (!(cmp = CheckSeqOption(cur_item, tcp_hdr,
+                                  merged_item->seq,
+                                  tcp_hl, tcp_dl)));
+  
+  /* found second neighbor item */
+  if (!MergePacket(cur_item, merged_item->firstseg,
+                   merged_item->lastseg,
+                   cmp, merged_item->seq)) {
+    /* bigger than 64KB; cannot merge*/
+    return 1;
+  }
+
+  /* merged again; remove current item because it is merged to prior item */
+  prev_item->next_pkt_idx = cur_item->next_pkt_idx;
+
+  return 2;
+}
+/*---------------------------------------------------------------------------*/
+/* 
+ * Parse this packet.
+ * Returns 0 for good format.
+ * Returns -1, if this packet is (unlikely) not supported format.
+ */
+static inline int
+ParsePacket(struct rte_mbuf *pkt, uint16_t *proto_id, uint8_t *tcp_flags) {
+  struct rte_ether_hdr *eth_hdr;
+  struct rte_ipv4_hdr *ipv4_hdr;
+  
+  eth_hdr = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
+  /* not IP */
+  if (unlikely(eth_hdr->ether_type != htons(RTE_ETHER_TYPE_IPV4)))
+    return -1;
+  ipv4_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
+  /* if IP option exists */
+  if (unlikely(ipv4_hdr->version_ihl != IP_VERSION_IHL))
+    return -1;
+  /* get proto_id */
+  *proto_id = ipv4_hdr->next_proto_id;
+  /* get tcp_flags */
+  *tcp_flags = (*proto_id == IPPROTO_TCP) ?
+    ((struct rte_tcp_hdr *)(ipv4_hdr + 1))->tcp_flags : 0;
+
+  return 0;
+}
+/*---------------------------------------------------------------------------*/
+static inline uint16_t
+LinkFlush(struct tbl *tbl, struct rte_mbuf **out, int link) {
+  struct item *start_item, *prev_item, *cur_item;
+  uint16_t cnt = 0, item_idx;
+
+  for (int i = 0; i < tbl->flow_num; i++) {
+    item_idx = tbl->flows[i].start_item_idx;
+    start_item = &tbl->items[item_idx];
+
+    /* remove bucket of this flow */
+    tbl->buckets[(start_item->firstseg->hash.rss >> 4) % tbl->array_size] = INVALID_ARRAY_INDEX;
+    
+    /* if link is on, setup start item */
+    if (link)
+      SetupStartItem(start_item);
+      
+    prev_item = NULL;
+    while (item_idx != INVALID_ARRAY_INDEX) {
+      cur_item = &tbl->items[item_idx];
+      /* if merged, update header */
+      if (tbl->items[item_idx].merged)
+        UpdateIP(cur_item->firstseg);
+      /* update mbuf fields */
+      UpdateMbuf(cur_item->firstseg);
+
+      /*
+       * if link is on, link this item after the prev item,
+       * do not insert this item to out batch
+       */
+      if (link) {
+        if (prev_item)
+          /* update nb_segs and pkt len of start packet */
+          LinkPacket(prev_item, cur_item);
+        prev_item = cur_item;
+      }
+      /* if link is off, insert this item to out batch */
+      else
+        out[cnt++] = cur_item->firstseg;
+
+      /* go to next item in the flow */
+      item_idx = tbl->items[item_idx].next_pkt_idx;
+    }
+
+    /* if link is on, remain only the start pkt */
+    if (link)
+      out[cnt++] = start_item->firstseg;
+  }
+
+  return cnt;
+}
+/*---------------------------------------------------------------------------*/
+uint16_t QueueInc::CustomGRO(struct rte_mbuf **pkts, uint16_t nb_pkts, int do_link) {
+  struct rte_mbuf *unprocess_pkts[nb_pkts];
+  int ret;
+  uint8_t tcp_flags;
+  uint16_t proto_id, i, unprocess_num = 0, nb_after_sort = nb_pkts;
+
+  /* reset table counters */
+  tbl_.flow_num = tbl_.item_num = 0;
+
+  /* Stage 1: Parse and try packet assemble */
+  for (i = 0; i < nb_pkts; i++) {
+    if (ParsePacket(pkts[i], &proto_id, &tcp_flags) < 0)
+      goto UpdateMbuf;
+    /* if SYN packet, translate MSS */
+    if (tcp_flags & RTE_TCP_SYN_FLAG)
+      TranslateMSS(pkts[i]);
+    /* try packet assemble */
+    ret = (proto_id == IPPROTO_TCP) ? AssembleTcp(&tbl_, pkts[i]) :
+                                      AssembleNonTcp(&tbl_, pkts[i]);
+    if (ret > 0)
+      /* merge successfully */
+      nb_after_sort -= ret;
+    else if (ret < 0)
+UpdateMbuf:
+    {
+      /* update mbuf of non-mergeable packets */
+      UpdateMbuf(pkts[i]);
+      unprocess_pkts[unprocess_num++] = pkts[i];
+    }
+    /* otherwise, inserted to table, or dropped */
+  }
+
+  /* Stage 2: Modify packet length and flush assembled packets as a new packet batch */
+  if ((nb_after_sort < nb_pkts) || (unprocess_num < nb_pkts)) {
+    /* Link and flush all packets from the tables */
+    i = LinkFlush(&tbl_, pkts, do_link);
+    /* Copy unprocessed packets */
+    if (unprocess_num > 0)
+      memcpy(&pkts[i], unprocess_pkts,
+             sizeof(struct rte_mbuf *) * unprocess_num);
+    nb_after_sort = i + unprocess_num;
+  }
+
+  return nb_after_sort;
+}
+
+int QueueInc::InitTable() {
+  tbl_.array_size = burst_;
+  if (!(tbl_.items = (struct item *)calloc(burst_, sizeof(struct item))))
+    return -1;
+  if (!(tbl_.flows = (struct flow *)calloc(burst_, sizeof(struct flow))))
+    return -1;
+  if (!(tbl_.buckets = (uint16_t *)calloc(burst_, sizeof(uint16_t))))
+    return -1;
+  tbl_.item_num = 0;
+  tbl_.flow_num = 0;
+  /* initialize buckets */
+  memset(tbl_.buckets, 0xff, burst_ * sizeof(uint16_t));
+
+  return 0;
+}
+
+void QueueInc::DeInitTable() {
+  free(tbl_.items);
+  free(tbl_.flows);
+  free(tbl_.buckets);
+}
+
+const Commands QueueInc::cmds = {{"set_burst", "QueueIncCommandSetBurstArg",
+                                  MODULE_CMD_FUNC(&QueueInc::CommandSetBurst),
+                                  Command::THREAD_SAFE}};
+
+CommandResponse QueueInc::Init(const bess::pb::QueueIncArg &arg) {
+  const char *port_name;
+  task_id_t tid;
+  CommandResponse err;
+  if (!arg.port().length()) {
+    return CommandFailure(EINVAL, "Field 'port' must be specified");
+  }
+  port_name = arg.port().c_str();
+  qid_ = arg.qid();
+
+  const auto &it = PortBuilder::all_ports().find(port_name);
+  if (it == PortBuilder::all_ports().end()) {
+    return CommandFailure(ENODEV, "Port %s not found", port_name);
+  }
+  port_ = it->second;
+  burst_ = bess::PacketBatch::kMaxBurst;
+
+  if (arg.prefetch()) {
+    prefetch_ = 1;
+    printf("Payload prefetched %d\n", prefetch_);
+  }
+  node_constraints_ = port_->GetNodePlacementConstraint();
+  tid = RegisterTask((void *)(uintptr_t)qid_);
+  if (tid == INVALID_TASK_ID) {
+    fprintf(stderr, "[%s] Failed RegisterTask\n", __func__);
+    return CommandFailure(ENOMEM, "Context creation failed");
+  }
+
+  int ret = port_->AcquireQueues(reinterpret_cast<const module *>(this),
+                                 PACKET_DIR_INC, &qid_, 1);
+  if (ret < 0) {
+    fprintf(stderr, "[%s] Failed AcquiredQueues, ret: %d\n", __func__, ret);
+    return CommandFailure(-ret);
+  }
+#ifdef USE_GRO
+  if (InitTable() < 0)
+    return CommandFailure(ENOMEM, "Flow table creation failed");
+#endif
+
+  return CommandSuccess();
+}
+
+void QueueInc::DeInit() {
+  if (port_) {
+    port_->ReleaseQueues(reinterpret_cast<const module *>(this), PACKET_DIR_INC,
+                         &qid_, 1);
+  }
+#ifdef USE_GRO
+  DeInitTable();
+#endif
+}
+
+std::string QueueInc::GetDesc() const {
+  return bess::utils::Format("%s:%hhu/%s", port_->name().c_str(), qid_,
+                             port_->port_builder()->class_name().c_str());
+}
+
+struct task_result QueueInc::RunTask(Context *ctx, bess::PacketBatch *batch,
+                                     void *arg) {
+  Port *p = port_;
+
+  if (!p->conf().admin_up) {
+    return {.block = true, .packets = 0, .bits = 0};
+  }
+
+  const queue_t qid = (queue_t)(uintptr_t)arg;
+
+  uint64_t received_bytes = 0;
+  uint32_t cnt;
+
+  const int burst = ACCESS_ONCE(burst_);
+  const int pkt_overhead = 24;
+  batch->set_cnt(p->RecvPackets(qid, batch->pkts(), burst));
+
+  // static struct timespec current = {0}, last = {0};
+  // long time;
+  // clock_gettime(CLOCK_MONOTONIC, &current);
+  // time = (current.tv_sec - last.tv_sec) * NANOS + (current.tv_nsec - last.tv_nsec);
+  // if (time > NANOS) {
+  //   last = current;
+  //   p->CollectStats(false);
+  // }
+
+  cnt = batch->cnt();
+  p->queue_stats[PACKET_DIR_INC][qid].requested_hist[burst]++;
+  p->queue_stats[PACKET_DIR_INC][qid].actual_hist[cnt]++;
+  p->queue_stats[PACKET_DIR_INC][qid].diff_hist[burst - cnt]++;
+  if (cnt == 0)
+    return {.block = true, .packets = 0, .bits = 0};
+    
+#ifdef USE_GRO
+#ifdef DPDK_GRO
+  /* option 1: existing GRO API */
+  struct rte_gro_param gro_param = {.gro_types = RTE_GRO_TCP_IPV4,
+                                    .max_flow_num = (uint16_t)burst,
+                                    .max_item_per_flow = (uint16_t)burst,
+                                    .socket_id = 0};
+  batch->set_cnt(rte_gro_reassemble_burst(
+    reinterpret_cast<rte_mbuf **>(batch->pkts()), cnt, &gro_param));
+#else
+  /* option 2: our custom packet sort */
+    #ifdef USE_LINK
+      #define DO_LINK 1
+    #else
+      #define DO_LINK 0
+    #endif
+  batch->set_cnt(CustomGRO(
+    reinterpret_cast<rte_mbuf **>(batch->pkts()), cnt, DO_LINK));
+  // printf("Merge and Link: %u -> %u\n", cnt, batch->cnt());
+#endif
+// #elif USE_LRO
+#else
+  UpdateMbufBatch(batch->pkts(), cnt);
+#endif
+
+  // NOTE: we cannot skip this step since it might be used by scheduler.
+  if (prefetch_) {
+    for (int i = 0; i < batch->cnt(); i++) {
+      received_bytes += batch->pkts()[i]->total_len();
+      rte_prefetch0(batch->pkts()[i]->head_data());
+    }
+  } else {
+    for (int i = 0; i < batch->cnt(); i++) {
+      received_bytes += batch->pkts()[i]->total_len();
+    }
+  }
+  
+  if (!(p->GetFlags() & DRIVER_FLAG_SELF_INC_STATS)) {
+    p->queue_stats[PACKET_DIR_INC][qid].packets += cnt;
+    p->queue_stats[PACKET_DIR_INC][qid].bytes += received_bytes;
+  }
+
+  RunNextModule(ctx, batch);
+
+  return {.block = false,
+          .packets = cnt,
+          .bits = (received_bytes + cnt * pkt_overhead) * 8};
+}
+
+CommandResponse QueueInc::CommandSetBurst(
+    const bess::pb::QueueIncCommandSetBurstArg &arg) {
+  if (arg.burst() > bess::PacketBatch::kMaxBurst) {
+    return CommandFailure(EINVAL, "burst size must be [0,%zu]",
+                          bess::PacketBatch::kMaxBurst);
+  } else {
+    burst_ = arg.burst();
+    return CommandSuccess();
+  }
+}
+
+ADD_MODULE(QueueInc, "queue_inc",
+           "receives packets from a port via a specific queue")

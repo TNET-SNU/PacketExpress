@@ -1,0 +1,103 @@
+modules/worker_split.o: modules/worker_split.cc modules/worker_split.h \
+ modules/../module.h modules/../commands.h modules/../message.h \
+ modules/../pb/bess_msg.pb.h modules/../pb/error.pb.h \
+ modules/../pb/error.pb.h modules/../pb/module_msg.pb.h \
+ modules/../pb/util_msg.pb.h modules/../event.h modules/../gate.h \
+ modules/../pktbatch.h modules/../utils/copy.h modules/../utils/common.h \
+ modules/../utils/common.h modules/../metadata.h \
+ modules/../snbuf_layout.h modules/../packet_pool.h modules/../memory.h \
+ modules/../packet.h modules/../worker.h modules/../traffic_class.h \
+ modules/../task.h modules/../utils/extended_priority_queue.h \
+ modules/../utils/simd.h modules/../utils/time.h \
+ modules/../utils/random.h modules/../utils/time.h \
+ modules/../packet_avx.h modules/../drivers/pmd.h \
+ modules/../drivers/../module.h modules/../drivers/../port.h \
+ modules/../drivers/../message.h modules/../drivers/../module.h \
+ modules/../drivers/../packet.h modules/../drivers/../pb/port_msg.pb.h \
+ modules/../drivers/../pktbatch.h modules/../drivers/../utils/common.h \
+ modules/../drivers/../utils/ether.h modules/../drivers/../utils/endian.h \
+ modules/../drivers/../utils/copy.h modules/../drivers/../packet.h
+
+modules/worker_split.h:
+
+modules/../module.h:
+
+modules/../commands.h:
+
+modules/../message.h:
+
+modules/../pb/bess_msg.pb.h:
+
+modules/../pb/error.pb.h:
+
+modules/../pb/error.pb.h:
+
+modules/../pb/module_msg.pb.h:
+
+modules/../pb/util_msg.pb.h:
+
+modules/../event.h:
+
+modules/../gate.h:
+
+modules/../pktbatch.h:
+
+modules/../utils/copy.h:
+
+modules/../utils/common.h:
+
+modules/../utils/common.h:
+
+modules/../metadata.h:
+
+modules/../snbuf_layout.h:
+
+modules/../packet_pool.h:
+
+modules/../memory.h:
+
+modules/../packet.h:
+
+modules/../worker.h:
+
+modules/../traffic_class.h:
+
+modules/../task.h:
+
+modules/../utils/extended_priority_queue.h:
+
+modules/../utils/simd.h:
+
+modules/../utils/time.h:
+
+modules/../utils/random.h:
+
+modules/../utils/time.h:
+
+modules/../packet_avx.h:
+
+modules/../drivers/pmd.h:
+
+modules/../drivers/../module.h:
+
+modules/../drivers/../port.h:
+
+modules/../drivers/../message.h:
+
+modules/../drivers/../module.h:
+
+modules/../drivers/../packet.h:
+
+modules/../drivers/../pb/port_msg.pb.h:
+
+modules/../drivers/../pktbatch.h:
+
+modules/../drivers/../utils/common.h:
+
+modules/../drivers/../utils/ether.h:
+
+modules/../drivers/../utils/endian.h:
+
+modules/../drivers/../utils/copy.h:
+
+modules/../drivers/../packet.h:

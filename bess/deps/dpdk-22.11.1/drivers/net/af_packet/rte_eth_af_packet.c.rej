@@ -1,0 +1,27 @@
+--- drivers/net/af_packet/rte_eth_af_packet.c
++++ drivers/net/af_packet/rte_eth_af_packet.c
+@@ -472,6 +472,7 @@ static int
+ eth_dev_change_flags(char *if_name, uint32_t flags, uint32_t mask)
+ {
+ 	struct ifreq ifr;
++	uint32_t cur_flags;
+ 	int ret = 0;
+ 	int s;
+ 
+@@ -484,8 +485,16 @@ eth_dev_change_flags(char *if_name, uint32_t flags, uint32_t mask)
+ 		ret = -errno;
+ 		goto out;
+ 	}
++
++	cur_flags = ifr.ifr_flags;
+ 	ifr.ifr_flags &= mask;
+ 	ifr.ifr_flags |= flags;
++
++	// Return if there is no change
++	if (cur_flags == ifr.ifr_flags){
++		goto out;
++	}
++
+ 	if (ioctl(s, SIOCSIFFLAGS, &ifr) < 0) {
+ 		ret = -errno;
+ 		goto out;

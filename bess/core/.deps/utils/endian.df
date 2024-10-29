@@ -1,0 +1,3 @@
+utils/endian.o: utils/endian.cc utils/endian.h
+
+utils/endian.h:

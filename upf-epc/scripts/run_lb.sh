@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2019 Intel Corporation
+
+ifaces=("eth2" "eth3")
+access_ifaces=("eth4" "eth6" "eth8")
+core_ifaces=("eth5" "eth7" "eth9")
+
+workdir=`pwd`
+rootdir=$workdir/../..
+
+# reset bess daemon and run up4
+cd $rootdir/bess/bessctl
+# python3 bessctl daemon reset
+python3 bessctl run lb
+
+# run route control
+cd $rootdir/bess
+python3 route_control.py -i "${ifaces[@]}" --access "${access_ifaces[@]}" --core "${core_ifaces[@]}"

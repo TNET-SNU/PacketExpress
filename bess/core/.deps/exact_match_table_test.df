@@ -1,0 +1,93 @@
+exact_match_table_test.o: utils/exact_match_table_test.cc \
+ utils/exact_match_table.h utils/../message.h utils/../pb/bess_msg.pb.h \
+ utils/../pb/error.pb.h utils/../pb/error.pb.h \
+ utils/../pb/module_msg.pb.h utils/../pb/util_msg.pb.h \
+ utils/../metadata.h utils/../snbuf_layout.h utils/../module.h \
+ utils/../commands.h utils/../message.h utils/../event.h utils/../gate.h \
+ utils/../pktbatch.h utils/../utils/copy.h utils/../utils/common.h \
+ utils/../utils/common.h utils/../metadata.h utils/../packet_pool.h \
+ utils/../memory.h utils/../packet.h utils/../worker.h \
+ utils/../traffic_class.h utils/../task.h \
+ utils/../utils/extended_priority_queue.h utils/../utils/simd.h \
+ utils/../utils/time.h utils/../utils/random.h utils/../utils/time.h \
+ utils/../packet_avx.h utils/../packet.h utils/bits.h utils/common.h \
+ utils/cuckoo_map.h utils/../debug.h utils/endian.h utils/format.h \
+ utils/../packet_pool.h
+
+utils/exact_match_table.h:
+
+utils/../message.h:
+
+utils/../pb/bess_msg.pb.h:
+
+utils/../pb/error.pb.h:
+
+utils/../pb/error.pb.h:
+
+utils/../pb/module_msg.pb.h:
+
+utils/../pb/util_msg.pb.h:
+
+utils/../metadata.h:
+
+utils/../snbuf_layout.h:
+
+utils/../module.h:
+
+utils/../commands.h:
+
+utils/../message.h:
+
+utils/../event.h:
+
+utils/../gate.h:
+
+utils/../pktbatch.h:
+
+utils/../utils/copy.h:
+
+utils/../utils/common.h:
+
+utils/../utils/common.h:
+
+utils/../metadata.h:
+
+utils/../packet_pool.h:
+
+utils/../memory.h:
+
+utils/../packet.h:
+
+utils/../worker.h:
+
+utils/../traffic_class.h:
+
+utils/../task.h:
+
+utils/../utils/extended_priority_queue.h:
+
+utils/../utils/simd.h:
+
+utils/../utils/time.h:
+
+utils/../utils/random.h:
+
+utils/../utils/time.h:
+
+utils/../packet_avx.h:
+
+utils/../packet.h:
+
+utils/bits.h:
+
+utils/common.h:
+
+utils/cuckoo_map.h:
+
+utils/../debug.h:
+
+utils/endian.h:
+
+utils/format.h:
+
+utils/../packet_pool.h:

@@ -1,0 +1,5 @@
+shared_obj_test.o: shared_obj_test.cc shared_obj.h utils/common.h
+
+shared_obj.h:
+
+utils/common.h:

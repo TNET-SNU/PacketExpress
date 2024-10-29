@@ -1,0 +1,3 @@
+pb/supdate_msg.pb.o: pb/supdate_msg.pb.cc pb/supdate_msg.pb.h
+
+pb/supdate_msg.pb.h:

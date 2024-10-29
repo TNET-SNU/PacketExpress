@@ -1,0 +1,8 @@
+pb/module_msg.grpc.pb.o: pb/module_msg.grpc.pb.cc pb/module_msg.pb.h \
+ pb/util_msg.pb.h pb/module_msg.grpc.pb.h
+
+pb/module_msg.pb.h:
+
+pb/util_msg.pb.h:
+
+pb/module_msg.grpc.pb.h:

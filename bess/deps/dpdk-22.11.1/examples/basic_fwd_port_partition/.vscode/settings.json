@@ -1,0 +1,12 @@
+{
+    "files.associations": {
+        "*.bess": "python",
+        "*.proto": "c",
+        "*.cc": "cpp",
+        "rte_ip.h": "c",
+        "rte_tcp.h": "c",
+        "in.h": "c",
+        "rte_eal.h": "c",
+        "typeinfo": "c"
+    }
+}

@@ -1,0 +1,21 @@
+checksum_test.o: utils/checksum_test.cc utils/checksum.h utils/common.h \
+ utils/ip.h utils/endian.h utils/simd.h utils/tcp.h utils/udp.h \
+ utils/random.h utils/time.h
+
+utils/checksum.h:
+
+utils/common.h:
+
+utils/ip.h:
+
+utils/endian.h:
+
+utils/simd.h:
+
+utils/tcp.h:
+
+utils/udp.h:
+
+utils/random.h:
+
+utils/time.h:

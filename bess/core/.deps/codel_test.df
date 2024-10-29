@@ -1,0 +1,8 @@
+codel_test.o: utils/codel_test.cc utils/codel.h utils/time.h \
+ utils/queue.h
+
+utils/codel.h:
+
+utils/time.h:
+
+utils/queue.h:

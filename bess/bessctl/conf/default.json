@@ -1,0 +1,22 @@
+{
+    "mode": "dpdk",
+
+    "": "Set the log level to one of \"panic\", \"fatal\", \"error\", \"warning\", \"info\", \"debug\", \"trace\"",
+    "log_level": "info",
+
+    "": "LAN interface",
+    "access": {
+        "ifname": "eth0"
+    },
+
+    "": "WAN interface",
+    "core": {
+        "ifname": "eth0"
+    },
+
+    "": "Number of worker threads. Default: 1",
+    "workers": 1,
+
+    "": "Number of NIC ports. Default: 1",
+    "num_ports": 4
+}

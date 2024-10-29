@@ -1,0 +1,11 @@
+--- lib/librte_bpf/bpf_load.c
++++ lib/librte_bpf/bpf_load.c
+@@ -115,7 +115,7 @@
+ 		return NULL;
+ 	}
+ 
+-	rc = bpf_validate(bpf);
++	rc = rte_bpf_validate(bpf);
+ 	if (rc == 0) {
+ 		bpf_jit(bpf);
+ 		if (mprotect(bpf, bpf->sz, PROT_READ) != 0)

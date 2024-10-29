@@ -1,0 +1,3 @@
+trie_test.o: utils/trie_test.cc utils/trie.h
+
+utils/trie.h:

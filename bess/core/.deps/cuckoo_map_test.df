@@ -1,0 +1,12 @@
+cuckoo_map_test.o: utils/cuckoo_map_test.cc utils/cuckoo_map.h \
+ utils/../debug.h utils/common.h utils/random.h utils/time.h
+
+utils/cuckoo_map.h:
+
+utils/../debug.h:
+
+utils/common.h:
+
+utils/random.h:
+
+utils/time.h:

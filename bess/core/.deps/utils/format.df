@@ -1,0 +1,3 @@
+utils/format.o: utils/format.cc utils/format.h
+
+utils/format.h:

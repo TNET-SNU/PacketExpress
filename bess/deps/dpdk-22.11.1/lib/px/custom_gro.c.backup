@@ -1,0 +1,1414 @@
+#include "custom_gro.h"
+/*----------------------------------------------------------------------------------*/
+static inline void
+set_mss(uint8_t *tcpopt, int len, uint16_t new_mss)
+{
+  int opt, optlen;
+  uint16_t *mss;
+
+  for (int i = 0; i < len;)
+  {
+    opt = *(tcpopt + i++);
+    if (opt == TCPOPT_EOL)
+    { // end of option field
+      break;
+    }
+    if (opt == TCPOPT_NOP)
+    { // no option
+      continue;
+    }
+    optlen = *(tcpopt + i++);
+    if (i + optlen - 2 > len)
+    {
+      break;
+    }
+    if (opt == TCPOPT_MAXSEG)
+    {
+      mss = (uint16_t *)(tcpopt + i);
+      *mss = htons(new_mss);
+      i += 2;
+      break;
+    }
+    if (opt == TCPOPT_WINDOW)
+    {
+      i++;
+      continue;
+    }
+    if (opt == TCPOPT_SACK_PERMITTED)
+    {
+      continue;
+    }
+    if (opt == TCPOPT_TIMESTAMP)
+    {
+      i += 8;
+      continue;
+    }
+    // not handle
+    i += optlen - 2;
+  }
+}
+/*----------------------------------------------------------------------------------*/
+static inline int
+get_mss(uint8_t *tcpopt, int len)
+{
+  int opt, optlen;
+  uint16_t mss;
+
+  for (int i = 0; i < len;)
+  {
+    opt = *(tcpopt + i++);
+    if (opt == TCPOPT_EOL)
+    { // end of option field
+      break;
+    }
+    if (opt == TCPOPT_NOP)
+    { // no option
+      continue;
+    }
+    optlen = *(tcpopt + i++);
+    if (i + optlen - 2 > len)
+    {
+      break;
+    }
+    if (opt == TCPOPT_MAXSEG)
+    {
+      mss = *(uint16_t *)(tcpopt + i);
+      i += 2;
+      break;
+    }
+    if (opt == TCPOPT_WINDOW)
+    {
+      i++;
+      continue;
+    }
+    if (opt == TCPOPT_SACK_PERMITTED)
+    {
+      continue;
+    }
+    if (opt == TCPOPT_TIMESTAMP)
+    {
+      i += 8;
+      continue;
+    }
+    // not handle
+    i += optlen - 2;
+  }
+
+  return ntohs(mss);
+}
+/*----------------------------------------------------------------------------------*/
+/*
+ * Note:
+ * If packet is encaped with GTP, iph, tcph mean the inner headers of GTP packet.
+ * Otherwise, iph, tcph means outer headers.
+ */
+static inline void
+trans_mss(struct rte_mbuf *pkt)
+{
+  struct rte_tcp_hdr *tcp_hdr =
+      rte_pktmbuf_mtod_offset(pkt, struct rte_tcp_hdr *,
+                              sizeof(struct rte_ether_hdr) +
+                                  sizeof(struct rte_ipv4_hdr));
+  uint8_t *tcp_option;
+  uint16_t mss, new_mss, tcp_optlen, hdr_len; // len between ETH and TCP option
+
+  /* mss parsing */
+  tcp_optlen = (tcp_hdr->data_off << 2) - sizeof(struct rte_tcp_hdr);
+  if (!tcp_optlen)
+    return;
+  tcp_option = (uint8_t *)tcp_hdr + sizeof(struct rte_tcp_hdr);
+
+#if 0 /* below is to deceive UE side to use 9000 MTU in real world setup */
+#define BEFORE_MTU 1500
+#define AFTER_MTU 9000
+#else /* below is to deceive PDN side to use 1500 MTU in our testbed setup */
+#define BEFORE_MTU 9000
+#define AFTER_MTU 1500
+#endif
+  /*
+   * In case when packet is like |ETH| ... |TCPOPT|,
+   * hdr_len is the length of | ... |
+   */
+  mss = get_mss(tcp_option, tcp_optlen);
+  hdr_len = sizeof(struct rte_ipv4_hdr) + sizeof(struct rte_tcp_hdr);
+  if (mss == BEFORE_MTU - hdr_len)
+  {
+    new_mss = AFTER_MTU - hdr_len;
+    set_mss(tcp_option, tcp_optlen, new_mss);
+    printf("[MSS modify] mss: %u ==> %u\n", mss, new_mss);
+  }
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * Check if two TCP/IPv4 packets are neighbors.
+ */
+static inline int
+check_seq_option(struct item *item,
+                 struct rte_tcp_hdr *tcph,
+                 uint32_t seq,
+                 uint16_t tcp_hl,
+                 uint16_t tcp_dl)
+{
+  struct rte_mbuf *pkt_orig;
+  uint16_t tcp_dl_orig;
+  uint16_t optlen;
+
+  pkt_orig = item->firstseg;
+  tcp_dl_orig = pkt_orig->pkt_len -
+                (ETH_HLEN + IP_HLEN + pkt_orig->l4_len);
+
+  /* Check if TCP option fields equal */
+  if (unlikely(tcp_hl != pkt_orig->l4_len))
+    return 0;
+  optlen = pkt_orig->l4_len - TCP_HLEN;
+  if (optlen && memcmp(tcph + 1,
+                       rte_pktmbuf_mtod_offset(pkt_orig,
+                                               void *, ETH_HLEN + IP_HLEN + TCP_HLEN),
+                       optlen))
+    return 0;
+
+  /* append or pre-pend the new packet */
+  return (seq == (item->seq + tcp_dl_orig)) ? 1 : (((seq + tcp_dl) == item->seq) ? -1 : 0);
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * Merge two TCP/IPv4 packets without updating checksums.
+ * If cmp is larger than 0, append the new packet to the
+ * original packet. Otherwise, pre-pend the new packet to
+ * the original packet.
+ * Remove ETH|IP|TCP header when TCP flow.
+ */
+static inline int
+merge_packet(struct item *cur_item,
+             struct rte_mbuf *firstseg,
+             struct rte_mbuf *lastseg,
+             int cmp,
+             int seq)
+{
+  struct rte_mbuf *pkt_head, *pkt_tail;
+  uint16_t hdr_len;
+
+  if (cmp > 0)
+  {
+    pkt_head = cur_item->firstseg;
+    pkt_tail = firstseg;
+  }
+  else
+  {
+    pkt_head = firstseg;
+    pkt_tail = cur_item->firstseg;
+  }
+
+  /* check if the IPv4 packet length is greater than the max value */
+  hdr_len = ETH_HLEN + IP_HLEN + pkt_head->l4_len;
+  if (unlikely(pkt_head->pkt_len - ETH_HLEN +
+                   pkt_tail->pkt_len - hdr_len >
+               MAX_IPV4_PKT_LENGTH))
+  {
+    return 0;
+  }
+
+  /* remove the packet header of tail packet */
+  rte_pktmbuf_adj(pkt_tail, hdr_len);
+
+  /* chain two packets together */
+  if (cmp > 0)
+  {
+    cur_item->lastseg->next = firstseg;
+    cur_item->lastseg = lastseg;
+  }
+  else
+  {
+    lastseg->next = cur_item->firstseg;
+    cur_item->firstseg = firstseg;
+    /* update seq to the smaller value */
+    cur_item->seq = seq;
+  }
+  cur_item->merged++;
+
+  /* update number of segments for the merged packet */
+  pkt_head->nb_segs += pkt_tail->nb_segs;
+  pkt_head->pkt_len += pkt_tail->pkt_len;
+
+  return 1;
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * Merge two UDP/IPv4 packets.
+ * Remove first decap_len bytes
+ */
+static inline int
+concat_packet(struct item *cur_item,
+              struct rte_mbuf *pkt,
+              uint16_t decap_len)
+{
+  struct rte_mbuf *pkt_head;
+
+  pkt_head = cur_item->firstseg;
+
+  /* check if the IPv4 packet length is greater than the max value */
+  if (unlikely(pkt_head->pkt_len +
+                   pkt->pkt_len - decap_len >
+               TX_MTU + ETH_HLEN))
+  {
+    return 0;
+  }
+
+  /* Concatenation removes the ETH|IP hdr of tail packet */
+  rte_pktmbuf_adj(pkt, decap_len);
+
+  /* chain two UDP datagram together */
+  cur_item->lastseg->next = pkt;
+  cur_item->lastseg = pkt;
+  cur_item->merged++;
+
+  /* update number of segments for the merged packet */
+  pkt_head->nb_segs += pkt->nb_segs;
+  pkt_head->pkt_len += pkt->pkt_len;
+
+  return 1;
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * Link two packets without updating checksums.
+ * Does not remove any headers.
+ */
+static inline void
+link_packet(struct rte_mbuf *start,
+            struct rte_mbuf *prev,
+            struct rte_mbuf *cur)
+{
+  uint64_t *temp64;
+
+  start->pkt_len += cur->pkt_len;
+  start->nb_segs += cur->nb_segs;
+
+  /* link prev pkt to cur pkt */
+  temp64 = (uint64_t *)&prev->dynfield1[LINK_IDX];
+  *temp64 = (uint64_t)cur;
+
+  /* clear link of cur pkt */
+  cur->dynfield1[LINK_IDX] = cur->dynfield1[LINK_IDX + 1] = 0;
+}
+/*---------------------------------------------------------------------------*/
+/* setup nb_segs and pkt_len of start item */
+static inline void
+setup_start_item(struct rte_mbuf *pkt)
+{
+  uint16_t *temp16;
+
+  /* backup original data_off */
+  temp16 = (uint16_t *)&pkt->dynfield1[DATA_OFF_IDX];
+  *temp16 = pkt->data_off;
+
+  /* backup original pkt_len */
+  temp16 = (uint16_t *)&pkt->dynfield1[DATA_OFF_IDX] + 1;
+  *temp16 = pkt->pkt_len;
+
+  /* backup original nb_segs */
+  pkt->dynfield1[NB_SEGS_IDX] = pkt->nb_segs;
+
+  /* clear link */
+  pkt->dynfield1[LINK_IDX] = pkt->dynfield1[LINK_IDX + 1] = 0;
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * if packets are merged or concatenated,
+ * update total_length in ip header
+ */
+static inline void
+update_ip(struct rte_mbuf *pkt)
+{
+  rte_pktmbuf_mtod_offset(pkt, struct rte_ipv4_hdr *, ETH_HLEN)->total_length = htons(pkt->pkt_len - ETH_HLEN);
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * Fill mbuf fields of a TCP packet.
+ */
+static inline void
+setup_tcp(struct rte_mbuf *pkt, int l4_len)
+{
+  pkt->l4_len = l4_len;
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+  pkt->ol_flags |= PKT_TX_TCP_CKSUM;
+#else
+  pkt->ol_flags |= RTE_MBUF_F_TX_TCP_CKSUM;
+#endif
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * Fill mbuf fields for TSO
+ * ToDo: make TSO consider GTP and outer headers
+ */
+static inline void
+setup_tso(struct rte_mbuf *pkt)
+{
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+  pkt->tso_segsz = TX_MTU - (pkt->l3_len + pkt->l4_len);
+  pkt->ol_flags |= PKT_TX_TCP_SEG;
+#else
+  pkt->tso_segsz = TX_MTU - (pkt->l3_len + pkt->l4_len);
+  pkt->ol_flags |= RTE_MBUF_F_TX_TCP_SEG;
+#endif
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * fill mbuf fields for SUDP packet
+ */
+static inline void
+setup_udp(struct rte_mbuf *pkt)
+{
+  pkt->l4_len = UDP_HLEN;
+  /*
+   * We already concatenated non-TCP packets under 9KB.
+   * Also, checksums are not changed.
+   */
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+  pkt->ol_flags |= PKT_TX_UDP_CKSUM;
+#else
+  pkt->ol_flags |= RTE_MBUF_F_TX_UDP_CKSUM;
+#endif
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * fill mbuf fields for SCTP packet
+ */
+static inline void
+setup_sctp(struct rte_mbuf *pkt)
+{
+  pkt->l4_len = sizeof(struct rte_sctp_hdr);
+  /*
+   * We already concatenated non-TCP packets under 9KB.
+   * Also, checksums are not changed.
+   */
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+  pkt->ol_flags |= PKT_TX_SCTP_CKSUM;
+#else
+  pkt->ol_flags |= RTE_MBUF_F_TX_SCTP_CKSUM;
+#endif
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * fill mbuf fields for IP packet
+ */
+static inline void
+setup_ip(struct rte_mbuf *pkt, int l3_len)
+{
+  /*
+   * We already concatenated non-TCP packets under 9KB.
+   * Also, checksums are not changed.
+   */
+  pkt->l3_len = l3_len;
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+  pkt->ol_flags |= PKT_TX_IPV4 |
+                   PKT_TX_IP_CKSUM;
+#else
+  pkt->ol_flags |= RTE_MBUF_F_TX_IPV4 |
+                   RTE_MBUF_F_TX_IP_CKSUM;
+#endif
+}
+/*---------------------------------------------------------------------------*/
+static inline uint32_t
+get_hash(struct rte_mbuf *pkt, struct px_rule *rule)
+{
+  struct mask_vec *mask;
+  uint32_t init_val;
+  if (rule->dec_pat.use_rss_hash)
+  {
+    /* use below if RSS hash is not computed by NIC */
+    // return rte_hash_crc(rte_pktmbuf_mtod_offset(pkt, struct flow_key *,
+    //                     ETH_HLEN + ADDR_OFF), sizeof(struct flow_key), 0);
+    return pkt->hash.rss >> 4;
+  }
+  mask = rule->dec_pat.vec;
+  init_val = 0;
+  for (int i = 0; i < rule->dec_pat.nb_chunks; i++)
+  {
+    init_val = rte_hash_crc(rte_pktmbuf_mtod_offset(pkt, uint8_t *, mask[i].off),
+                            mask[i].len, init_val);
+  }
+
+  return init_val;
+}
+/*---------------------------------------------------------------------------*/
+static inline int
+has_same_key(struct rte_mbuf *pkt, struct flow *flow, struct px_rule *rule)
+{
+#if old
+  return !memcmp(&flow->key,
+                 rte_pktmbuf_mtod_offset(pkt, void *, ETH_HLEN + ADDR_OFF),
+                 sizeof(struct flow_key));
+  //          &&
+  // (flow->protoid == IPPROTO_TCP); // IPPROTO_UDP
+#else
+  struct mask_vec *mask = rule->dec_pat.vec;
+  int offset = 0;
+  for (int i = 0; i < rule->dec_pat.nb_chunks; i++)
+  {
+    offset += mask[i].len;
+    if (memcmp(&flow->chunk_byte[offset],
+               rte_pktmbuf_mtod_offset(pkt, void *, mask[i].off), mask[i].len))
+    {
+      return 0;
+    }
+  }
+
+  return 1;
+#endif
+}
+/*---------------------------------------------------------------------------*/
+static inline void
+copy_key(struct rte_mbuf *pkt, struct flow *flow, struct px_rule *rule)
+{
+#if old
+  flow->key = *rte_pktmbuf_mtod_offset(pkt, struct flow_key *, ETH_HLEN + ADDR_OFF);
+#else
+  struct mask_vec *mask = rule->dec_pat.vec;
+  int offset = 0;
+  for (int i = 0; i < rule->dec_pat.nb_chunks; i++)
+  {
+    offset += mask[i].len;
+    memcpy(&flow->chunk_byte[offset],
+           rte_pktmbuf_mtod_offset(pkt, void *, mask[i].off), mask[i].len);
+  }
+#endif
+}
+/*---------------------------------------------------------------------------*/
+/* store the flow into the array */
+static inline void
+insert_flow(struct px_ctx *ctx,
+            struct rte_mbuf *pkt,
+            struct flow *prev_flow)
+{
+  struct flow *cur_flow;
+  struct px_rule *rule = TAILQ_FIRST(&ctx->queue.rq_head);
+
+  cur_flow = &ctx->flows[ctx->flow_num];
+  /* insert new flow */
+  cur_flow->next_flow_idx = INVALID_ARRAY_INDEX;
+  copy_key(pkt, cur_flow, rule);
+  cur_flow->start_item_idx = cur_flow->cur_item_idx = ctx->item_num;
+  if (prev_flow)
+  {
+    cur_flow->next_flow_idx = prev_flow->next_flow_idx;
+    prev_flow->next_flow_idx = ctx->flow_num;
+  }
+  /* increment flow array index */
+  ctx->flow_num++;
+}
+/*---------------------------------------------------------------------------*/
+/* store the packet into the new item flow */
+/* insert_flow should be called before insert_item */
+static inline void
+insert_item(struct px_ctx *ctx,
+            struct rte_mbuf *pkt,
+            uint32_t seq,
+            struct item *prev_item)
+{
+  struct item *cur_item;
+
+  cur_item = &ctx->items[ctx->item_num];
+  /* insert new item with the packet */
+  cur_item->firstseg = pkt;
+  cur_item->lastseg = rte_pktmbuf_lastseg(pkt);
+  cur_item->next_pkt_idx = INVALID_ARRAY_INDEX;
+  cur_item->seq = seq;
+  cur_item->merged = 0;
+  if (prev_item)
+  {
+    /* chain them together. */
+    cur_item->next_pkt_idx = prev_item->next_pkt_idx;
+    prev_item->next_pkt_idx = ctx->item_num;
+  }
+  /* increment item array index */
+  ctx->item_num++;
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * Try assemble non-TCP packet to one of existing flows and items
+ * returns the number of reduced packets after assemble
+ */
+static inline void
+assemble_concat(struct px_ctx *ctx, struct rte_mbuf *pkt)
+{
+  struct item *cur_item;
+  struct flow *cur_flow;
+  uint16_t bucket_idx, start_flow_idx;
+  struct px_rule *rule = TAILQ_FIRST(&ctx->queue.rq_head);
+
+  /* get pointer to key (4-tuple) */
+  bucket_idx = get_hash(pkt, rule) % ctx->array_size;
+  start_flow_idx = ctx->buckets[bucket_idx];
+  if (start_flow_idx == INVALID_ARRAY_INDEX)
+  {
+    /* nothing in the bucket; allocate new bucket */
+    ctx->buckets[bucket_idx] = ctx->flow_num;
+    insert_flow(ctx, pkt, NULL);
+    insert_item(ctx, pkt, 0, NULL);
+    return;
+  }
+
+  /* find flow for the input pkt */
+  cur_flow = &ctx->flows[start_flow_idx];
+  while (!has_same_key(pkt, cur_flow, rule))
+  {
+    /* this flow is not for input pkt; collision */
+    if (cur_flow->next_flow_idx == INVALID_ARRAY_INDEX)
+    {
+      /* end of flow list; no flow matched */
+      insert_flow(ctx, pkt, cur_flow);
+      insert_item(ctx, pkt, 0, NULL);
+      return;
+    }
+    cur_flow = &ctx->flows[cur_flow->next_flow_idx];
+  }
+
+  cur_item = &ctx->items[cur_flow->cur_item_idx];
+  if (!concat_packet(cur_item, pkt, rule->dec_act.decap_size))
+  {
+    /* current item length is bigger than 9KB */
+
+    /* update current item index */
+    cur_flow->cur_item_idx = ctx->item_num;
+
+    /* store this packet as a new item */
+    insert_item(ctx, pkt, 0, cur_item);
+    return;
+  }
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * Try assemble TCP packet to one of existing flows and items
+ * returns the number of reduced packets after assemble
+ */
+static inline void
+assemble_tcp_gro(struct px_ctx *ctx, struct rte_mbuf *pkt)
+{
+  struct rte_tcp_hdr *tcp_hdr;
+  struct item *cur_item, *prev_item, *merged_item;
+  struct flow *cur_flow;
+  uint16_t bucket_idx, start_flow_idx;
+  uint32_t seq, tcp_dl;
+  int cmp;
+  struct px_rule *rule = TAILQ_FIRST(&ctx->queue.rq_head);
+
+  /* get pointer to key (4-tuple) */
+  tcp_hdr = rte_pktmbuf_mtod_offset(pkt, struct rte_tcp_hdr *, ETH_HLEN + pkt->l3_len);
+
+  /* ToDo: we must handle TCP padding */
+
+  tcp_dl = pkt->pkt_len - (ETH_HLEN + pkt->l3_len + pkt->l4_len);
+  seq = ntohl(tcp_hdr->sent_seq);
+  bucket_idx = get_hash(pkt, rule) % ctx->array_size;
+  start_flow_idx = ctx->buckets[bucket_idx];
+  if (start_flow_idx == INVALID_ARRAY_INDEX)
+  {
+    /* nothing in the bucket; allocate new bucket */
+    ctx->buckets[bucket_idx] = ctx->flow_num;
+    insert_flow(ctx, pkt, NULL);
+    insert_item(ctx, pkt, seq, NULL);
+    return;
+  }
+
+  /* find flow for the input pkt */
+  cur_flow = &ctx->flows[start_flow_idx];
+  while (!has_same_key(pkt, cur_flow, rule))
+  {
+    /* this flow is not for input pkt; collision */
+    if (cur_flow->next_flow_idx == INVALID_ARRAY_INDEX)
+    {
+      /* end of flow list; no flow matched */
+      insert_flow(ctx, pkt, cur_flow);
+      insert_item(ctx, pkt, seq, NULL);
+      return;
+    }
+    cur_flow = &ctx->flows[cur_flow->next_flow_idx];
+  }
+
+  /* find neighbor item for the input pkt */
+  prev_item = cur_item = &ctx->items[cur_flow->start_item_idx];
+  while (!(cmp = check_seq_option(cur_item, tcp_hdr,
+                                  seq,
+                                  pkt->l4_len, tcp_dl)))
+  {
+    /* this item is not neighbor of input pkt */
+    if (cur_item->next_pkt_idx == INVALID_ARRAY_INDEX)
+    {
+      /* end of item list; no neighbor items matched */
+      insert_item(ctx, pkt, seq, cur_item);
+      return;
+    }
+    prev_item = cur_item;
+    cur_item = &ctx->items[cur_item->next_pkt_idx];
+  }
+
+  /* found neighbor item */
+  if (!merge_packet(cur_item, pkt,
+                    rte_pktmbuf_lastseg(pkt),
+                    cmp, seq))
+  {
+    /* bigger than 64KB; store this packet as a new item in the given flow */
+    insert_item(ctx, pkt, seq, cur_item);
+    return;
+  }
+
+  /*
+   * Now pkt is merged to one item; we dont need to insert new item
+   * to solve C -> A -> B (or A -> C -> B) issue,
+   * check if another item can be merged after first merge
+   */
+  merged_item = cur_item;
+  do
+  {
+    /* this item is not neighbor of input pkt */
+    if (cur_item->next_pkt_idx == INVALID_ARRAY_INDEX)
+    {
+      /* end of item list; no neighbor items matched */
+      return;
+    }
+    prev_item = cur_item;
+    cur_item = &ctx->items[cur_item->next_pkt_idx];
+  } while (!(cmp = check_seq_option(cur_item, tcp_hdr,
+                                    merged_item->seq,
+                                    pkt->l4_len, tcp_dl)));
+
+  /* found second neighbor item */
+  if (!merge_packet(cur_item, merged_item->firstseg,
+                    merged_item->lastseg,
+                    cmp, merged_item->seq))
+  {
+    /* bigger than 64KB; cannot merge*/
+    return;
+  }
+
+  /* merged again; remove current item because it is merged to prior item */
+  prev_item->next_pkt_idx = cur_item->next_pkt_idx;
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * Parse this packet and fill mbuf fields
+ * Returns 0 for good format.
+ * Returns -1, if this packet is (unlikely) not supported format.
+ */
+static inline int
+parse_packet(struct px_ctx *ctx,
+             struct rte_mbuf *pkt,
+             uint8_t *proto_id,
+             uint8_t *tcp_flags)
+{
+  struct rte_ether_hdr *eth_hdr;
+  struct rte_ipv4_hdr *ipv4_hdr;
+  struct rte_tcp_hdr *tcp_hdr;
+
+  /* ToDo: Make parsing refers to patterns */
+
+  *tcp_flags = 0;
+  eth_hdr = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
+  pkt->l2_len = ETH_HLEN;
+  /* not IP */
+  if (unlikely(eth_hdr->ether_type != htons(RTE_ETHER_TYPE_IPV4)))
+    return -1;
+  ipv4_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
+  setup_ip(pkt, ipv4_hdr->ihl << 2);
+  /* if IP option exists */
+  if (unlikely(ipv4_hdr->version_ihl != IP_VERSION_IHL))
+    return -1;
+  /* get proto_id */
+  *proto_id = ipv4_hdr->next_proto_id;
+  if (*proto_id == IPPROTO_TCP)
+  {
+    tcp_hdr = (struct rte_tcp_hdr *)(ipv4_hdr + 1);
+    setup_tcp(pkt, tcp_hdr->data_off >> 2);
+    /* get tcp_flags */
+    *tcp_flags = tcp_hdr->tcp_flags;
+    /* only process ACK packet */
+    if (*tcp_flags != RTE_TCP_ACK_FLAG)
+      return -1;
+    /* TCP header length out of range */
+    if (unlikely((pkt->l4_len < TCP_HLEN) || (pkt->l4_len > MAX_TCP_HLEN)))
+      return -1;
+    /* only process payload length > 0 */
+    if (unlikely(pkt->pkt_len - (ETH_HLEN + IP_HLEN + pkt->l4_len) <= 0))
+      return -1;
+  }
+  else if (*proto_id == IPPROTO_UDP)
+  {
+    setup_udp(pkt);
+    /* only process payload length > 0 */
+    if (unlikely(pkt->pkt_len <= ETH_HLEN + IP_HLEN + UDP_HLEN))
+      return -1;
+  }
+  else if (*proto_id == IPPROTO_SCTP)
+  {
+    setup_sctp(pkt);
+    /* only process payload length > 0 */
+    if (unlikely(pkt->pkt_len <= ETH_HLEN + IP_HLEN + sizeof(struct rte_sctp_hdr)))
+      return -1;
+  }
+
+  return 0;
+}
+/*---------------------------------------------------------------------------*/
+/*
+ * Update mbuf fields of packets in a batch
+ */
+void
+px_parsebatch(struct rte_mbuf **pkts, uint16_t nb_pkts, int trans_mtu)
+{
+  struct rte_mbuf *pkt;
+  uint8_t proto_id, tcp_flags;
+  for (int i = 0; i < nb_pkts; i++)
+  {
+    pkt = pkts[i];
+    if ((parse_packet(NULL, pkt, &proto_id, &tcp_flags) < 0) &&
+        trans_mtu && (tcp_flags & RTE_TCP_SYN_FLAG))
+      trans_mss(pkt);
+  }
+}
+/*---------------------------------------------------------------------------*/
+static inline uint16_t
+link_and_flush(struct px_ctx *ctx, struct rte_mbuf **out, int do_link)
+{
+  struct rte_mbuf *cur_pkt;
+  struct flow *cur_flow;
+  struct item *start_item, *cur_item;
+  struct item *prev_item;
+  uint16_t cnt = 0, item_idx;
+  struct px_rule *rule = TAILQ_FIRST(&ctx->queue.rq_head);
+
+  for (int i = 0; i < ctx->flow_num; i++)
+  {
+    start_item = NULL;
+    cur_flow = &ctx->flows[i];
+    for (item_idx = cur_flow->start_item_idx;
+         item_idx != INVALID_ARRAY_INDEX;
+         item_idx = cur_item->next_pkt_idx)
+    {
+      cur_item = &ctx->items[item_idx];
+      cur_pkt = cur_item->firstseg;
+      /* if merged, update header */
+      if (cur_item->merged)
+        update_ip(cur_pkt);
+      /* if larger than TX_MTU, setup TSO */
+      if (cur_pkt->pkt_len > TX_MTU + RTE_ETHER_HDR_LEN)
+        setup_tso(cur_pkt);
+      /* if cur item is start item of this flow */
+      if (!start_item)
+      {
+        start_item = cur_item;
+        /* remove bucket of this flow */
+        ctx->buckets[get_hash(cur_pkt, rule) % ctx->array_size] = INVALID_ARRAY_INDEX;
+        if (do_link)
+        {
+          setup_start_item(cur_pkt);
+          prev_item = cur_item;
+        }
+        goto Flush;
+      }
+      if (do_link)
+      {
+        /*
+         * if link is on, link this item after the prev item,
+         * do not insert this item to out batch
+         */
+        link_packet(start_item->firstseg, prev_item->firstseg, cur_pkt);
+        prev_item = cur_item;
+        /* linked, so do not flush */
+        continue;
+      }
+    Flush:
+      out[cnt++] = cur_pkt;
+    }
+  }
+
+  /* reset table counters */
+  ctx->flow_num = ctx->item_num = 0;
+
+  return cnt;
+}
+/*----------------------------------------------------------------------------------*/
+uint16_t
+px_unlink(struct rte_mbuf **pkts, uint16_t nb_pkts)
+{
+  struct rte_mbuf *start, *cur;
+  uint64_t *temp64;
+  uint16_t *temp16, cnt = 0;
+  int8_t encap_len;
+  uint8_t copy_len = sizeof(struct rte_ether_hdr);
+  struct rte_mbuf *out[64];
+
+  for (int i = 0; i < (int)nb_pkts; i++)
+  {
+    cur = pkts[i];
+    out[cnt++] = cur;
+
+    /* check link */
+    temp64 = (uint64_t *)&cur->dynfield1[LINK_IDX];
+    if (!*temp64)
+      continue;
+
+    /* rollback to original data_off to calculate encap_len */
+    temp16 = (uint16_t *)&cur->dynfield1[DATA_OFF_IDX];
+    encap_len = *temp16 - cur->data_off;
+    copy_len += (encap_len > 0) ? encap_len : 0;
+
+    /* rollback to original pkt_len and add encap_len (increased by NF) */
+    temp16 = (uint16_t *)&cur->dynfield1[DATA_OFF_IDX] + 1;
+    cur->pkt_len = *temp16 + encap_len;
+
+    /* rollback to original nb_segs */
+    cur->nb_segs = cur->dynfield1[NB_SEGS_IDX];
+
+    start = cur;
+    while ((cur = (struct rte_mbuf *)*temp64))
+    {
+      /* clear link */
+      *temp64 = 0;
+      /* make the header space as same as start item's */
+      cur->data_off -= encap_len;
+      cur->data_len += encap_len;
+      cur->pkt_len += encap_len;
+      /* check insanity */
+      if (!rte_pktmbuf_mtod(cur, void *))
+      {
+        /* failed to adjust header space for en/decaped packet */
+        rte_pktmbuf_free(cur);
+        continue;
+      }
+      /* copy from Ethernet header to encaped header(s) */
+      memcpy(rte_pktmbuf_mtod(cur, void *),
+             rte_pktmbuf_mtod(start, void *), copy_len);
+      out[cnt++] = cur;
+
+      /* next item */
+      temp64 = (uint64_t *)&cur->dynfield1[LINK_IDX];
+    }
+  }
+  for (int i = 0; i < cnt; i++)
+    pkts[i] = out[i];
+
+  return cnt;
+}
+/*---------------------------------------------------------------------------*/
+uint16_t
+px_process(struct px_ctx *ctx, struct rte_mbuf **pkts, uint16_t nb_pkts)
+{
+  struct rte_mbuf *pkts_noGRO[nb_pkts];
+  struct rte_mbuf *pkt;
+  uint16_t nb_noGRO = 0, nb_flush;
+  uint8_t proto_id, tcp_flags;
+  struct px_rule *rule = TAILQ_FIRST(&ctx->queue.rq_head);
+
+  /* Stage 1: Parse and try packet assemble */
+  for (int i = 0; i < (int)nb_pkts; i++)
+  {
+    pkt = pkts[i];
+    /* check packet can be GROed */
+    if (parse_packet(ctx, pkt, &proto_id, &tcp_flags) < 0)
+    {
+      /* it cannot be GROed */
+      if (rule->dec_act.do_mtu_trans)
+      {
+        /* if SYN packet, translate MSS */
+        if (tcp_flags & RTE_TCP_SYN_FLAG)
+          trans_mss(pkt);
+      }
+      if (rule->dec_act.do_link)
+      {
+        /* it cannot have link, so clear link */
+        pkt->dynfield1[LINK_IDX] = pkt->dynfield1[LINK_IDX + 1] = 0;
+      }
+      pkts_noGRO[nb_noGRO++] = pkt;
+      continue;
+    }
+    /* try packet assemble */
+    if (rule->dec_pat.use_rss_hash && (proto_id == IPPROTO_TCP))
+      assemble_tcp_gro(ctx, pkt);
+    else
+      assemble_concat(ctx, pkt);
+  }
+
+  /* Stage 2: Modify packet length and flush assembled packets as a new packet batch */
+  /* Link and flush all packets from the tables */
+  nb_flush = link_and_flush(ctx, pkts, rule->dec_act.do_link);
+  /* Copy non-GRO packets */
+  memcpy(&pkts[nb_flush], pkts_noGRO, sizeof(struct rte_mbuf *) * nb_noGRO);
+
+  return nb_flush + nb_noGRO;
+}
+/*----------------------------------------------------------------------------*/
+struct rte_eth_conf
+px_eth_conf(struct rte_eth_dev_info *dev_info,
+            uint8_t *rss_key,
+            int rss_key_len,
+            int lro_size)
+{
+  struct rte_eth_conf ret = {};
+
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+  ret.link_speeds = ETH_LINK_SPEED_AUTONEG;
+  ret.rxmode.mq_mode = ETH_MQ_RX_RSS;
+  ret.rxmode.offloads = DEV_RX_OFFLOAD_RSS_HASH |
+                        DEV_RX_OFFLOAD_IPV4_CKSUM |
+                        DEV_RX_OFFLOAD_UDP_CKSUM |
+                        DEV_RX_OFFLOAD_TCP_CKSUM;
+  ret.txmode.offloads = DEV_TX_OFFLOAD_IPV4_CKSUM |
+                        DEV_TX_OFFLOAD_TCP_CKSUM |
+                        DEV_TX_OFFLOAD_UDP_CKSUM |
+                        DEV_TX_OFFLOAD_TCP_TSO;
+  ret.rxmode.max_rx_pkt_len = RTE_ETHER_MAX_LEN,
+  ret.rxmode.split_hdr_size = 0,
+  if (lro_size > RTE_ETHER_MAX_LEN)
+  {
+    ret.rxmode.max_lro_pkt_size = lro_size;
+    ret.rxmode.offloads |= DEV_RX_OFFLOAD_TCP_LRO;
+  }
+  /* below is for GRO */
+  ret.txmode.offloads |= DEV_TX_OFFLOAD_MULTI_SEGS;
+
+  ret.rx_adv_conf.rss_conf.rss_key = rss_key;
+  ret.rx_adv_conf.rss_conf.rss_key_len = rss_key_len;
+  ret.rx_adv_conf.rss_conf.rss_hf =
+      (ETH_RSS_IP | ETH_RSS_UDP | ETH_RSS_TCP | ETH_RSS_SCTP) &
+      dev_info->flow_type_rss_offloads;
+#else
+  ret.link_speeds = RTE_ETH_LINK_SPEED_AUTONEG;
+  ret.rxmode.mq_mode = RTE_ETH_MQ_RX_RSS;
+  ret.rxmode.offloads = RTE_ETH_RX_OFFLOAD_RSS_HASH |
+                        RTE_ETH_RX_OFFLOAD_IPV4_CKSUM |
+                        /* UDP checksum should be disabled due to UDP concat */
+                        // RTE_ETH_RX_OFFLOAD_UDP_CKSUM |
+                        RTE_ETH_RX_OFFLOAD_TCP_CKSUM;
+  ret.txmode.offloads = RTE_ETH_TX_OFFLOAD_IPV4_CKSUM |
+                        RTE_ETH_TX_OFFLOAD_TCP_CKSUM |
+                        RTE_ETH_TX_OFFLOAD_UDP_CKSUM |
+                        RTE_ETH_TX_OFFLOAD_TCP_TSO;
+  if (lro_size > RTE_ETHER_MAX_LEN)
+  {
+    ret.rxmode.max_lro_pkt_size = lro_size;
+    ret.rxmode.offloads |= RTE_ETH_RX_OFFLOAD_TCP_LRO;
+  }
+  /* below is for GRO */
+  ret.txmode.offloads |= RTE_ETH_TX_OFFLOAD_MULTI_SEGS;
+
+  ret.rx_adv_conf.rss_conf.rss_key = rss_key;
+  ret.rx_adv_conf.rss_conf.rss_key_len = rss_key_len;
+  ret.rx_adv_conf.rss_conf.rss_hf =
+      (RTE_ETH_RSS_IP | RTE_ETH_RSS_UDP | RTE_ETH_RSS_TCP | RTE_ETH_RSS_SCTP) &
+      dev_info->flow_type_rss_offloads;
+#endif
+
+  return ret;
+}
+/*---------------------------------------------------------------------------*/
+struct px_ctx *
+px_init(int burst)
+{
+  struct px_ctx *ctx;
+  if (!(ctx = (struct px_ctx *)calloc(1, sizeof(struct px_ctx))))
+    return NULL;
+  if (!(ctx->items = (struct item *)calloc(burst, sizeof(struct item))))
+    return NULL;
+  if (!(ctx->flows = (struct flow *)calloc(burst, sizeof(struct flow))))
+    return NULL;
+  if (!(ctx->buckets = (uint16_t *)calloc(burst, sizeof(uint16_t))))
+    return NULL;
+  ctx->array_size = burst;
+  ctx->item_num = 0;
+  ctx->flow_num = 0;
+
+  /* initialize buckets */
+  memset(ctx->buckets, 0xff, burst * sizeof(uint16_t));
+
+  /* make rule queue */
+  TAILQ_INIT(&ctx->queue.rq_head);
+
+  return ctx;
+}
+/*---------------------------------------------------------------------------*/
+static inline struct px_rule *
+search_rule(struct px_ctx *ctx, int px_id)
+{
+  struct px_rule *walk;
+  rq_head *rqh;
+  rqh = &ctx->queue.rq_head;
+  TAILQ_FOREACH(walk, rqh, rule_link)
+  {
+    if (walk->px_id == px_id)
+      return walk;
+  }
+
+  return NULL;
+}
+/*---------------------------------------------------------------------------*/
+static inline int
+use_rss_hash(struct px_pattern *patterns, int nb_patterns)
+{
+  struct px_pattern *p;
+  const struct rte_flow_item_ipv4 *ip_mask;
+  const struct rte_flow_item_tcp *tcp_mask;
+  const struct rte_flow_item_udp *udp_mask;
+  int has_2tuple = 0, has_3tuple = 0;
+
+  /* check patterns include default 5-tuple */
+  for (int i = 0; i < nb_patterns; i++)
+  {
+    p = &patterns[i];
+    if (p->type == PX_PATTERN_TYPE_END)
+      break;
+    if (p->type == PX_PATTERN_TYPE_IPV4)
+    {
+      ip_mask = (const struct rte_flow_item_ipv4 *)p->mask;
+      /* check IPv4 pattern includes default 3-tuple (proto, sIP, dIP) */
+      if ((ip_mask->hdr.next_proto_id == 0xff) &&
+          (ip_mask->hdr.src_addr == RTE_BE32(0xffffffff)) &&
+          (ip_mask->hdr.dst_addr == RTE_BE32(0xffffffff)))
+      {
+        if (has_3tuple)
+          return 1;
+        else
+          has_2tuple = 1;
+      }
+      continue;
+    }
+    if (p->type == PX_PATTERN_TYPE_TCP)
+    {
+      tcp_mask = (const struct rte_flow_item_tcp *)p->mask;
+      /* check TCP pattern includes default 2-tuple (sPort, dPort) */
+      if ((tcp_mask->hdr.src_port == RTE_BE16(0xffff)) &&
+          (tcp_mask->hdr.dst_port == RTE_BE16(0xffff)))
+      {
+        if (has_2tuple)
+          return 1;
+        else
+          has_3tuple = 1;
+      }
+      continue;
+    }
+    if (p->type == PX_PATTERN_TYPE_UDP)
+    {
+      udp_mask = (const struct rte_flow_item_udp *)p->mask;
+      /* check UDP pattern includes default 2-tuple (sPort, dPort) */
+      if ((udp_mask->hdr.src_port == RTE_BE16(0xffff)) &&
+          (udp_mask->hdr.dst_port == RTE_BE16(0xffff)))
+      {
+        if (has_2tuple)
+          return 1;
+        else
+          has_3tuple = 1;
+      }
+      continue;
+    }
+  }
+
+  return 0;
+}
+/*---------------------------------------------------------------------------*/
+static inline int
+get_mask_offset(struct px_pattern *patterns, int nb_patterns)
+{
+  struct px_pattern *p;
+  const struct rte_flow_item_eth *eth_mask;
+  const struct rte_flow_item_ipv4 *ip_mask;
+  const struct rte_flow_item_tcp *tcp_mask;
+  const struct rte_flow_item_udp *udp_mask;
+  const struct rte_flow_item_gtp *gtp_mask;
+  const struct rte_flow_item_gtp_psc *gtp_psc_mask;
+
+  /* check patterns include default 5-tuple */
+  for (int i = 0; i < nb_patterns; i++)
+  {
+    p = &patterns[i];
+    if (p->type == PX_PATTERN_TYPE_END)
+      break;
+    if (p->type == PX_PATTERN_TYPE_ETH)
+    {
+      eth_mask = (const struct rte_flow_item_eth *)p->mask;
+      if (memcmp(&eth_mask->hdr, ETH_HDR_ZEROS,
+                 sizeof(struct rte_ether_hdr)))
+        /* mask starts with ETH header */
+        return 0;
+      continue;
+    }
+    if (p->type == PX_PATTERN_TYPE_IPV4)
+    {
+      ip_mask = (const struct rte_flow_item_ipv4 *)p->mask;
+      if (memcmp(&ip_mask->hdr, IPV4_HDR_ZEROS,
+                 sizeof(struct rte_ipv4_hdr)))
+        /* mask starts with IPV4 header */
+        return sizeof(struct rte_ether_hdr);
+      continue;
+    }
+    if (p->type == PX_PATTERN_TYPE_TCP)
+    {
+      tcp_mask = (const struct rte_flow_item_tcp *)p->mask;
+      if (memcmp(&tcp_mask->hdr, TCP_HDR_ZEROS,
+                 sizeof(struct rte_tcp_hdr)))
+        /* mask starts with TCP header */
+        return sizeof(struct rte_ether_hdr) +
+               sizeof(struct rte_ipv4_hdr);
+      continue;
+    }
+    if (p->type == PX_PATTERN_TYPE_UDP)
+    {
+      udp_mask = (const struct rte_flow_item_udp *)p->mask;
+      if (memcmp(&udp_mask->hdr, UDP_HDR_ZEROS,
+                 sizeof(struct rte_udp_hdr)))
+        /* mask starts with UDP header */
+        return sizeof(struct rte_ether_hdr) +
+               sizeof(struct rte_ipv4_hdr);
+      continue;
+    }
+    if (p->type == PX_PATTERN_TYPE_GTP)
+    {
+      gtp_mask = (const struct rte_flow_item_gtp *)p->mask;
+      if (memcmp(&gtp_mask, GTP_HDR_ZEROS,
+                 sizeof(struct rte_gtp_hdr)))
+        /* mask starts with GTP header */
+        return sizeof(struct rte_ether_hdr) +
+               sizeof(struct rte_ipv4_hdr) +
+               sizeof(struct rte_udp_hdr);
+      continue;
+    }
+    if (p->type == PX_PATTERN_TYPE_GTP_PSC)
+    {
+      gtp_psc_mask = (const struct rte_flow_item_gtp_psc *)p->mask;
+      if (memcmp(&gtp_psc_mask, GTP_PSC_HDR_ZEROS,
+                 sizeof(struct rte_gtp_psc_generic_hdr)))
+        /* mask starts with UDP PSC header */
+        return sizeof(struct rte_ether_hdr) +
+               sizeof(struct rte_ipv4_hdr) +
+               sizeof(struct rte_udp_hdr) +
+               sizeof(struct rte_gtp_hdr);
+      continue;
+    }
+    /* ToDo: extend to support inner L3/L4 */
+  }
+
+  return -1;
+}
+/*---------------------------------------------------------------------------*/
+static inline int
+get_hdr_size(struct px_pattern *pattern)
+{
+  if (pattern->type == PX_PATTERN_TYPE_ETH)
+    return sizeof(struct rte_ether_hdr);
+  if (pattern->type == PX_PATTERN_TYPE_IPV4)
+    return sizeof(struct rte_ipv4_hdr);
+  if (pattern->type == PX_PATTERN_TYPE_TCP)
+    return sizeof(struct rte_tcp_hdr);
+  if (pattern->type == PX_PATTERN_TYPE_UDP)
+    return sizeof(struct rte_udp_hdr);
+  if (pattern->type == PX_PATTERN_TYPE_GTP)
+    return sizeof(struct rte_gtp_hdr);
+  if (pattern->type == PX_PATTERN_TYPE_GTP_PSC)
+    return sizeof(struct rte_gtp_psc_generic_hdr);
+  /* extend if you want other protocol headers */
+
+  return -1;
+}
+/*---------------------------------------------------------------------------*/
+static inline struct mask_vec *
+patterns_to_vec(struct px_pattern *patterns, int nb_patterns, int *nb_chunks)
+{
+  struct px_pattern *p;
+  const uint8_t *ptr;
+  int i, j = 0;
+  int hdr_size;
+  int cum_hdr_size;
+  int off_, len_;
+  struct mask_vec *vec;
+  int size = MAX_FIELD_NUM;
+
+  /* get the first offset including skipped header */
+  cum_hdr_size = get_mask_offset(patterns, nb_patterns);
+  if (cum_hdr_size < 0)
+    return NULL;
+
+  if (!(vec = (struct mask_vec *)calloc(size, sizeof(struct mask_vec))))
+    return NULL;
+
+  /* make vectors */
+  for (i = 0; i < nb_patterns; i++)
+  {
+    off_ = 0;
+    len_ = 0;
+    p = &patterns[i];
+    ptr = (const uint8_t *)(p->mask);
+    hdr_size = get_hdr_size(p);
+    if (hdr_size < 0)
+      return NULL;
+    while (1)
+    {
+      while ((!*(ptr + off_)) && (off_ < hdr_size))
+        off_++; // length of zeros
+      while ((*(ptr + off_ + len_)) && (off_ + len_ < hdr_size))
+        len_++; // length of non-zeros
+      if (!off_)
+      {
+        j--;
+        vec[j].len += len_;
+        goto Next;
+      }
+      if (!len_)
+      {
+        cum_hdr_size += hdr_size;
+        break;
+      }
+      if (len_ > MAX_KEY_LEN)
+        return NULL;
+      vec[j].off = cum_hdr_size + off_;
+      vec[j].len = len_;
+    Next:
+      // printf("[%d] vec.off: %d, vec.len: %d\n", j, vec[j].off, vec[j].len);
+      off_ += len_;
+      len_ = 0;
+      j++;
+      if (j >= size)
+      {
+        size *= 2;
+        if (!(vec = (struct mask_vec *)realloc(vec, size))) // Check set 0
+          return NULL;
+      }
+    }
+  }
+  *nb_chunks = j;
+
+  return vec;
+}
+/*---------------------------------------------------------------------------*/
+static inline int
+decode_pattern_rule(struct decoded_pattern *rule,
+                    struct px_pattern *patterns,
+                    int nb_patterns)
+{
+  rule->use_rss_hash = use_rss_hash(patterns, nb_patterns);
+  rule->vec = patterns_to_vec(patterns, nb_patterns, &rule->nb_chunks);
+  if (!rule->vec)
+  {
+    printf("not supported header format, or not enough memory\n");
+    return -1;
+  }
+
+  return 0;
+}
+/*---------------------------------------------------------------------------*/
+static inline int
+decode_action_rule(struct decoded_action *rule,
+                    struct px_action *actions,
+                    int nb_actions)
+{
+  for (int i = 0; i < nb_actions; i++) {
+    if (actions[i].type == PX_ACTION_TYPE_TRANS_MTU) {
+      rule->do_mtu_trans = 1;
+      continue;
+    }
+    if (actions[i].type == PX_ACTION_TYPE_CONCAT) {
+      rule->do_concat = 1;
+      continue;
+    }
+    if (actions[i].type == PX_ACTION_TYPE_LINK) {
+      rule->do_link = 1;
+      continue;
+    }
+    if (actions[i].type == PX_ACTION_TYPE_RAW_DECAP) {
+      rule->decap_size = 
+        ((const struct rte_flow_action_raw_decap *)actions[i].conf)->size;
+      if (!rule->decap_size)
+        return -1;
+      continue;
+    }
+  }
+
+  return 0;
+}
+/*---------------------------------------------------------------------------*/
+static inline int
+queue_insert_rule(struct px_ctx *ctx, struct px_rule *rule)
+{
+  TAILQ_INSERT_TAIL(&ctx->queue.rq_head, rule, rule_link);
+  ctx->queue.rq_num++;
+  /* check queue is full */
+  if (ctx->queue.rq_num == 0xffff)
+    return -1;
+
+  return 0;
+}
+/*---------------------------------------------------------------------------*/
+static inline void
+queue_remove_rule(struct px_ctx *ctx, struct px_rule *rule)
+{
+  TAILQ_REMOVE(&ctx->queue.rq_head, rule, rule_link);
+  ctx->queue.rq_num--;
+}
+/*---------------------------------------------------------------------------*/
+int px_add_rule(struct px_ctx *ctx,
+                struct px_pattern *patterns, int nb_patterns,
+                struct px_action *actions, int nb_actions)
+{
+  if (nb_patterns > MAX_PATTERN_NUM)
+    return -1;
+
+  struct px_rule *rule = (struct px_rule *)calloc(1, sizeof(struct px_rule));
+  if (!rule)
+    return -1;
+
+  /* insert to queue */
+  if (queue_insert_rule(ctx, rule) < 0)
+    return -1;
+
+  /* give ps a unique id */
+  uint16_t id = 0;
+  while (search_rule(ctx, id++))
+    ;
+  rule->px_id = id;
+
+  /* save the rule */
+  rule->nb_patterns = nb_patterns;
+  memcpy(rule->patterns, patterns, sizeof(struct px_pattern) * nb_patterns);
+  rule->nb_actions = nb_actions;
+  memcpy(rule->actions, actions, sizeof(struct px_action) * nb_actions);
+
+  /* decode the rule */
+  if (decode_pattern_rule(&rule->dec_pat,
+                          rule->patterns,
+                          rule->nb_patterns) < 0)
+    return -1;
+  if (decode_action_rule(&rule->dec_act,
+                          rule->actions,
+                          rule->nb_actions) < 0)
+    return -1;
+
+  /* return rule id as a handle */
+  return id;
+}
+/*---------------------------------------------------------------------------*/
+void px_del_rule(struct px_ctx *ctx, int px_id)
+{
+  struct px_rule *rule;
+  /* search pattern set using px_id */
+  rule = search_rule(ctx, px_id);
+
+  /* remove from queue */
+  queue_remove_rule(ctx, rule);
+
+  /* free ps */
+  free(rule->dec_pat.vec);
+  free(rule);
+}
+/*---------------------------------------------------------------------------*/
+void px_deinit(struct px_ctx *ctx)
+{
+  /* remove all rules from queue */
+  struct px_rule *walk;
+  TAILQ_FOREACH(walk, &ctx->queue.rq_head, rule_link)
+  {
+    queue_remove_rule(ctx, walk);
+    free(walk->dec_pat.vec);
+    free(walk);
+  }
+  free(ctx->items);
+  free(ctx->flows);
+  free(ctx->buckets);
+  free(ctx);
+}

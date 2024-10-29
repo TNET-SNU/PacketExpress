@@ -1,0 +1,3 @@
+time_test.o: utils/time_test.cc utils/time.h
+
+utils/time.h:

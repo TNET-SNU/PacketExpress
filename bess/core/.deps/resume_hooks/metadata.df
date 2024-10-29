@@ -1,0 +1,87 @@
+resume_hooks/metadata.o: resume_hooks/metadata.cc \
+ resume_hooks/../metadata.h resume_hooks/../snbuf_layout.h \
+ resume_hooks/metadata.h resume_hooks/../message.h \
+ resume_hooks/../pb/bess_msg.pb.h resume_hooks/../pb/error.pb.h \
+ resume_hooks/../pb/error.pb.h resume_hooks/../pb/module_msg.pb.h \
+ resume_hooks/../pb/util_msg.pb.h resume_hooks/../resume_hook.h \
+ resume_hooks/../message.h resume_hooks/../module.h \
+ resume_hooks/../commands.h resume_hooks/../event.h \
+ resume_hooks/../gate.h resume_hooks/../pktbatch.h \
+ resume_hooks/../utils/copy.h resume_hooks/../utils/common.h \
+ resume_hooks/../utils/common.h resume_hooks/../metadata.h \
+ resume_hooks/../packet_pool.h resume_hooks/../memory.h \
+ resume_hooks/../packet.h resume_hooks/../worker.h \
+ resume_hooks/../traffic_class.h resume_hooks/../task.h \
+ resume_hooks/../utils/extended_priority_queue.h \
+ resume_hooks/../utils/simd.h resume_hooks/../utils/time.h \
+ resume_hooks/../utils/random.h resume_hooks/../utils/time.h \
+ resume_hooks/../packet_avx.h resume_hooks/../utils/format.h \
+ resume_hooks/../worker.h
+
+resume_hooks/../metadata.h:
+
+resume_hooks/../snbuf_layout.h:
+
+resume_hooks/metadata.h:
+
+resume_hooks/../message.h:
+
+resume_hooks/../pb/bess_msg.pb.h:
+
+resume_hooks/../pb/error.pb.h:
+
+resume_hooks/../pb/error.pb.h:
+
+resume_hooks/../pb/module_msg.pb.h:
+
+resume_hooks/../pb/util_msg.pb.h:
+
+resume_hooks/../resume_hook.h:
+
+resume_hooks/../message.h:
+
+resume_hooks/../module.h:
+
+resume_hooks/../commands.h:
+
+resume_hooks/../event.h:
+
+resume_hooks/../gate.h:
+
+resume_hooks/../pktbatch.h:
+
+resume_hooks/../utils/copy.h:
+
+resume_hooks/../utils/common.h:
+
+resume_hooks/../utils/common.h:
+
+resume_hooks/../metadata.h:
+
+resume_hooks/../packet_pool.h:
+
+resume_hooks/../memory.h:
+
+resume_hooks/../packet.h:
+
+resume_hooks/../worker.h:
+
+resume_hooks/../traffic_class.h:
+
+resume_hooks/../task.h:
+
+resume_hooks/../utils/extended_priority_queue.h:
+
+resume_hooks/../utils/simd.h:
+
+resume_hooks/../utils/time.h:
+
+resume_hooks/../utils/random.h:
+
+resume_hooks/../utils/time.h:
+
+resume_hooks/../packet_avx.h:
+
+resume_hooks/../utils/format.h:
+
+resume_hooks/../worker.h:

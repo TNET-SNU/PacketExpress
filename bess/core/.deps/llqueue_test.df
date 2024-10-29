@@ -1,0 +1,6 @@
+llqueue_test.o: utils/llqueue_test.cc utils/lock_less_queue.h \
+ utils/queue.h
+
+utils/lock_less_queue.h:
+
+utils/queue.h:

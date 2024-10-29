@@ -1,0 +1,80 @@
+worker.o: worker.cc worker.h gate.h commands.h message.h pb/bess_msg.pb.h \
+ pb/error.pb.h pb/error.pb.h pb/module_msg.pb.h pb/util_msg.pb.h \
+ pktbatch.h utils/copy.h utils/common.h utils/common.h traffic_class.h \
+ task.h utils/extended_priority_queue.h utils/simd.h utils/time.h \
+ utils/random.h utils/time.h metadata.h snbuf_layout.h module.h event.h \
+ packet_pool.h memory.h packet.h packet_avx.h opts.h resume_hook.h \
+ utils/format.h resume_hooks/metadata.h resume_hooks/../message.h \
+ resume_hooks/../resume_hook.h resume_hooks/../worker.h scheduler.h
+
+worker.h:
+
+gate.h:
+
+commands.h:
+
+message.h:
+
+pb/bess_msg.pb.h:
+
+pb/error.pb.h:
+
+pb/error.pb.h:
+
+pb/module_msg.pb.h:
+
+pb/util_msg.pb.h:
+
+pktbatch.h:
+
+utils/copy.h:
+
+utils/common.h:
+
+utils/common.h:
+
+traffic_class.h:
+
+task.h:
+
+utils/extended_priority_queue.h:
+
+utils/simd.h:
+
+utils/time.h:
+
+utils/random.h:
+
+utils/time.h:
+
+metadata.h:
+
+snbuf_layout.h:
+
+module.h:
+
+event.h:
+
+packet_pool.h:
+
+memory.h:
+
+packet.h:
+
+packet_avx.h:
+
+opts.h:
+
+resume_hook.h:
+
+utils/format.h:
+
+resume_hooks/metadata.h:
+
+resume_hooks/../message.h:
+
+resume_hooks/../resume_hook.h:
+
+resume_hooks/../worker.h:
+
+scheduler.h:

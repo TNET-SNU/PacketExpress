@@ -1,0 +1,73 @@
+port.o: port.cc port.h message.h pb/bess_msg.pb.h pb/error.pb.h \
+ pb/error.pb.h pb/module_msg.pb.h pb/util_msg.pb.h module.h commands.h \
+ event.h gate.h pktbatch.h utils/copy.h utils/common.h utils/common.h \
+ metadata.h snbuf_layout.h packet_pool.h memory.h packet.h worker.h \
+ traffic_class.h task.h utils/extended_priority_queue.h utils/simd.h \
+ utils/time.h utils/random.h utils/time.h packet_avx.h pb/port_msg.pb.h \
+ utils/ether.h utils/endian.h utils/copy.h
+
+port.h:
+
+message.h:
+
+pb/bess_msg.pb.h:
+
+pb/error.pb.h:
+
+pb/error.pb.h:
+
+pb/module_msg.pb.h:
+
+pb/util_msg.pb.h:
+
+module.h:
+
+commands.h:
+
+event.h:
+
+gate.h:
+
+pktbatch.h:
+
+utils/copy.h:
+
+utils/common.h:
+
+utils/common.h:
+
+metadata.h:
+
+snbuf_layout.h:
+
+packet_pool.h:
+
+memory.h:
+
+packet.h:
+
+worker.h:
+
+traffic_class.h:
+
+task.h:
+
+utils/extended_priority_queue.h:
+
+utils/simd.h:
+
+utils/time.h:
+
+utils/random.h:
+
+utils/time.h:
+
+packet_avx.h:
+
+pb/port_msg.pb.h:
+
+utils/ether.h:
+
+utils/endian.h:
+
+utils/copy.h:

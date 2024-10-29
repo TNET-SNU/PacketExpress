@@ -1,0 +1,11 @@
+--- lib/librte_bpf/bpf_impl.h
++++ lib/librte_bpf/bpf_impl.h
+@@ -21,7 +21,7 @@ struct rte_bpf {
+ 	uint32_t stack_sz;
+ };
+ 
+-extern int bpf_validate(struct rte_bpf *bpf);
++extern int rte_bpf_validate(struct rte_bpf *bpf);
+ 
+ extern int bpf_jit(struct rte_bpf *bpf);
+ 

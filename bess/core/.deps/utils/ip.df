@@ -1,0 +1,12 @@
+utils/ip.o: utils/ip.cc utils/ip.h utils/endian.h utils/bits.h \
+ utils/common.h utils/format.h
+
+utils/ip.h:
+
+utils/endian.h:
+
+utils/bits.h:
+
+utils/common.h:
+
+utils/format.h:

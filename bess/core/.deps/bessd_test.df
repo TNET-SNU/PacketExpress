@@ -1,0 +1,7 @@
+bessd_test.o: bessd_test.cc bessd.h opts.h utils/common.h
+
+bessd.h:
+
+opts.h:
+
+utils/common.h:

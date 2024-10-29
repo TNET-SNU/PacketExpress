@@ -1,0 +1,6 @@
+pb/supdate_msg.grpc.pb.o: pb/supdate_msg.grpc.pb.cc pb/supdate_msg.pb.h \
+ pb/supdate_msg.grpc.pb.h
+
+pb/supdate_msg.pb.h:
+
+pb/supdate_msg.grpc.pb.h:

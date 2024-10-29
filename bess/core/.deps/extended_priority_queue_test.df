@@ -1,0 +1,8 @@
+extended_priority_queue_test.o: utils/extended_priority_queue_test.cc \
+ utils/extended_priority_queue.h utils/random.h utils/time.h
+
+utils/extended_priority_queue.h:
+
+utils/random.h:
+
+utils/time.h:

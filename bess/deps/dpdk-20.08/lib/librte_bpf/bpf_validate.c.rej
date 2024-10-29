@@ -1,0 +1,11 @@
+--- lib/librte_bpf/bpf_validate.c
++++ lib/librte_bpf/bpf_validate.c
+@@ -2209,7 +2209,7 @@ struct bpf_ins_check {
+ }
+ 
+ int
+-bpf_validate(struct rte_bpf *bpf)
++rte_bpf_validate(struct rte_bpf *bpf)
+ {
+ 	int32_t rc;
+ 	struct bpf_verifier bvf;

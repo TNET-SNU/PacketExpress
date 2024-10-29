@@ -1,0 +1,87 @@
+gate_hooks/tcpdump.o: gate_hooks/tcpdump.cc gate_hooks/tcpdump.h \
+ gate_hooks/../message.h gate_hooks/../pb/bess_msg.pb.h \
+ gate_hooks/../pb/error.pb.h gate_hooks/../pb/error.pb.h \
+ gate_hooks/../pb/module_msg.pb.h gate_hooks/../pb/util_msg.pb.h \
+ gate_hooks/../module.h gate_hooks/../commands.h gate_hooks/../message.h \
+ gate_hooks/../event.h gate_hooks/../gate.h gate_hooks/../pktbatch.h \
+ gate_hooks/../utils/copy.h gate_hooks/../utils/common.h \
+ gate_hooks/../utils/common.h gate_hooks/../metadata.h \
+ gate_hooks/../snbuf_layout.h gate_hooks/../packet_pool.h \
+ gate_hooks/../memory.h gate_hooks/../packet.h gate_hooks/../worker.h \
+ gate_hooks/../traffic_class.h gate_hooks/../task.h \
+ gate_hooks/../utils/extended_priority_queue.h gate_hooks/../utils/simd.h \
+ gate_hooks/../utils/time.h gate_hooks/../utils/random.h \
+ gate_hooks/../utils/time.h gate_hooks/../packet_avx.h \
+ gate_hooks/../utils/fifo_opener.h gate_hooks/../utils/syscallthread.h \
+ gate_hooks/../utils/common.h gate_hooks/../utils/pcap.h \
+ gate_hooks/../utils/time.h
+
+gate_hooks/tcpdump.h:
+
+gate_hooks/../message.h:
+
+gate_hooks/../pb/bess_msg.pb.h:
+
+gate_hooks/../pb/error.pb.h:
+
+gate_hooks/../pb/error.pb.h:
+
+gate_hooks/../pb/module_msg.pb.h:
+
+gate_hooks/../pb/util_msg.pb.h:
+
+gate_hooks/../module.h:
+
+gate_hooks/../commands.h:
+
+gate_hooks/../message.h:
+
+gate_hooks/../event.h:
+
+gate_hooks/../gate.h:
+
+gate_hooks/../pktbatch.h:
+
+gate_hooks/../utils/copy.h:
+
+gate_hooks/../utils/common.h:
+
+gate_hooks/../utils/common.h:
+
+gate_hooks/../metadata.h:
+
+gate_hooks/../snbuf_layout.h:
+
+gate_hooks/../packet_pool.h:
+
+gate_hooks/../memory.h:
+
+gate_hooks/../packet.h:
+
+gate_hooks/../worker.h:
+
+gate_hooks/../traffic_class.h:
+
+gate_hooks/../task.h:
+
+gate_hooks/../utils/extended_priority_queue.h:
+
+gate_hooks/../utils/simd.h:
+
+gate_hooks/../utils/time.h:
+
+gate_hooks/../utils/random.h:
+
+gate_hooks/../utils/time.h:
+
+gate_hooks/../packet_avx.h:
+
+gate_hooks/../utils/fifo_opener.h:
+
+gate_hooks/../utils/syscallthread.h:
+
+gate_hooks/../utils/common.h:
+
+gate_hooks/../utils/pcap.h:
+
+gate_hooks/../utils/time.h:

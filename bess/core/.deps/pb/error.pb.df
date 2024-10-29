@@ -1,0 +1,3 @@
+pb/error.pb.o: pb/error.pb.cc pb/error.pb.h
+
+pb/error.pb.h:

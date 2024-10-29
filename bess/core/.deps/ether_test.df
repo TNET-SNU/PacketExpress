@@ -1,0 +1,10 @@
+ether_test.o: utils/ether_test.cc utils/ether.h utils/endian.h \
+ utils/copy.h utils/common.h
+
+utils/ether.h:
+
+utils/endian.h:
+
+utils/copy.h:
+
+utils/common.h:
