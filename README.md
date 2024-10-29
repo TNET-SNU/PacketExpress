@@ -1,4 +1,4 @@
-# Samsung-Research---2nd-Result
+# PacketExpress
 This repository provides the implementation of PacketExpress library and its applications (e.g., Gateway or UPF). PacketExpress (PX) provides APIs for efficient packet I/O using several techniques based on LRO and GRO.
 Most of the main logic is implemented as a independent DPDK library. Take a look.
 
