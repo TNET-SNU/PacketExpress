@@ -78,12 +78,12 @@ Clients and servers' ARP tables should be set up correctly.
 
 ## Where's the main logic for dynamic MTU translation?
 
-See dpdk-22.11.1/lib/px/px_gro.c and px_gro.h.
+See dpdk-stable-20.11.1/lib/px/px_gro.c and px_gro.h.
 For usage example, see bess/core/driveres/pmd.cc.
 
 ## Where's the main logic for Hairpin Offload?
 
-See dpdk-22.11.1/lib/px/px_offload.c and px_offload.h
+See dpdk-stable-20.11.1/lib/px/px_offload.c and px_offload.h
 For usage example, see bess/core/modules/offload_manager.cc.
 
 ## Where's the main logic for nicmem?
