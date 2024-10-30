@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright(c) 2017 Intel Corporation
+
+sources = files(
+        'px_gro.c',
+        'px_ring.c',
+        'px_rule.c',
+        'px_link.c',
+        'px_stat.c',
+        'px_mss.c',
+        'px_offload.c',
+        'nicmem.c'
+)
+headers = files(
+        'px_common.h',
+        'px_gro.h',
+        'px_ring.h',
+        'px_rule.h',
+        'px_link.h',
+        'px_stat.h',
+        'px_delay.h',
+        'px_mss.h',
+        'px_offload.h',
+        'nicmem.h'
+)
+deps += ['ethdev', 'hash', 'gro']
