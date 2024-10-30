@@ -1,5 +1,5 @@
 # PacketExpress
-This repository provides the implementation of PacketExpress library and its applications (e.g., Gateway or UPF). PacketExpress (PX) provides APIs for efficient packet I/O using several techniques based on LRO and GRO.
+This repository provides the implementation of PacketExpress library and its applications (e.g., Gateway, NAT, L4LB, or UPF). PacketExpress (PX) provides APIs for efficient packet I/O using several techniques based on LRO and GRO.
 Most of the main logic is implemented as a independent DPDK library. Take a look.
 
 ## Prerequisites
@@ -17,7 +17,27 @@ Use Ubuntu 18.04.
 
 For details, please refer to prerequisites of BESS, DPDK (data plane) and UPF-EPC (control plane).
 
-## How to build
+## Building PX library on DPDK
+1. Go to dpdk-stable-22.11.10-nicmem.
+   ```Bash
+   cd dpdk-stable-22.11.10-nicmem
+   ```
+2. Make build directory.
+   ```Bash
+   meson build
+   ```
+3. Build DPDK on build directory. PX library will be built as well.
+   ```Bash
+   cd build
+   ninja
+   ```
+4. (optional) If you want to install DPDK system wide, install it.
+   ```Bash
+   sudo ninja install
+   ```
+
+## Building PX Gateway or PX UPF
+Both are implemented as modular network functions on BESS. So, just build BESS.
 1. Configure bess/core/Makefile to turn on LRO and GRO.
 2. Modify BDF codes of PCIe devices in bess/core/dpdk.cc
 3. To set root directory, run below on root.
@@ -34,7 +54,7 @@ For details, please refer to prerequisites of BESS, DPDK (data plane) and UPF-EP
    go build
    ```
 
-## How to run
+## Running PX Gateway or PX UPF
 Clients and servers' ARP tables should be set up correctly.
 
 1. (Optional) If you want hairpin setup, modify upf-epc/scripts/hairpin_setup.sh and run it. It makes the firmwares to prepare hairpin setup. Note that hairpin_setup.sh requires sudo.
@@ -75,6 +95,51 @@ Clients and servers' ARP tables should be set up correctly.
     cd $rootdir/bess/bessctl
     ./bessctl monitor port
     ```
+    
+## Building PX NAT
+Our NAT is implemented as an application on mOS, which transparently monitors TCP states of endpoints. Build mOS first.
+1. Move to mOS directory and build mOS. Note that this mOS supports only DPDK for underlying IO engine.
+   ```Bash
+   cd $rootdir/mOS
+   cd core/src
+   make -j
+   ```
+2. Move to nat directory and build nat application.
+   ```Bash
+   cd $rootdir/nat
+   make -j
+   ```
+
+## Running PX NAT
+   ```Bash
+   cd $rootdir/nat
+   sudo ./nat -f config/1.conf
+   ```
+1.conf is a simple configuration for running PX NAT on single core. If you want to use more than 1 core, just use one of 2.conf, ..., 32.conf after configuring them for your environment.
+
+
+## Building PX L4LB
+For L4LB, we use DPVS, which is a DPDK implementation of IPVS. IPVS provides many basic features such as NAT and LB.
+   ```Bash
+   cd $rootdir/dpvs
+   make -j
+   ```
+
+## Running PX L4LB
+1. First run dpvs daemon.
+   ```Bash
+   cd $rootdir/dpvs
+   sudo ./src/dpvs -c conf/1.conf
+   ```
+Again, you should make your own configuration for DPVS.
+
+2. Then, open new ssh session and run dpip. We provide an all-in-one script named setup.sh.
+   ```Bash
+   cd $rootdir/dpvs/bin
+   sudo ./setup.sh
+   ```
+You should configure setup.sh as well.
+
 
 ## Where's the main logic for dynamic MTU translation?
 
