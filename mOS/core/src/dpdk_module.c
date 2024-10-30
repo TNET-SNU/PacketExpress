@@ -36,13 +36,6 @@
 /* Essential macros */
 #define MAX_SOCKETS			2
 
-#define USE_LRO				1
-#define USE_DGRO			0
-#define PX					1
-#define USE_LINK			0
-#define JUMBO_FRAME			0
-#define NICMEM				1
-
 #if USE_LRO
 #define MBUF_DATA_SIZE		65214
 #elif JUMBO_FRAME
@@ -347,7 +340,7 @@ dpdk_send_pkts(struct mtcp_thread_context *ctxt, int nif)
 		UNUSED(mtcp);
 #endif
 
-#if !PX && (USE_LRO || USE_DGRO)
+#if !USE_CGRO && (USE_LRO || USE_DGRO)
 		px_setup_tso_burst(pkts, cnt);
 #endif
 
@@ -424,7 +417,7 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 	}
 	
 	/* rx from data mbuf */
-#if PX
+#if USE_CGRO
 	ret = px_eth_rx_burst((uint8_t)ifidx, qid,
 			dpc->rmbufs[ifidx].m_table, MAX_PKT_BURST);
 #else
@@ -442,6 +435,7 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 	};
 	ret = rte_gro_reassemble_burst(dpc->rmbufs[ifidx].m_table, ret, &gro_param);
 #endif
+	px_update_stats((uint8_t)ifidx, qid, dpc->rmbufs[ifidx].m_table, ret);
 #endif
 	dpc->rmbufs[ifidx].rlen = ret;
 
@@ -812,10 +806,12 @@ dpdk_load_module_lower_half(void)
 #endif
 
 			/* re-adjust rss_hf */
-#if USE_LRO || USE_DGRO || PX
+#if USE_DGRO || USE_CGRO
 			port_conf = px_eth_conf(portid, NULL, g_key, sizeof(g_key), MBUF_DATA_SIZE, NICMEM);
-#else
+#elif USE_LRO
 			port_conf = default_eth_conf(portid, NULL, g_key, sizeof(g_key), MBUF_DATA_SIZE, NICMEM);
+#else
+			port_conf = default_eth_conf(portid, NULL, g_key, sizeof(g_key), 0, NICMEM);
 #endif
 			port_conf.rx_adv_conf.rss_conf.rss_hf &= dev_info[portid].flow_type_rss_offloads;
 			assert(num_queue == g_config.mos->num_cores);
@@ -825,14 +821,14 @@ dpdk_load_module_lower_half(void)
 			/* init port */
 			printf("[port %u] Initializing port... ", (unsigned) portid);
 			fflush(stdout);
-#if PX
+#if USE_CGRO
 			ret = px_eth_dev_configure(portid,
 										/* rx queue num */
 										num_queue,
 										/* tx queue num */
 										num_queue,
-										4,
-										0,
+										NUM_LATENT_RXQ,
+										STALL_TIMEOUT_NS,
 										&port_conf);
 #else
 			ret = rte_eth_dev_configure(portid,
@@ -882,7 +878,7 @@ dpdk_load_module_lower_half(void)
 #else
     			struct rte_mempool *mp = pktmbuf_pool[rte_eth_dev_socket_id(portid)];
 #endif
-#if PX
+#if USE_CGRO
 				ret = px_eth_rx_queue_setup(portid, queue_id, nb_rxd_data,
 											rte_eth_dev_socket_id(portid),
 											(USE_CUSTOM_THRESH) ? 
@@ -929,7 +925,7 @@ dpdk_load_module_lower_half(void)
 
 			printf("done: \n");
 			rte_eth_promiscuous_enable(portid);
-#if PX
+#if USE_CGRO
 			/* make patterns */
 			struct rte_flow_item_ipv4 ipv4_mask;
 			memset(&ipv4_mask, 0, sizeof(struct rte_flow_item_ipv4));

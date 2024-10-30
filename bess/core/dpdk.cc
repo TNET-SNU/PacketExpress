@@ -169,50 +169,26 @@ void init_eal(int dpdk_mb_per_socket, std::string nonworker_corelist) {
    * otherwise, no packets received by BESS
    */
   rte_args.Append({list_flag, "16:00.0,hp_buf_log_sz=19,dv_flow_en=2,dv_esw_en=1,dv_xmeta_en=4,fdb_def_rule_en=1"}); // eth2
-  rte_args.Append({list_flag, "16:00.1,hp_buf_log_sz=19,dv_flow_en=2,dv_esw_en=1,dv_xmeta_en=4,fdb_def_rule_en=1"}); // eth2vf0
   rte_args.Append({list_flag, "40:00.0,hp_buf_log_sz=19,dv_flow_en=2,dv_esw_en=1,dv_xmeta_en=4,fdb_def_rule_en=1"}); // eth3
-  rte_args.Append({list_flag, "40:00.1,hp_buf_log_sz=19,dv_flow_en=2,dv_esw_en=1,dv_xmeta_en=4,fdb_def_rule_en=1"}); // eth3vf0
   rte_args.Append({list_flag, "6a:00.0,hp_buf_log_sz=19,dv_flow_en=2,dv_esw_en=1,dv_xmeta_en=4,fdb_def_rule_en=1"}); // eth4
-  rte_args.Append({list_flag, "6a:00.1,hp_buf_log_sz=19,dv_flow_en=2,dv_esw_en=1,dv_xmeta_en=4,fdb_def_rule_en=1"}); // eth4vf0
   rte_args.Append({list_flag, "94:00.0,hp_buf_log_sz=19,dv_flow_en=2,dv_esw_en=1,dv_xmeta_en=4,fdb_def_rule_en=1"}); // eth5
-  rte_args.Append({list_flag, "94:00.1,hp_buf_log_sz=19,dv_flow_en=2,dv_esw_en=1,dv_xmeta_en=4,fdb_def_rule_en=1"}); // eth5vf0
 #else
   /* For synchronous APIs */
   rte_args.Append({list_flag, "16:00.0,hp_buf_log_sz=18,dv_flow_en=1,dv_esw_en=1,fdb_def_rule_en=1"}); // eth2
-  rte_args.Append({list_flag, "16:00.1,hp_buf_log_sz=18,dv_flow_en=1,dv_esw_en=1,fdb_def_rule_en=1"}); // eth2vf0
   rte_args.Append({list_flag, "40:00.0,hp_buf_log_sz=18,dv_flow_en=1,dv_esw_en=1,fdb_def_rule_en=1"}); // eth3
-  rte_args.Append({list_flag, "40:00.1,hp_buf_log_sz=18,dv_flow_en=1,dv_esw_en=1,fdb_def_rule_en=1"}); // eth3vf0
   rte_args.Append({list_flag, "6a:00.0,hp_buf_log_sz=18,dv_flow_en=1,dv_esw_en=1,fdb_def_rule_en=1"}); // eth4
-  rte_args.Append({list_flag, "6a:00.1,hp_buf_log_sz=18,dv_flow_en=1,dv_esw_en=1,fdb_def_rule_en=1"}); // eth4vf0
   rte_args.Append({list_flag, "94:00.0,hp_buf_log_sz=18,dv_flow_en=1,dv_esw_en=1,fdb_def_rule_en=1"}); // eth5
-  rte_args.Append({list_flag, "94:00.1,hp_buf_log_sz=18,dv_flow_en=1,dv_esw_en=1,fdb_def_rule_en=1"}); // eth5vf0
 #endif
 #else
   // rte_args.Append({list_flag, "16:00.0,mprq_en=1,rxqs_min_mprq=8"}); // eth2
-  // rte_args.Append({list_flag, "16:00.1,mprq_en=1,rxqs_min_mprq=8"}); // eth2vf0
   // rte_args.Append({list_flag, "40:00.0,mprq_en=1,rxqs_min_mprq=8"}); // eth3
-  // rte_args.Append({list_flag, "40:00.1,mprq_en=1,rxqs_min_mprq=8"}); // eth3vf0
   // rte_args.Append({list_flag, "6a:00.0,mprq_en=1,rxqs_min_mprq=8"}); // eth4
-  // rte_args.Append({list_flag, "6a:00.1,mprq_en=1,rxqs_min_mprq=8"}); // eth4vf0
   // rte_args.Append({list_flag, "94:00.0,mprq_en=1,rxqs_min_mprq=8"}); // eth5
-  // rte_args.Append({list_flag, "94:00.1,mprq_en=1,rxqs_min_mprq=8"}); // eth5vf0
 
   rte_args.Append({list_flag, "16:00.0"}); // eth2
-#if !ONE_ARM
-  rte_args.Append({list_flag, "16:00.1"}); // eth2vf0
-#endif
   rte_args.Append({list_flag, "40:00.0"}); // eth3
-#if !ONE_ARM
-  rte_args.Append({list_flag, "40:00.1"}); // eth3vf0
-#endif
   rte_args.Append({list_flag, "6a:00.0"}); // eth4
-#if !ONE_ARM
-  rte_args.Append({list_flag, "6a:00.1"}); // eth4vf0
-#endif
   rte_args.Append({list_flag, "94:00.0"}); // eth5
-#if !ONE_ARM
-  rte_args.Append({list_flag, "94:00.1"}); // eth5vf0
-#endif
 #endif
 
   // reset getopt()

@@ -112,16 +112,6 @@ CXXFLAGS += -std=c++17 -g3 -ggdb3 -march=$(CPU) \
 
 # Choose one of below
 
-# 1. Two-arm mode
-# CXXFLAGS += -D ONE_ARM=0
-
-# 2. One-arm mode
-CXXFLAGS += -D ONE_ARM=1
-
-################################################################################
-
-# Choose one of below
-
 # 1. Using 1500B MTU for incoming packets
 CXXFLAGS += -D JUMBO_FRAME=0
 
@@ -133,7 +123,7 @@ CXXFLAGS += -D JUMBO_FRAME=0
 # Choose one of below
 
 # 1. LRO on
-# CXXFLAGS += -D USE_LRO=1
+CXXFLAGS += -D USE_LRO=1
 
 # 2. LRO off
 # CXXFLAGS += -D USE_LRO=0
@@ -149,7 +139,7 @@ CXXFLAGS += -D JUMBO_FRAME=0
 # CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=1 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
 
 # 3. CUSTOM GRO on, no stall
-# CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
+CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
 
 # 4. CUSTOM GRO on, stall 36us
 # CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=36000 -D USE_LINK=0
@@ -174,11 +164,10 @@ CXXFLAGS += -D JUMBO_FRAME=0
 # (not supported yet) if want to use rte_flow_async API, use below
 # CXXFLAGS += -D RTE_FLOW_ASYNC_API=1 -D NUM_HAIRPIN_Q=1
 
-# To use nicmem, make sure to use DPDK version 20.08, 
-# and do not set USE_CGRO or USE_DGRO
+# To use nicmem, make sure to use DPDK version 20.11
 # 2. nicmem
-CXXFLAGS += -D NICMEM=0
-# CXXFLAGS += -D NICMEM=1
+# CXXFLAGS += -D NICMEM=0
+CXXFLAGS += -D NICMEM=1
 
 ################################################################################
 

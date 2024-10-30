@@ -573,55 +573,50 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
   /* make patterns */
   struct rte_flow_item_ipv4 ipv4_mask;
   memset(&ipv4_mask, 0, sizeof(struct rte_flow_item_ipv4));
-  ipv4_mask.hdr.next_proto_id = UINT8_MAX;
   ipv4_mask.hdr.src_addr = ipv4_mask.hdr.dst_addr = UINT32_MAX;
   struct rte_flow_item_tcp tcp_mask;
   memset(&tcp_mask, 0, sizeof(struct rte_flow_item_tcp));
   tcp_mask.hdr.src_port = UINT16_MAX;
   tcp_mask.hdr.dst_port = UINT16_MAX;
-  // tcp_mask.hdr.recv_ack = UINT32_MAX;
   struct rte_flow_item_udp udp_mask;
   memset(&udp_mask, 0, sizeof(struct rte_flow_item_udp));
   udp_mask.hdr.src_port = UINT16_MAX;
   udp_mask.hdr.dst_port = UINT16_MAX;
-  // udp_mask.hdr.dgram_len = UINT16_MAX;
+  udp_mask.hdr.dgram_len = UINT16_MAX;
   struct px_pattern patterns[2];
-  patterns[0].type = PX_PATTERN_TYPE_IPV4;
+  patterns[0].type = RTE_FLOW_ITEM_TYPE_IPV4;
   patterns[0].mask = &ipv4_mask;
 #define USE_CONCAT 0
 #if USE_CONCAT
-  patterns[1].type = PX_PATTERN_TYPE_UDP;
+  patterns[1].type = RTE_FLOW_ITEM_TYPE_UDP;
   patterns[1].mask = &udp_mask;
 #else
-  patterns[1].type = PX_PATTERN_TYPE_TCP;
+  patterns[1].type = RTE_FLOW_ITEM_TYPE_TCP;
   patterns[1].mask = &tcp_mask;
 #endif
 
   /* make actions */
-  struct px_action actions[4];
+  struct px_action actions[2];
 #if USE_CONCAT
   struct rte_flow_action_raw_decap decap;
   memset(&decap, 0, sizeof(struct rte_flow_action_raw_decap));
   decap.size = sizeof(struct rte_ether_hdr)
                + sizeof(struct rte_ipv4_hdr)
                + sizeof(struct rte_udp_hdr);
-  actions[0].type = PX_ACTION_TYPE_RAW_DECAP;
+  actions[0].type = RTE_FLOW_ACTION_TYPE_RAW_DECAP;
   actions[0].conf = &decap;
   actions[1].type = PX_ACTION_TYPE_CONCAT;
 #else
-  actions[0].type = PX_ACTION_TYPE_VOID;
-  actions[1].type = PX_ACTION_TYPE_VOID;
+  actions[0].type = RTE_FLOW_ACTION_TYPE_VOID;
+  actions[1].type = RTE_FLOW_ACTION_TYPE_VOID;
 #endif
-  actions[2].type = (USE_LINK)?PX_ACTION_TYPE_LINK:PX_ACTION_TYPE_VOID;
-  actions[3].type = (!JUMBO_FRAME)?PX_ACTION_TYPE_TRANS_MTU:PX_ACTION_TYPE_VOID;
-
   for (uint16_t qid = 0; qid < num_rxq; qid++)
   {
-    if (px_init(dpdk_port_id_, qid, bess::PacketBatch::kMaxBurst, 0, 4096) < 0)
+    if (px_init(dpdk_port_id_, qid, bess::PacketBatch::kMaxBurst, 0, 0, USE_LINK) < 0)
       return CommandFailure(ENOMEM, "Flow table creation failed");
     if (px_add_rule(dpdk_port_id_, qid,
-                    patterns, sizeof(patterns) / sizeof(struct px_pattern),
-                    actions, sizeof(actions) / sizeof(struct px_action)) < 0)
+                    patterns, sizeof(patterns) / sizeof(patterns[0]),
+                    actions, sizeof(actions) / sizeof(actions[0])) < 0)
       return CommandFailure(ENOMEM, "Pattern insertion failed");
   }
 #endif

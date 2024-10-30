@@ -93,6 +93,52 @@ endif
 OBJS = $(patsubst %.c,%.o,$(SRCS))
 DEPS = $(patsubst %.c,.%.d,$(SRCS))
 
+################################################################################
+
+# Choose one of below
+
+# 1. Using 1500B MTU for incoming packets
+CFLAGS += -D JUMBO_FRAME=0
+
+# 2. Using 9000B MTU for incoming packets
+# CFLAGS += -D JUMBO_FRAME=1
+
+################################################################################
+
+# Choose one of below
+
+# 1. LRO on
+CFLAGS += -D USE_LRO=1
+
+# 2. LRO off
+# CFLAGS += -D USE_LRO=0
+
+################################################################################
+
+# Choose one of below
+
+# 1. DPDK GRO on
+# CFLAGS += -D USE_DGRO=1
+
+# 2. CUSTOM GRO on, no latent RXQ, no stall
+CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=1 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
+
+# 3. CUSTOM GRO on, no stall
+# CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
+
+# 4. CUSTOM GRO on, stall 50us
+# CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=36000 -D USE_LINK=0
+
+# 6. CUSTOM GRO + LINKING
+# CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=1
+
+################################################################################
+
+# CFLAGS += -D NICMEM=0
+CFLAGS += -D NICMEM=1
+
+################################################################################
+
 
 ### GOALS ###
 default: $(OBJS)

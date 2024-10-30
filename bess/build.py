@@ -89,10 +89,7 @@ BESS_DIR = os.path.dirname(os.path.abspath(__file__))
 DEPS_DIR = '%s/deps' % BESS_DIR
 
 DPDK_URL = 'https://fast.dpdk.org/rel'
-# DPDK_VER = 'dpdk-20.08.0'
-#DPDK_VER = 'dpdk-20.08'
-#DPDK_VER = 'dpdk-20.11.3'
-DPDK_VER = 'dpdk-22.11.1'
+DPDK_VER = 'dpdk-20.11.10'
 DPDK_TARGET = 'x86_64-native-linuxapp-gcc'
 
 kernel_release = cmd('uname -r', quiet=True).strip()
@@ -291,7 +288,7 @@ def makeflags():
 
 def build_dpdk():
     check_essential()
-    # download_dpdk(quiet=True)
+    download_dpdk(quiet=True)
 
     # not configured yet?
     if not os.path.exists('%s/build' % DPDK_DIR):
@@ -351,8 +348,8 @@ def generate_protobuf_files():
 def build_bess():
     check_essential()
 
-    if not os.path.exists('%s/build' % DPDK_DIR):
-        build_dpdk()
+    # if not os.path.exists('%s/build' % DPDK_DIR):
+    #     build_dpdk()
 
     generate_protobuf_files()
 
@@ -444,7 +441,7 @@ def main():
     cmds = {
         'all': build_all,
         'download_dpdk': download_dpdk,
-        'dpdk': build_dpdk,
+        # 'dpdk': build_dpdk,
         'bess': build_bess,
         'kmod': build_kmod,
         'clean': do_clean,
