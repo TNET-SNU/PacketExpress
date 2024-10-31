@@ -84,33 +84,6 @@ int main(int argc, char *argv[]) {
   }
   
   printf("\nDPDK_VERSION: %d.%d.%d.%d\n", RTE_VER_YEAR, RTE_VER_MONTH, RTE_VER_MINOR, RTE_VER_RELEASE);
-#if USE_LRO
-  printf("LRO is enabled\n");
-#else
-  printf("LRO is disabled\n");
-#endif
-#if USE_CGRO
-  printf("CUSTOM GRO is enabled\n");
-#if USE_LINK
-  printf("Linking is enabled\n");
-#else
-  printf("Linking is disabled\n");
-#endif
-#elif USE_DGRO
-  printf("DPDK GRO is enabled\n");
-#else
-  printf("GRO is disabled\n");
-#endif
-#if JUMBO_FRAME
-  printf("Jumbo frame is enabled\n");
-#else
-  printf("Jumbo frame is disabled\n");
-#endif
-#if NICMEM
-  printf("nicmem is enabled\n");
-#else
-  printf("nicmem is disabled\n");
-#endif
 #if HAIRPIN_OFFLOAD
 #if RTE_FLOW_ASYNC_API
   printf("Asynchronous hairpin offload is enabled\n");

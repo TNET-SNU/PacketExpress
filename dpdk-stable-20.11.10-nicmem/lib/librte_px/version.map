@@ -25,8 +25,6 @@ DPDK_21 {
 	px_setup_tso_burst;
 	reflect_4tuple;
 
-	hp_eth_dev_configure;
-	hp_queue_setup;
 	hp_context_init;
 	hp_context_destroy;
 	hp_create_rule;
@@ -34,9 +32,6 @@ DPDK_21 {
 	hp_stat_rule;
 	hp_nic_cache_stat;
 	hp_host_hash_stat;
-	
-	nm_eth_conf;
-	nm_eth_rx_queue_setup;
 	
 	local: *;
 };

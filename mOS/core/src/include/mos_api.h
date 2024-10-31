@@ -427,23 +427,6 @@ mtcp_get_uctx(mctx_t mctx, int msock);
 ssize_t
 mtcp_peek(mctx_t mctx, int msock, int side, char *buf, size_t len);
 
-/** Peeking record from flow_context
- * @param [in] mctx: mtcp context
- * @param [in] msock: monitoring stream socket id
- * @param [in] side: side of monitoring (client side, server side or both)
- * @param [out] outlen: returned length of record including header
- *
- * It will return pointer to record
- * Or, return pointer to temporary buffer filled by copy of record
- * when peek offset reach rightmost edge of ring
- * It will return NULL if there is an error
-*/
-uint8_t *
-mtcp_get_record(mctx_t mctx, int msock, int side, int *outlen);
-
-int 
-mtcp_move_poff(mctx_t mctx, int msock, int side, int len);
-
 /**
  * The mtcp_ppeek() function reads up to count bytes from the TCP ring
  * buffer of the monitor socket sock in mctx into buf, starting from
@@ -506,18 +489,6 @@ mtcp_cb_stop(mctx_t mctx, int sock, int side);
  */
 int
 mtcp_reset_conn(mctx_t mctx, int sock);
-
-/**
- * Create offload rule for the flow
- */
-void *
-mtcp_offload_flow(mctx_t mctx, int sock, int side, int cmd);
-
-/**
- * Remove offload rule for the flow
- */
-int
-mtcp_onload_flow(mctx_t mctx, int sock, int side, void *flow);
 
 /** A sibling function to mtcp_settimer that returns
  * the current timestamp of the machine in microseconds.

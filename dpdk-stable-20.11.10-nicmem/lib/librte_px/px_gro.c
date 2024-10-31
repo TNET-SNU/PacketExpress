@@ -2,7 +2,7 @@
 
 static struct px_dev g_px_dev[RTE_MAX_ETHPORTS] = {0};
 static struct px_ctx g_pctx[RTE_MAX_ETHPORTS][PX_MAX_QUEUES_PER_PORT] = {0};
-static struct rte_mempool *g_clone_pool = NULL;
+static struct rte_mempool *g_clone_pool[RTE_MAX_NUMA_NODES] = {NULL};
 static uint32_t g_nb_rx_desc[RTE_MAX_ETHPORTS][PX_MAX_QUEUES_PER_PORT] = {0};
 static uint32_t g_nb_tx_desc[RTE_MAX_ETHPORTS][PX_MAX_QUEUES_PER_PORT] = {0};
 uint8_t g_rss_key[40] = {0xD8, 0x2A, 0x6C, 0x5A, 0xDD, 0x3B, 0x9D, 0x1E,
@@ -343,7 +343,7 @@ merge_udp3(struct px_item *cur_item,
 
     /* check if the IPv4 packet length is greater than TX_MTU */
     if (orig_pkt->l3_len + orig_pkt->l4_len +
-        get_data_len(orig_pkt) + get_data_len(firstseg) + sizeof(uint16_t) >
+            get_data_len(orig_pkt) + get_data_len(firstseg) + sizeof(uint16_t) >
         TX_MTU)
     {
         return 0;
@@ -908,10 +908,12 @@ insert_stall(struct px_ctx *pctx,
 }
 /*---------------------------------------------------------------------------*/
 static inline struct rte_mbuf *
-separate_edge_seg(struct rte_mbuf *pkt,
+separate_edge_seg(struct px_ctx *pctx,
+                  struct rte_mbuf *pkt,
                   uint16_t last_segsz)
 {
-    struct rte_mempool *pool;
+    struct rte_mempool *clone_pool = g_clone_pool[pctx->socket_id];
+    // struct rte_mempool *clone_pool = pkt->pool;
     struct rte_mbuf *edge = pkt, *edge_tail = NULL, *edge_head, *next;
     uint32_t hdr_size = get_hdr_len(pkt);
     uint32_t target_size = pkt->pkt_len - last_segsz;
@@ -932,8 +934,6 @@ separate_edge_seg(struct rte_mbuf *pkt,
 
     assert(seg_idx < pkt->nb_segs);
     assert(trim_size <= last_segsz);
-    pool = g_clone_pool;
-    // pool = pkt->pool;
 
     /* trim edge segment */
     edge->data_len -= trim_size;
@@ -941,7 +941,7 @@ separate_edge_seg(struct rte_mbuf *pkt,
     edge->next = NULL;
 
     /* make edge_tail segment */
-    edge_tail = rte_pktmbuf_clone(edge, pool);
+    edge_tail = rte_pktmbuf_clone(edge, clone_pool);
     if (!edge_tail)
     {
         goto err;
@@ -957,7 +957,7 @@ separate_edge_seg(struct rte_mbuf *pkt,
          * edge header is not valid when transmitted
          * so, we can modify header fields without deep copy
          */
-        edge_head = rte_pktmbuf_clone(edge, pool);
+        edge_head = rte_pktmbuf_clone(edge, clone_pool);
         if (!edge_head)
         {
             goto err;
@@ -971,7 +971,7 @@ separate_edge_seg(struct rte_mbuf *pkt,
          * edge header is valid when transmitted
          * so, we cannot modify header fields without deep copy
          */
-        edge_head = rte_pktmbuf_copy(edge, pool, 0, hdr_size);
+        edge_head = rte_pktmbuf_copy(edge, clone_pool, 0, hdr_size);
         if (!edge_head)
         {
             goto err;
@@ -1481,11 +1481,12 @@ void px_setup_tso_burst(struct rte_mbuf **pkts,
 }
 /*---------------------------------------------------------------------------*/
 static inline uint16_t
-px_uso_burst(struct rte_mbuf **pkts,
+px_uso_burst(struct px_ctx *pctx,
+             struct rte_mbuf **pkts,
              uint16_t nb_pkts,
              struct rte_mbuf **out)
 {
-    struct rte_mempool *pool = g_clone_pool;
+    struct rte_mempool *clone_pool = g_clone_pool[pctx->socket_id];
     struct rte_mbuf *pkt, *hdr_clone, *body_clone;
     uint16_t idx = 0;
     uint16_t seglen, segnum, last_seglen, offset = 0;
@@ -1539,7 +1540,7 @@ px_uso_burst(struct rte_mbuf **pkts,
 
         //     continue;
         // }
-        
+
         segnum = ((get_data_len(pkt) - 2 * sizeof(uint16_t)) + seglen - 1) / seglen;
         last_seglen = (get_data_len(pkt) - 2 * sizeof(uint16_t)) % seglen;
 
@@ -1557,7 +1558,7 @@ px_uso_burst(struct rte_mbuf **pkts,
             if (last_seglen && (j == segnum - 1))
             {
                 /* last seg may have different header */
-                hdr_clone = rte_pktmbuf_copy(pkt, pool, 0, get_hdr_len(pkt));
+                hdr_clone = rte_pktmbuf_copy(pkt, clone_pool, 0, get_hdr_len(pkt));
                 if (!hdr_clone)
                 {
                     fprintf(stderr, "hdr clone failed\n");
@@ -1570,7 +1571,7 @@ px_uso_burst(struct rte_mbuf **pkts,
             }
             else
             {
-                hdr_clone = rte_pktmbuf_clone(pkt, pool);
+                hdr_clone = rte_pktmbuf_clone(pkt, clone_pool);
                 if (!hdr_clone)
                 {
                     fprintf(stderr, "hdr clone failed\n");
@@ -1578,7 +1579,7 @@ px_uso_burst(struct rte_mbuf **pkts,
                 }
             }
 
-            body_clone = rte_pktmbuf_clone(pkt, pool);
+            body_clone = rte_pktmbuf_clone(pkt, clone_pool);
             if (!body_clone)
             {
                 fprintf(stderr, "body clone failed\n");
@@ -1685,7 +1686,7 @@ link_and_flush(struct px_ctx *pctx,
                     /* check if edge duplication is needed */
                     last_segsz = get_data_len(cur_pkt) % tso_segsz;
                     if (last_segsz &&
-                        (edge = separate_edge_seg(cur_pkt, last_segsz)))
+                        (edge = separate_edge_seg(pctx, cur_pkt, last_segsz)))
                     {
                         /*
                          * size of this packet is 9K * N + R
@@ -1955,12 +1956,12 @@ px_core(struct px_ctx *pctx,
             if (is_tcp(item->firstseg))
             {
                 assemble_tcp(pctx, item->firstseg, item->lastseg,
-                                &item->timestamp);
+                             &item->timestamp);
             }
             else if (is_udp(item->firstseg))
             {
                 assemble_udp(pctx, item->firstseg, item->lastseg,
-                                &item->timestamp);
+                             &item->timestamp);
             }
         }
         stall->num = 0;
@@ -2050,15 +2051,15 @@ void px_deinit(uint16_t port_id,
         px_ring_deinit(&pctx->tx_ring);
     }
 
+    /* free clone pool */
+    if (g_clone_pool[pctx->socket_id])
+    {
+        rte_mempool_free(g_clone_pool[pctx->socket_id]);
+        g_clone_pool[pctx->socket_id] = NULL;
+    }
+
     /* reset pctx */
     memset(pctx, 0, sizeof(*pctx));
-
-    /* free clone pool */
-    if (g_clone_pool)
-    {
-        rte_mempool_free(g_clone_pool);
-        g_clone_pool = NULL;
-    }
 
     if (px_stop_print_thread() < 0)
     {
@@ -2093,6 +2094,7 @@ int px_init(uint16_t port_id,
     px_deinit(port_id, queue_id);
 
     pctx = &g_pctx[port_id][queue_id];
+    pctx->socket_id = rte_eth_dev_socket_id(port_id);
     pctx->port_id = port_id;
     pctx->queue_id = queue_id;
     pctx->latent_id = 0;
@@ -2192,16 +2194,17 @@ int px_init(uint16_t port_id,
     }
 
     /* make a clone pool for packet stall */
-    if (!g_clone_pool)
+    if (!g_clone_pool[pctx->socket_id])
     {
         /* create the mbuf pools for tx/rx of session data packets */
-        g_clone_pool = rte_mempool_create("mbuf-clone-pool", 262144, 512,
-                                          RTE_MEMPOOL_CACHE_MAX_SIZE,
-                                          sizeof(struct rte_pktmbuf_pool_private),
-                                          rte_pktmbuf_pool_init, NULL,
-                                          rte_pktmbuf_init, NULL,
-                                          rte_lcore_to_socket_id(0), 0);
-        if (!g_clone_pool)
+        g_clone_pool[pctx->socket_id] =
+            rte_mempool_create("mbuf-clone-pool", NB_MBUF, 512,
+                               RTE_MEMPOOL_CACHE_MAX_SIZE,
+                               sizeof(struct rte_pktmbuf_pool_private),
+                               rte_pktmbuf_pool_init, NULL,
+                               rte_pktmbuf_init, NULL,
+                               pctx->socket_id, 0);
+        if (!g_clone_pool[pctx->socket_id])
         {
             rte_exit(EXIT_FAILURE, "Cannot init mbuf pool for clone\n");
         }
@@ -2216,7 +2219,6 @@ int px_init(uint16_t port_id,
     return 0;
 }
 /*---------------------------------------------------------------------------*/
-static int g_lro_size[RTE_MAX_ETHPORTS] = {0};
 struct rte_eth_conf
 default_eth_conf(uint16_t port_id,
                  struct rte_eth_conf *conf,
@@ -2261,7 +2263,6 @@ default_eth_conf(uint16_t port_id,
 
     if (is_nicmem)
     {
-        g_lro_size[port_id] = lro_size;
 #if RTE_VERSION < RTE_VERSION_NUM(20, 11, 10, 99)
         conf->rxmode.offloads |= DEV_RX_OFFLOAD_BUFFER_SPLIT |
                                  DEV_RX_OFFLOAD_SCATTER;
@@ -2297,7 +2298,6 @@ default_eth_conf(uint16_t port_id,
 
     if (is_nicmem)
     {
-        g_lro_size[port_id] = lro_size;
         conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT |
                                  RTE_ETH_RX_OFFLOAD_SCATTER;
     }
@@ -2312,6 +2312,23 @@ default_eth_conf(uint16_t port_id,
 
     return *conf;
 }
+/*----------------------------------------------------------------------------*/
+// int px_adjust_lro(struct rte_eth_conf *conf, uint32_t lro_size)
+// {
+//     if (!conf)
+//     {
+//         return -1;
+//     }
+//     g_px_dev[port_id].lro_size = lro_size;
+
+// #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+//     conf->rxmode.max_lro_pkt_size = lro_size;
+//     conf->rxmode.offloads |= DEV_RX_OFFLOAD_TCP_LRO;
+// #else
+
+// #endif
+
+// }
 /*----------------------------------------------------------------------------*/
 struct rte_eth_conf
 px_eth_conf(uint16_t port_id,
@@ -2359,7 +2376,6 @@ px_eth_conf(uint16_t port_id,
 
     if (is_nicmem)
     {
-        g_lro_size[port_id] = lro_size;
 #if RTE_VERSION < RTE_VERSION_NUM(20, 11, 10, 99)
         conf->rxmode.offloads |= DEV_RX_OFFLOAD_BUFFER_SPLIT |
                                  DEV_RX_OFFLOAD_SCATTER;
@@ -2395,7 +2411,6 @@ px_eth_conf(uint16_t port_id,
 
     if (is_nicmem)
     {
-        g_lro_size[port_id] = lro_size;
         conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT |
                                  RTE_ETH_RX_OFFLOAD_SCATTER;
     }
@@ -2411,6 +2426,58 @@ px_eth_conf(uint16_t port_id,
     return *conf;
 }
 /*---------------------------------------------------------------------------*/
+int px_eth_dev_configure(uint16_t port_id,
+                         uint16_t num_rxq,
+                         uint16_t num_txq,
+                         uint16_t num_rxq_incr,
+                         unsigned int num_nicmem,
+                         unsigned int timeout_ns,
+                         uint16_t hp_num_rxq,
+                         uint16_t hp_num_txq,
+                         struct rte_eth_conf *eth_conf)
+{
+    int ret;
+
+    g_px_dev[port_id].num_rxq = num_rxq;
+    g_px_dev[port_id].num_rxq_incr = num_rxq_incr;
+    g_px_dev[port_id].num_txq = num_txq;
+    g_px_dev[port_id].timeout_ns = timeout_ns;
+
+    /* setup nicmem if necessary */
+    if (num_nicmem)
+    {
+        ret = px_nicmem_configure(&g_px_dev[port_id].nm_ctx,
+                                  port_id,
+                                  eth_conf->rxmode.max_lro_pkt_size,
+                                  num_nicmem);
+        if (ret)
+        {
+            return ret;
+        }
+    }
+
+    /* setup hairpin if necessary */
+    if (hp_num_rxq && hp_num_txq)
+    {
+        ret = px_hairpin_configure(&g_px_dev[port_id].hpm,
+                                   port_id,
+                                   num_rxq,
+                                   num_rxq_incr,
+                                   hp_num_rxq,
+                                   hp_num_txq,
+                                   eth_conf);
+        if (ret)
+        {
+            return ret;
+        }
+    }
+
+    return rte_eth_dev_configure(port_id,
+                                 num_rxq * num_rxq_incr,
+                                 num_txq,
+                                 eth_conf);
+}
+/*---------------------------------------------------------------------------*/
 int px_eth_rx_queue_setup(uint16_t port_id,
                           uint16_t rx_queue_id,
                           uint16_t nb_rx_desc,
@@ -2418,12 +2485,57 @@ int px_eth_rx_queue_setup(uint16_t port_id,
                           struct rte_eth_rxconf *rx_conf,
                           struct rte_mempool *mp)
 {
+    struct rte_eth_dev_info dev_info;
     uint16_t num_rxq = g_px_dev[port_id].num_rxq;
     uint16_t num_rxq_incr = g_px_dev[port_id].num_rxq_incr;
     uint16_t inner_qid;
     uint16_t inner_nb_rx_desc;
     uint16_t i;
     int ret;
+
+    if (!num_rxq_incr)
+    {
+        printf("please configure device first using px_eth_dev_configure\n");
+        return -1;
+    }
+
+    if (!rx_conf)
+    {
+        ret = rte_eth_dev_info_get(port_id, &dev_info);
+        if (ret)
+        {
+            return ret;
+        }
+        rx_conf = &dev_info.default_rxconf;
+    }
+
+    /* setup nicmem */
+    if (g_px_dev[port_id].nm_ctx.num_nicmem)
+    {
+        ret = px_nicmem_setup(&g_px_dev[port_id].nm_ctx, rx_conf, mp);
+        if (ret)
+        {
+            return ret;
+        }
+
+        mp = NULL;
+    }
+
+    g_nb_rx_desc[port_id][rx_queue_id] = nb_rx_desc;
+
+    /* setup hairpin */
+    if (g_px_dev[port_id].hpm.hp_num_rxq)
+    {
+        ret = px_hairpin_setup(&g_px_dev[port_id].hpm,
+                               g_px_dev[port_id].num_rxq,
+                               g_px_dev[port_id].num_txq,
+                               g_nb_rx_desc[port_id][rx_queue_id] / 2,
+                               g_nb_rx_desc[port_id][rx_queue_id]);
+        if (ret)
+        {
+            return ret;
+        }
+    }
 
     inner_nb_rx_desc = nb_rx_desc / num_rxq_incr;
     inner_nb_rx_desc = (inner_nb_rx_desc < 64) ? 64 : (inner_nb_rx_desc);
@@ -2449,7 +2561,6 @@ int px_eth_rx_queue_setup(uint16_t port_id,
             return ret;
         }
     }
-    g_nb_rx_desc[port_id][rx_queue_id] = nb_rx_desc;
 
     return 0;
 }
@@ -2473,33 +2584,6 @@ int px_eth_tx_queue_setup(uint16_t port_id,
     g_nb_tx_desc[port_id][tx_queue_id] = nb_tx_desc;
 
     return 0;
-}
-/*---------------------------------------------------------------------------*/
-void px_gro_configure(uint16_t port_id,
-                      uint16_t num_rxq,
-                      uint16_t num_txq,
-                      uint16_t num_rxq_incr,
-                      unsigned int timeout_ns)
-{
-    g_px_dev[port_id].num_rxq = num_rxq;
-    g_px_dev[port_id].num_rxq_incr = num_rxq_incr;
-    g_px_dev[port_id].num_txq = num_txq;
-    g_px_dev[port_id].timeout_ns = timeout_ns;
-}
-/*---------------------------------------------------------------------------*/
-int px_eth_dev_configure(uint16_t port_id,
-                         uint16_t num_rxq,
-                         uint16_t num_txq,
-                         uint16_t num_rxq_incr,
-                         unsigned int timeout_ns,
-                         struct rte_eth_conf *dev_conf)
-{
-    px_gro_configure(port_id, num_rxq, num_txq, num_rxq_incr, timeout_ns);
-
-    return rte_eth_dev_configure(port_id,
-                                 num_rxq * num_rxq_incr,
-                                 num_txq,
-                                 dev_conf);
 }
 /*---------------------------------------------------------------------------*/
 static inline uint16_t
@@ -2677,7 +2761,7 @@ px_eth_tx_burst(uint16_t port_id,
     /* ToDo: merge below two batch functions into one */
     px_setup_tso_burst(tx_pkts, nb_pkts);
 
-    nb_pkts = px_uso_burst(tx_pkts, nb_pkts, new_batch);
+    nb_pkts = px_uso_burst(pctx, tx_pkts, nb_pkts, new_batch);
 
     sent_orig_tx_ring = rte_eth_tx_burst(port_id, queue_id, new_batch, nb_pkts);
 

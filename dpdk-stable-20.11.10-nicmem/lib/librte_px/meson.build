@@ -8,8 +8,9 @@ sources = files(
         'px_link.c',
         'px_stat.c',
         'px_mss.c',
+        'px_nicmem.c',
         'px_offload.c',
-        'nicmem.c'
+        'px_arp.c'
 )
 headers = files(
         'px_common.h',
@@ -20,7 +21,8 @@ headers = files(
         'px_stat.h',
         'px_delay.h',
         'px_mss.h',
+        'px_nicmem.h',
         'px_offload.h',
-        'nicmem.h'
+        'px_arp.h'
 )
 deps += ['ethdev', 'hash', 'gro']

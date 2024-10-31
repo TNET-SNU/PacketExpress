@@ -91,8 +91,9 @@ CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=1 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
 
 ################################################################################
 
-CFLAGS += -D NICMEM=0
-# CFLAGS += -D NICMEM=1
+# To use nicmem, make sure to use DPDK version 20.11
+# CFLAGS += -D NICMEM=0
+CFLAGS += -D NICMEM=1
 
 ################################################################################
 

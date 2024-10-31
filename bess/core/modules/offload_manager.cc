@@ -7,8 +7,6 @@
 #include "utils/format.h"
 /* for endian functions */
 #include <arpa/inet.h>
-
-#if !NICMEM && HAIRPIN_OFFLOAD
 /*----------------------------------------------------------------------------*/
 int 
 GetNumCPUs() 
@@ -121,4 +119,3 @@ std::string OffloadManager::GetDesc() const {
 /*----------------------------------------------------------------------------*/
 ADD_MODULE(OffloadManager, "OffloadManager",
            "Manage the rules cached in the NICs' e-switches")
-#endif // !NICMEM && HAIRPIN_OFFLOAD

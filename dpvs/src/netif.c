@@ -59,10 +59,6 @@
 #endif
 #define MBUF_SIZE 			(MBUF_DATA_SIZE + RTE_PKTMBUF_HEADROOM)
 
-#if NICMEM
-#define MBUF_NICMEM_SIZE	256
-#endif
-
 #define NETIF_PKTPOOL_NB_MBUF_DEF   65535
 #define NETIF_PKTPOOL_NB_MBUF_MIN   1023
 #define NETIF_PKTPOOL_NB_MBUF_MAX   134217727
@@ -1069,119 +1065,23 @@ __rte_unused static void pkt_send_back(struct rte_mbuf *mbuf, struct netif_port 
 
 /********************************************* mbufpool *******************************************/
 struct rte_mempool *pktmbuf_pool[DPVS_MAX_SOCKET];
-#if NICMEM
-static struct rte_mempool *ext_pool[DPVS_MAX_SOCKET][RTE_MAX_ETHPORTS] = {NULL};
-#endif
-
 static inline void netif_pktmbuf_pool_init(void)
 {
     int i;
     char poolname[32];
     for (i = 0; i < get_numa_nodes(); i++) {
-#if NICMEM
-        int portid, ret;
-        struct rte_eth_dev_info dev_info;
         /* create the mbuf pools for tx/rx of session data packets */
         snprintf(poolname, sizeof(poolname), "mbuf_pool_%d", i);
         pktmbuf_pool[i] = rte_pktmbuf_pool_create(poolname, netif_pktpool_nb_mbuf,
-                netif_pktpool_mbuf_cache, 0, sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM + MBUF_NICMEM_SIZE, i);
+                netif_pktpool_mbuf_cache, 0,
+#if NICMEM
+                RTE_PKTMBUF_HEADROOM + NICMEM_DMA_SIZE,
+#else
+                MBUF_SIZE,
+#endif
+                i);
         if (!pktmbuf_pool[i])
             rte_exit(EXIT_FAILURE, "Cannot init mbuf pool on socket %d", i);
-
-        RTE_ETH_FOREACH_DEV(portid)
-        {
-            int ext_mem_num = 1;
-            struct rte_pktmbuf_extmem ext_mem[16384];
-
-            printf("[port %d] try mem alloc for seg 1\n", portid);
-
-            if (ext_pool[i][portid])
-                continue;
-
-            ret = rte_eth_dev_info_get(portid, &dev_info);
-            if (ret)
-                rte_exit(EXIT_FAILURE,
-                    "Error during getting device (port %u) info: %s\n",
-                    portid, strerror(-ret));
-
-            ext_mem[0].elt_size = MBUF_DATA_SIZE;
-            ext_mem[0].buf_len = netif_pktpool_nb_mbuf * ext_mem[0].elt_size;
-
-            // MEM_NIC_PINNED
-            printf("Alloc nic pinned mem on port %d\n", portid);
-            ret = rte_dev_alloc_dm(dev_info.device,
-                                    &ext_mem[0].buf_ptr,
-                                    &ext_mem[0].buf_len);
-            if (ret || !ext_mem[0].buf_len) {
-                rte_exit(EXIT_FAILURE,
-                        "Failed to allocate NIC memory %p %ld\n",
-                        ext_mem[0].buf_ptr, ext_mem[0].buf_len);
-            }
-
-            printf("[+] Allocated device memory: %p %lu on port %d\n",
-                    ext_mem[0].buf_ptr,
-                    ext_mem[0].buf_len,
-                    portid);
-
-            // if (portid == 0) {
-            // 	printf("[+] Registering extmem\n");
-            // 	ext_mem[0].buf_iova = RTE_BAD_IOVA;
-            // 	ret = rte_extmem_register(ext_mem[0].buf_ptr,
-            // 			    ext_mem[0].buf_len, NULL,
-            // 			    ext_mem[0].buf_iova, 4096);
-            // 	if (ret)
-            // 		rte_exit(EXIT_FAILURE,
-            // 			"Failed to register NIC memory %p %d\n",
-            // 			ext_mem[0].buf_ptr, ext_mem[0].buf_len);
-            // }
-
-            ret = rte_dev_get_dma_map(dev_info.device,
-                                        ext_mem[0].buf_ptr, ext_mem[0].buf_iova,
-                                        ext_mem[0].buf_len);
-            if (ret)
-                rte_exit(EXIT_FAILURE,
-                        "NIC DMA map failed for port %d\n", portid);
-            printf("[+] Got DMA map: %p %lu on port %d\n",
-                    ext_mem[0].buf_ptr,
-                    ext_mem[0].buf_len,
-                    portid);
-
-            /*
-            * This fills external memory with repeated
-            * instances of NIC memory to overcome the
-            * limitation on NIC memory size
-            */
-            uint32_t totsz = ext_mem[0].buf_len / ext_mem[0].elt_size;
-            int j = 0;
-            while (totsz < netif_pktpool_nb_mbuf / 8) {
-                // printf("totsz: %d, capacity: %lu\n", totsz, capacity / 8);
-                ext_mem[++j] = ext_mem[0];
-                totsz += (ext_mem[j].buf_len / ext_mem[j].elt_size);
-            }
-            ext_mem_num = j + 1;
-            printf("%p %lu\n", ext_mem[1].buf_ptr, ext_mem[1].buf_len);
-            printf("num of external memory: %d\n", ext_mem_num);
-
-            sprintf(poolname, "ext-mempool-%d-%d", i, portid);
-            ext_pool[i][portid] = 
-                rte_pktmbuf_pool_create_extbuf(poolname, netif_pktpool_nb_mbuf / 8,
-                                                netif_pktpool_mbuf_cache, 
-                                                0, 
-                                                ext_mem[0].elt_size,
-                                                i,
-                                                ext_mem,
-                                                ext_mem_num);
-            if (!ext_pool[i][portid])
-                rte_exit(EXIT_FAILURE, "Cannot init ext mbuf pool on socket %d\n", i);
-        }
-
-#else
-        snprintf(poolname, sizeof(poolname), "mbuf_pool_%d", i);
-        pktmbuf_pool[i] = rte_pktmbuf_pool_create(poolname, netif_pktpool_nb_mbuf,
-                netif_pktpool_mbuf_cache, 0, MBUF_SIZE, i);
-        if (!pktmbuf_pool[i])
-            rte_exit(EXIT_FAILURE, "Cannot init mbuf pool on socket %d\n", i);
-#endif
     }
 }
 
@@ -4108,63 +4008,37 @@ int netif_port_start(struct netif_port *port)
     port->dev_conf = default_eth_conf(port->id, &port->dev_conf, NULL, 0, 0, NICMEM);
 #endif
 #if USE_CGRO
-    ret = px_eth_dev_configure(port->id, port->nrxq, port->ntxq, NUM_LATENT_RXQ, STALL_TIMEOUT_NS, &port->dev_conf);
+    ret = px_eth_dev_configure(port->id,
+                               port->nrxq,
+                               port->ntxq,
+                               NUM_LATENT_RXQ,
+                               NICMEM ? 32768 - 1 : 0,
+                               STALL_TIMEOUT_NS,
+                               HAIRPIN_OFFLOAD ? NUM_HAIRPIN_Q : 0,
+                               HAIRPIN_OFFLOAD ? NUM_HAIRPIN_Q : 0,
+                               &port->dev_conf);
 #else
-    ret = rte_eth_dev_configure(port->id, port->nrxq, port->ntxq, &port->dev_conf);
+    ret = rte_eth_dev_configure(port->id,
+                                port->nrxq,
+                                port->ntxq,
+                                &port->dev_conf);
 #endif
     if (ret < 0 ) {
         RTE_LOG(ERR, NETIF, "%s: fail to config %s\n", __func__, port->name);
         return EDPVS_DPDKAPIFAIL;
     }
 
-#if NICMEM
-    struct rte_eth_dev_info dev_info;
-    ret = rte_eth_dev_info_get(port->id, &dev_info);
-    if (ret)
-        rte_exit(EXIT_FAILURE,
-            "Error during getting device (port %u) info: %s\n",
-            port->id, strerror(-ret));
-#endif
-
     // setup rx queues
     if (port->nrxq > 0) {
         for (qid = 0; qid < port->nrxq; qid++) {
-#if NICMEM
-            struct rte_mempool *mp = NULL;
-            struct rte_eth_rxseg_split rx_seg[2] = {
-                {
-                    .mp = pktmbuf_pool[port->socket],
-                    .length = sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM,
-                    .offset = 0
-                },
-                {
-                    .mp = ext_pool[port->socket][port->id],
-                    .length = MBUF_DATA_SIZE,
-                    .offset = 0
-                }
-            };
-            dev_info.default_rxconf.rx_seg = (union rte_eth_rxseg *)rx_seg;
-            dev_info.default_rxconf.rx_nseg = 2;
-#if RTE_VERSION < RTE_VERSION_NUM(20, 11, 10, 99)
-    		dev_info.default_rxconf.offloads |= DEV_RX_OFFLOAD_BUFFER_SPLIT;
-#else
-    		dev_info.default_rxconf.offloads |= RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT;
-#endif
-#else
-            struct rte_mempool *mp = pktmbuf_pool[port->socket];
-#endif
-#if USE_CGRO
+#if USE_CGRO || NICMEM
             ret = px_eth_rx_queue_setup(port->id, qid, port->rxq_desc_nb,
-                                        port->socket,
-#if NICMEM
-                                        &dev_info.default_rxconf,
-#else
-                                        NULL,
-#endif
-                                        mp);
+                                        port->socket, NULL,
+                                        pktmbuf_pool[port->socket]);
 #else
             ret = rte_eth_rx_queue_setup(port->id, qid, port->rxq_desc_nb,
-                                         port->socket, NULL, mp);
+                                         port->socket, NULL,
+                                         pktmbuf_pool[port->socket]);
 #endif
             if (ret < 0) {
                 RTE_LOG(ERR, NETIF, "%s: fail to config %s:rx-queue-%d\n",

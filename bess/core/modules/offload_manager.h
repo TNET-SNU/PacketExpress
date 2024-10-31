@@ -9,8 +9,6 @@
 #include "../port.h"
 #include "../drivers/pmd.h"
 #include <px_offload.h>
-
-#if !NICMEM && HAIRPIN_OFFLOAD
 /*----------------------------------------------------------------------------------*/
 class OffloadManager final : public Module
 {
@@ -46,6 +44,5 @@ private:
 
   struct hp_ctx *hctx_;
 };
-#endif // !NICMEM && HAIRPIN_OFFLOAD
-
+/*----------------------------------------------------------------------------------*/
 #endif // BESS_MODULES_OFFLOAD_MANAGER_H_

@@ -7,7 +7,9 @@
 #include "px_ring.h"
 #include "px_stat.h"
 #include "px_mss.h"
+#include "px_nicmem.h"
 #include "px_delay.h"
+#include "px_offload.h"
 #include "rte_gro.h"
 
 #ifdef __cplusplus
@@ -22,6 +24,8 @@ extern "C"
 #define MAX_KEY_LEN 32
 
 #define IP_VERSION_IHL 0x45
+#define NB_MBUF ((1 << 18) - 1)
+#define NB_MBUF_EXT ((1 << 15) - 1)
 
 /*---------------------------------------------------------------------------*/
 #define old 0
@@ -86,10 +90,14 @@ struct px_stall
 
 struct px_dev
 {
+	uint16_t port_id;
 	uint16_t num_rxq;
 	uint16_t num_rxq_incr;
 	uint16_t num_txq;
 	unsigned int timeout_ns;
+	struct px_nicmem_ctx nm_ctx;
+	/* per-port hairpin manager */
+	struct hp_manager hpm;
 };
 
 /*
@@ -98,6 +106,7 @@ struct px_dev
 struct px_ctx
 {
 	uint16_t core_id;
+	uint16_t socket_id;
 	uint16_t port_id;
 	uint16_t queue_id;
 
@@ -175,11 +184,11 @@ px_eth_conf(uint16_t port_id,
 			int is_nicmem);
 
 int px_init(uint16_t port_id,
-            uint16_t queue_id,
-            int burst,
-            unsigned int stat_interval,
-            int mss_table_size,
-            int do_link);
+			uint16_t queue_id,
+			int burst,
+			unsigned int stat_interval,
+			int mss_table_size,
+			int do_link);
 
 void px_deinit(uint16_t port_id,
 			   uint16_t queue_id);
@@ -195,18 +204,15 @@ void px_del_rule(uint16_t port_id,
 				 uint16_t queue_id,
 				 int px_id);
 
-void px_gro_configure(uint16_t port_id,
-					  uint16_t num_rxq,
-					  uint16_t num_txq,
-					  uint16_t num_rxq_incr,
-					  unsigned int timeout_ns);
-
 int px_eth_dev_configure(uint16_t port_id,
-						 uint16_t nb_rx_q,
-						 uint16_t nb_tx_q,
-						 uint16_t rx_queue_incr_num,
+						 uint16_t num_rxq,
+						 uint16_t num_txq,
+						 uint16_t num_rxq_incr,
+						 unsigned int num_nicmem,
 						 unsigned int timeout_ns,
-						 struct rte_eth_conf *dev_conf);
+                         uint16_t hp_num_rxq,
+                         uint16_t hp_num_txq,
+						 struct rte_eth_conf *eth_conf);
 
 int px_eth_rx_queue_setup(uint16_t port_id,
 						  uint16_t rx_queue_id,
@@ -225,14 +231,14 @@ uint16_t px_eth_rx_burst(uint16_t port_id,
 						 uint16_t queue_id,
 						 struct rte_mbuf **rx_pkts,
 						 uint16_t nb_pkts);
-						 
+
 uint16_t px_eth_tx_burst(uint16_t port_id,
 						 uint16_t queue_id,
 						 struct rte_mbuf **tx_pkts,
 						 uint16_t nb_pkts);
 
 int px_eth_stats_get(uint16_t port_id,
-                     struct rte_eth_stats *stats);
+					 struct rte_eth_stats *stats);
 
 void px_pktmbuf_free(struct rte_mbuf *pkt);
 

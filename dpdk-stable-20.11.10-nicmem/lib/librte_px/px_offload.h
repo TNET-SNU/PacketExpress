@@ -1,13 +1,12 @@
 #ifndef PX_OFFLOAD_H_
 #define PX_OFFLOAD_H_
 #include "px_common.h"
+#include "px_arp.h"
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
-
-#if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0)
 /*---------------------------------------------------------------------------*/
 #define MAX_TEMPLATE_TABLE_NUM 16
 #define MAX_QER_NUM 100
@@ -21,18 +20,43 @@ extern "C"
 #define NUM_BINS (65536)
 #define LOWER_16BITS (0x0000FFFF)
 
-#define GTP_PSC_ENCAP_SIZE (sizeof(struct rte_ether_hdr) +           \
-                            sizeof(struct rte_ipv4_hdr) +            \
-                            sizeof(struct rte_udp_hdr) +             \
-                            sizeof(struct rte_gtp_hdr) +             \
-                            sizeof(struct rte_gtp_hdr_ext_word) +    \
-                            sizeof(struct rte_gtp_psc_generic_hdr) + \
-                            sizeof(uint8_t)) // next_ext = 0x00; means no more extension
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+/* Optional word of GTP header, present if any of E, S, PN is set. */
+struct rte_gtp_hdr_ext_word
+{
+    rte_be16_t sqn;
+    uint8_t npdu;
+    uint8_t next_ext;
+} __rte_packed;
+
+__extension__ struct rte_gtp_psc_generic_hdr
+{
+    uint8_t ext_hdr_len;
+#if RTE_BYTE_ORDER == RTE_BIG_ENDIAN
+    uint8_t type : 4;
+    uint8_t qmp : 1;
+    uint8_t pad : 3;
+    uint8_t spare : 2;
+    uint8_t qfi : 6;
+#else
+    uint8_t pad : 3;
+    uint8_t qmp : 1;
+    uint8_t type : 4;
+    uint8_t qfi : 6;
+    uint8_t spare : 2;
+#endif
+    uint8_t data[0];
+} __rte_packed;
+#endif
+
 #define GTP_ENCAP_SIZE (sizeof(struct rte_ether_hdr) + \
                         sizeof(struct rte_ipv4_hdr) +  \
                         sizeof(struct rte_udp_hdr) +   \
                         sizeof(struct rte_gtp_hdr))
-
+#define GTP_PSC_ENCAP_SIZE (GTP_ENCAP_SIZE +                         \
+                            sizeof(struct rte_gtp_hdr_ext_word) +    \
+                            sizeof(struct rte_gtp_psc_generic_hdr) + \
+                            sizeof(uint8_t))
 /*---------------------------------------------------------------------------*/
 
 enum cache_cmd
@@ -65,9 +89,9 @@ struct action
     /* 5-tuple */
     uint32_t src_ip;
     uint32_t dst_ip;
-    uint16_t src_port; // fixed as RTE_GTPU_UDP_PORT
-    uint16_t dst_port; // fixed as RTE_GTPU_UDP_PORT
-    uint8_t proto;     // fixed as IPPROTO_UDP
+    uint16_t src_port;
+    uint16_t dst_port;
+    uint8_t proto;
 
     /* GTPu fields */
     uint32_t teid;
@@ -90,11 +114,14 @@ struct count
     uint64_t bytes;
 };
 
-struct port_manager
+struct hp_manager
 {
+    uint16_t port_id;
     struct rte_ether_addr mac;
 
-#if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0)
+    /* ARP table context */
+    struct px_arp_ctx *actx;
+
     /* below are for hairpin management */
     uint8_t *hp_rss_key;
     int hp_rss_key_len;
@@ -110,17 +137,24 @@ struct port_manager
     int num_template_table;
     struct rte_flow *offload_flow_main[1 << 16];
     struct rte_flow *offload_flow_ack[1 << 16];
+#if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0)
     struct rte_flow_template_table *template_table_offload[MAX_TEMPLATE_TABLE_NUM];
+#endif
     /* below are action rules which are shared by many flows */
     struct rte_flow_action green_actions[6];  // (decap, encap, count,) hairpin RSS, void
     struct rte_flow_action yellow_actions[2]; // (decap, encap, count,) hairpin RSS, void
     struct rte_flow_action red_actions[2];    // drop, void
     enum rte_flow_action_type first_action_type;
     enum rte_flow_action_type second_action_type;
+#if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0)
     struct rte_flow_action_modify_field modify_src_mac;
     struct rte_flow_action_modify_field modify_src_mac_mask;
     struct rte_flow_action_modify_field modify_dst_mac;
     struct rte_flow_action_modify_field modify_dst_mac_mask;
+#else
+    struct rte_flow_action_set_mac modify_src_mac;
+    struct rte_flow_action_set_mac modify_dst_mac;
+#endif
     struct rte_flow_action_raw_decap raw_decap;
     struct rte_flow_action_raw_decap raw_decap_mask;
     struct rte_flow_action_raw_encap raw_encap;
@@ -142,12 +176,13 @@ struct port_manager
     struct rte_flow_action_count count;
     struct rte_flow_action_meter meter[MAX_QER_NUM];
     struct rte_mtr_meter_profile profile[MAX_QER_NUM];
+#if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0)
     struct rte_mtr_meter_policy_params policy; // this is per port
+#endif
     struct rte_mtr_params param[MAX_QER_NUM];
     uint32_t qer_num;
 
     struct rte_flow_action_rss rss_hairpin;
-#endif
 };
 
 /* structure rule info */
@@ -238,19 +273,19 @@ struct thread_ctx
 };
 
 /*---------------------------------------------------------------------------*/
-int hp_eth_dev_configure(uint16_t port_id,
+int px_hairpin_configure(struct hp_manager *hpm,
+                         uint16_t port_id,
                          uint16_t num_rxq,
-                         uint16_t num_txq,
+                         uint16_t num_rxq_incr,
                          uint16_t hp_num_rxq,
                          uint16_t hp_num_txq,
-                         uint16_t rx_queue_incr_num,
                          struct rte_eth_conf *eth_conf);
 
-int hp_queue_setup(uint16_t port_id,
-                   uint16_t num_rxq,
-                   uint16_t num_txq,
-                   uint16_t nb_rx_desc,
-                   uint16_t nb_tx_desc);
+int px_hairpin_setup(struct hp_manager *hpm,
+                     uint16_t num_rxq,
+                     uint16_t num_txq,
+                     uint16_t nb_rx_desc,
+                     uint16_t nb_tx_desc);
 
 struct hp_ctx *hp_context_init(int thread_core_id,
                                int core_num,
@@ -275,8 +310,6 @@ size_t hp_host_hash_stat(struct hp_ctx *hctx);
 /* not implemented yet */
 int hp_async_configure(uint16_t port_id);
 /*---------------------------------------------------------------------------*/
-
-#endif // RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0)
 
 #ifdef __cplusplus
 }

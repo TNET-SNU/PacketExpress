@@ -65,9 +65,6 @@ class PacketPool {
 
   // Note: It would be ideal to not expose this
   rte_mempool *pool() { return pool_; }
-#if NICMEM
-  rte_mempool *ext_pool(int portid) { return ext_pool_[portid]; }
-#endif
 
   static Packet *from_paddr(phys_addr_t paddr);
 
@@ -86,9 +83,6 @@ class PacketPool {
 
   std::string name_;
   rte_mempool *pool_ = 0;
-#if NICMEM
-  rte_mempool *ext_pool_[RTE_MAX_ETHPORTS] = {0};
-#endif
 
  private:
   // Default per-node packet pools

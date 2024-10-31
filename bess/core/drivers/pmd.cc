@@ -392,13 +392,21 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
   if (arg.loopback()) {
     eth_conf.lpbk_mode = 1;
   }
+#if USE_CGRO
+  ret = px_eth_dev_configure(ret_port_id,
+                             num_rxq,
+                             num_txq,
+                             NUM_LATENT_RXQ,
+                             NICMEM ? 32768 - 1 : 0,
+                             STALL_TIMEOUT_NS,
 #if HAIRPIN_OFFLOAD
-  ret = hp_eth_dev_configure(ret_port_id, num_rxq, num_txq,
-                             NUM_HAIRPIN_Q, NUM_HAIRPIN_Q,
-                             NUM_LATENT_RXQ, &eth_conf);
-#elif USE_CGRO
-  ret = px_eth_dev_configure(ret_port_id, num_rxq, num_txq,
-                             NUM_LATENT_RXQ, STALL_TIMEOUT_NS, &eth_conf);
+                             NUM_HAIRPIN_Q,
+                             NUM_HAIRPIN_Q,
+#else
+                             0,
+                             0,
+#endif
+                             &eth_conf);
 #else
   ret = rte_eth_dev_configure(ret_port_id, num_rxq, num_txq, &eth_conf);
 #endif
@@ -438,33 +446,16 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
   }
 
   for (int i = 0; i < num_rxq; i++) {
-#if NICMEM
-    struct rte_mempool *mp = NULL;
-    struct rte_eth_rxseg_split rx_seg[2] = {
-        {.mp = bess::PacketPool::GetDefaultPool(sid)->pool(),
-         .length = sizeof(struct rte_mbuf),
-         .offset = 0},
-        {.mp = bess::PacketPool::GetDefaultPool(sid)->ext_pool(ret_port_id),
-         .length = SNBUF_DATA,
-         .offset = 0}};
-    eth_rxconf.rx_seg = (union rte_eth_rxseg *)rx_seg;
-    eth_rxconf.rx_nseg = 2;
-#if RTE_VERSION < RTE_VERSION_NUM(20, 11, 10, 99)
-    eth_rxconf.offloads |= DEV_RX_OFFLOAD_BUFFER_SPLIT;
-#else
-    eth_rxconf.offloads |= RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT;
-#endif
-#else
-    struct rte_mempool *mp = bess::PacketPool::GetDefaultPool(sid)->pool();
-#endif
-#if USE_CGRO
+#if USE_CGRO || NICMEM
     ret = px_eth_rx_queue_setup(ret_port_id, i,
                                 queue_size[PACKET_DIR_INC],
-                                sid, &eth_rxconf, mp);
+                                sid, &eth_rxconf,
+                                bess::PacketPool::GetDefaultPool(sid)->pool());
 #else
     ret = rte_eth_rx_queue_setup(ret_port_id, i,
                                  queue_size[PACKET_DIR_INC],
-                                 sid, &eth_rxconf, mp);
+                                 sid, &eth_rxconf,
+                                 bess::PacketPool::GetDefaultPool(sid)->pool());
 #endif
     if (ret != 0) {
       return CommandFailure(-ret, "rte_eth_rx_queue_setup() failed");
@@ -503,13 +494,6 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
       return CommandFailure(-ret, "rte_eth_tx_queue_setup() failed");
     }
   }
-#if HAIRPIN_OFFLOAD
-  ret = hp_queue_setup(ret_port_id, num_rxq, num_txq,
-                        queue_size[PACKET_DIR_INC] / 2,
-                        queue_size[PACKET_DIR_OUT]);
-  if (ret < 0)
-    return CommandFailure(-ret, "offload_hairpin_setup() failed");
-#endif
 
   if (arg.promiscuous_mode()) {
     ret = rte_eth_promiscuous_enable(ret_port_id);
@@ -574,23 +558,23 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
   struct rte_flow_item_ipv4 ipv4_mask;
   memset(&ipv4_mask, 0, sizeof(struct rte_flow_item_ipv4));
   ipv4_mask.hdr.src_addr = ipv4_mask.hdr.dst_addr = UINT32_MAX;
-  struct rte_flow_item_tcp tcp_mask;
-  memset(&tcp_mask, 0, sizeof(struct rte_flow_item_tcp));
-  tcp_mask.hdr.src_port = UINT16_MAX;
-  tcp_mask.hdr.dst_port = UINT16_MAX;
-  struct rte_flow_item_udp udp_mask;
-  memset(&udp_mask, 0, sizeof(struct rte_flow_item_udp));
-  udp_mask.hdr.src_port = UINT16_MAX;
-  udp_mask.hdr.dst_port = UINT16_MAX;
-  udp_mask.hdr.dgram_len = UINT16_MAX;
   struct px_pattern patterns[2];
   patterns[0].type = RTE_FLOW_ITEM_TYPE_IPV4;
   patterns[0].mask = &ipv4_mask;
 #define USE_CONCAT 0
 #if USE_CONCAT
+  struct rte_flow_item_udp udp_mask;
+  memset(&udp_mask, 0, sizeof(struct rte_flow_item_udp));
+  udp_mask.hdr.src_port = UINT16_MAX;
+  udp_mask.hdr.dst_port = UINT16_MAX;
+  // udp_mask.hdr.dgram_len = UINT16_MAX;
   patterns[1].type = RTE_FLOW_ITEM_TYPE_UDP;
   patterns[1].mask = &udp_mask;
 #else
+  struct rte_flow_item_tcp tcp_mask;
+  memset(&tcp_mask, 0, sizeof(struct rte_flow_item_tcp));
+  tcp_mask.hdr.src_port = UINT16_MAX;
+  tcp_mask.hdr.dst_port = UINT16_MAX;
   patterns[1].type = RTE_FLOW_ITEM_TYPE_TCP;
   patterns[1].mask = &tcp_mask;
 #endif

@@ -69,131 +69,29 @@ PacketPool::PacketPool(size_t capacity, int socket_id) {
 
   static int next_id_;
   name_ = "PacketPool" + std::to_string(next_id_++);
-
+  int ret;
 #if NICMEM
   LOG(INFO) << name_ << " requests for " << capacity << " packets of size " << sizeof(Packet) - SNBUF_DATA + RTE_PKTMBUF_HEADROOM;
-
-  pool_ = rte_mempool_create_empty(name_.c_str(), capacity, sizeof(Packet) - SNBUF_DATA + RTE_PKTMBUF_HEADROOM,
-                                  capacity > 1024 ? kMaxCacheSize : 0,
-                                  sizeof(PoolPrivate), socket_id, 0);
-  if (!pool_) {
-    LOG(FATAL) << "rte_mempool_create() failed: " << rte_strerror(rte_errno)
-               << " (rte_errno=" << rte_errno << ")";
-  }
-
-  int ret = rte_mempool_set_ops_byname(pool_, "ring_mp_mc", NULL);
-  if (ret < 0) {
-    LOG(FATAL) << "rte_mempool_set_ops_byname() returned " << ret;
-  }
-
-  int portid;
-  struct rte_eth_dev_info dev_info;
-  RTE_ETH_FOREACH_DEV(portid)
-  {
-    int ext_mem_num = 1;
-    struct rte_pktmbuf_extmem ext_mem[16384];
-    std::string ext_name_ = "ExternalPacketPool_" + std::to_string(socket_id) + std::to_string(portid);
-
-    LOG(INFO) << ext_name_ << " requests for " << capacity << " packets of size " << SNBUF_DATA;
-
-    printf("[port %d] try mem alloc for seg 1\n", portid);
-    if (ext_pool_[portid])
-        continue;
-
-    ret = rte_eth_dev_info_get(portid, &dev_info);
-    if (ret)
-        rte_exit(EXIT_FAILURE,
-            "Error during getting device (port %u) info: %s\n",
-            portid, strerror(-ret));
-
-    ext_mem[0].elt_size = SNBUF_DATA;
-    ext_mem[0].buf_len = capacity * ext_mem[0].elt_size;
-    
-    // MEM_NIC_PINNED
-    printf("Alloc nic pinned mem on port %d\n", portid);
-    ret = rte_dev_alloc_dm(dev_info.device,
-                          &ext_mem[0].buf_ptr,
-                          &ext_mem[0].buf_len);
-    if (ret || !ext_mem[0].buf_len) {
-        rte_exit(EXIT_FAILURE,
-                "Failed to allocate NIC memory on port %d\n",
-                portid);
-    }
-    printf("[+] Allocated device memory: %p %lu on port %d\n",
-            ext_mem[0].buf_ptr,
-            ext_mem[0].buf_len,
-            portid);
-
-    // if (portid == 0) {
-    // 	printf("[+] Registering extmem\n");
-    // 	ext_mem[0].buf_iova = RTE_BAD_IOVA;
-    // 	ret = rte_extmem_register(ext_mem[0].buf_ptr,
-    // 			    ext_mem[0].buf_len, NULL,
-    // 			    ext_mem[0].buf_iova, 4096);
-    // 	if (ret)
-    // 		rte_exit(EXIT_FAILURE,
-    // 			"Failed to register NIC memory %p %d\n",
-    // 			ext_mem[0].buf_ptr, ext_mem[0].buf_len);
-    // }
-
-    ret = rte_dev_get_dma_map(dev_info.device,
-                              ext_mem[0].buf_ptr, ext_mem[0].buf_iova,
-                              ext_mem[0].buf_len);
-    if (ret)
-        rte_exit(EXIT_FAILURE,
-                "NIC DMA map failed for port %d\n", portid);
-    printf("[+] Got DMA map: %p %lu on port %d\n",
-            ext_mem[0].buf_ptr,
-            ext_mem[0].buf_len,
-            portid);
-
-    /*
-      * This fills external memory with repeated
-      * instances of NIC memory to overcome the
-      * limitation on NIC memory size
-      */
-    uint32_t totsz = ext_mem[0].buf_len / ext_mem[0].elt_size;
-    int i = 0;
-    while (totsz < capacity / 8) {
-      // printf("totsz: %d, capacity: %lu\n", totsz, capacity / 8);
-      ext_mem[++i] = ext_mem[0];
-      totsz += (ext_mem[i].buf_len / ext_mem[i].elt_size);
-    }
-    ext_mem_num = i + 1;
-    printf("%p %lu\n", ext_mem[1].buf_ptr, ext_mem[1].buf_len);
-    printf("num of external memory: %d\n", ext_mem_num);
-
-    ext_pool_[portid] = 
-      rte_pktmbuf_pool_create_extbuf(ext_name_.c_str(),
-                                      capacity / 8,
-                                      capacity / 8 > 1024 ? kMaxCacheSize : 0,
-                                      0, 
-                                      ext_mem[0].elt_size,
-                                      socket_id,
-                                      ext_mem,
-                                      ext_mem_num);
-    if (!ext_pool_[portid]) {
-      LOG(FATAL) << "rte_mempool_create() failed: " << rte_strerror(rte_errno)
-                << " (rte_errno=" << rte_errno << ")";
-    }
-  }
-#else
-  LOG(INFO) << name_ << " requests for " << capacity << " packets of size " << sizeof(Packet);
-
-  pool_ = rte_mempool_create_empty(name_.c_str(), capacity, sizeof(Packet),
+  pool_ = rte_mempool_create_empty(name_.c_str(), capacity,
+                                   sizeof(Packet) - SNBUF_DATA + NICMEM_DMA_SIZE,
                                    capacity > 1024 ? kMaxCacheSize : 0,
                                    sizeof(PoolPrivate), socket_id, 0);
+#else
+  LOG(INFO) << name_ << " requests for " << capacity << " packets of size " << sizeof(Packet);
+  pool_ = rte_mempool_create_empty(name_.c_str(), capacity,
+                                   sizeof(Packet),
+                                   capacity > 1024 ? kMaxCacheSize : 0,
+                                   sizeof(PoolPrivate), socket_id, 0);
+#endif
   if (!pool_) {
     LOG(FATAL) << "rte_mempool_create() failed: " << rte_strerror(rte_errno)
                << " (rte_errno=" << rte_errno << ")";
   }
 
-  int ret = rte_mempool_set_ops_byname(pool_, "ring_mp_mc", NULL);
+  ret = rte_mempool_set_ops_byname(pool_, "ring_mp_mc", NULL);
   if (ret < 0) {
     LOG(FATAL) << "rte_mempool_set_ops_byname() returned " << ret;
   }
-#endif
-
 }
 
 PacketPool::~PacketPool() {
