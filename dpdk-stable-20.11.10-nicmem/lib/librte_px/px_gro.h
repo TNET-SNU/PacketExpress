@@ -24,8 +24,7 @@ extern "C"
 #define MAX_KEY_LEN 32
 
 #define IP_VERSION_IHL 0x45
-#define NB_MBUF ((1 << 18) - 1)
-#define NB_MBUF_EXT ((1 << 15) - 1)
+#define NB_CLONE_MBUF ((1 << 15) - 1)
 
 /*---------------------------------------------------------------------------*/
 #define old 0
@@ -94,10 +93,18 @@ struct px_dev
 	uint16_t num_rxq;
 	uint16_t num_rxq_incr;
 	uint16_t num_txq;
+
+	/* for packet stalling */
 	unsigned int timeout_ns;
+
+	/* for nicmem */
 	struct px_nicmem_ctx nm_ctx;
+
 	/* per-port hairpin manager */
 	struct hp_manager hpm;
+
+	uint16_t nb_rx_desc[PX_MAX_QUEUES_PER_PORT];
+	uint16_t nb_tx_desc[PX_MAX_QUEUES_PER_PORT];
 };
 
 /*
@@ -161,27 +168,13 @@ struct px_ctx
 /*---------------------------------------------------------------------------*/
 
 struct rte_eth_conf
-default_eth_conf(uint16_t port_id,
-				 struct rte_eth_conf *conf,
-				 uint8_t *rss_key,
-				 int rss_key_len,
-				 int lro_size,
-				 int is_nicmem);
-
-struct rte_eth_conf
-nm_eth_conf(uint16_t port_id,
-			struct rte_eth_conf *conf,
-			uint8_t *rss_key,
-			int rss_key_len,
-			int lro_size);
-
-struct rte_eth_conf
 px_eth_conf(uint16_t port_id,
-			struct rte_eth_conf *conf,
-			uint8_t *rss_key,
-			int rss_key_len,
-			int lro_size,
-			int is_nicmem);
+            struct rte_eth_conf *conf,
+            uint8_t *rss_key,
+            int rss_key_len,
+            int lro_size,
+            int is_gro,
+            int is_nicmem);
 
 int px_init(uint16_t port_id,
 			uint16_t queue_id,

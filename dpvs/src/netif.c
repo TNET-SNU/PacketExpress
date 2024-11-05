@@ -1075,7 +1075,7 @@ static inline void netif_pktmbuf_pool_init(void)
         pktmbuf_pool[i] = rte_pktmbuf_pool_create(poolname, netif_pktpool_nb_mbuf,
                 netif_pktpool_mbuf_cache, 0,
 #if NICMEM
-                RTE_PKTMBUF_HEADROOM + NICMEM_DMA_SIZE,
+                MBUF_SIZE - MBUF_DATA_SIZE + NICMEM_DMA_SIZE,
 #else
                 MBUF_SIZE,
 #endif
@@ -4000,22 +4000,41 @@ int netif_port_start(struct netif_port *port)
     adapt_device_conf(port->id, &port->dev_conf.rx_adv_conf.rss_conf.rss_hf,
             &port->dev_conf.rxmode.offloads, &port->dev_conf.txmode.offloads);
 
-#if USE_DGRO || USE_CGRO
-    port->dev_conf = px_eth_conf(port->id, &port->dev_conf, NULL, 0, MBUF_DATA_SIZE, NICMEM);
-#elif USE_LRO
-    port->dev_conf = default_eth_conf(port->id, &port->dev_conf, NULL, 0, MBUF_DATA_SIZE, NICMEM);
+    port->dev_conf = px_eth_conf(port->id, &port->dev_conf, NULL, 0,
+                                 MBUF_DATA_SIZE,
+#if USE_CGRO || USE_DGRO
+                                 1,
 #else
-    port->dev_conf = default_eth_conf(port->id, &port->dev_conf, NULL, 0, 0, NICMEM);
+                                 0,
 #endif
+#if NICMEM
+                                 1
+#else
+                                 0
+#endif
+                                 );
 #if USE_CGRO
     ret = px_eth_dev_configure(port->id,
                                port->nrxq,
                                port->ntxq,
+#if USE_CGRO
                                NUM_LATENT_RXQ,
+#else
+                               1,
+#endif
                                NICMEM ? 32768 - 1 : 0,
+#if USE_CGRO
                                STALL_TIMEOUT_NS,
-                               HAIRPIN_OFFLOAD ? NUM_HAIRPIN_Q : 0,
-                               HAIRPIN_OFFLOAD ? NUM_HAIRPIN_Q : 0,
+#else
+                               0,
+#endif
+#if HAIRPIN_OFFLOAD
+                               NUM_HAIRPIN_Q,
+                               NUM_HAIRPIN_Q,
+#else
+                               0,
+                               0,
+#endif
                                &port->dev_conf);
 #else
     ret = rte_eth_dev_configure(port->id,
@@ -4094,46 +4113,24 @@ int netif_port_start(struct netif_port *port)
     /* make patterns */
     struct rte_flow_item_ipv4 ipv4_mask;
     memset(&ipv4_mask, 0, sizeof(struct rte_flow_item_ipv4));
-    ipv4_mask.hdr.src_addr = ipv4_mask.hdr.dst_addr = UINT32_MAX;
+    ipv4_mask.hdr.src_addr = UINT32_MAX;
+    ipv4_mask.hdr.dst_addr = UINT32_MAX;
     struct px_pattern patterns[2];
     patterns[0].type = RTE_FLOW_ITEM_TYPE_IPV4;
     patterns[0].mask = &ipv4_mask;
-#define USE_CONCAT 0
-#if USE_CONCAT
-    struct rte_flow_item_udp udp_mask;
-    memset(&udp_mask, 0, sizeof(struct rte_flow_item_udp));
-    udp_mask.hdr.src_port = UINT16_MAX;
-    udp_mask.hdr.dst_port = UINT16_MAX;
-    udp_mask.hdr.dgram_len = UINT16_MAX;
-    patterns[1].type = RTE_FLOW_ITEM_TYPE_UDP;
-    patterns[1].mask = &udp_mask;
-#else
     struct rte_flow_item_tcp tcp_mask;
     memset(&tcp_mask, 0, sizeof(struct rte_flow_item_tcp));
     tcp_mask.hdr.src_port = UINT16_MAX;
     tcp_mask.hdr.dst_port = UINT16_MAX;
     patterns[1].type = RTE_FLOW_ITEM_TYPE_TCP;
     patterns[1].mask = &tcp_mask;
-#endif
     /* make actions */
     struct px_action actions[2];
-#if USE_CONCAT
-    struct rte_flow_action_raw_decap decap;
-    memset(&decap, 0, sizeof(struct rte_flow_action_raw_decap));
-    decap.size = sizeof(struct rte_ether_hdr)
-                + sizeof(struct rte_ipv4_hdr)
-                + sizeof(struct rte_udp_hdr);
-    actions[0].type = RTE_FLOW_ACTION_TYPE_RAW_DECAP;
-    actions[0].conf = &decap;
-    actions[1].type = PX_ACTION_TYPE_CONCAT;
-#else
     actions[0].type = RTE_FLOW_ACTION_TYPE_VOID;
     actions[1].type = RTE_FLOW_ACTION_TYPE_VOID;
-#endif
-
     for (qid = 0; qid < port->nrxq; qid++)
     {
-        if (px_init(port->id, qid, NETIF_MAX_PKT_BURST, 0, 0, USE_LINK) < 0) {
+        if (px_init(port->id, qid, NETIF_MAX_PKT_BURST, 0, !JUMBO_FRAME ? 4096 : 0, USE_LINK) < 0) {
             RTE_LOG(ERR, NETIF, "%s: fail to config %s:rx-queue-%d\n",
                     __func__, port->name, qid);
             return EDPVS_DPDKAPIFAIL;

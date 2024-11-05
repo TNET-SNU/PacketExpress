@@ -12,7 +12,7 @@ static pthread_t *g_offload_thread = NULL;
 static struct hp_ctx *g_hctx = NULL;
 /*----------------------------------------------------------------------------*/
 /* ToDo: Make an API for receiving destination MAC information */
-struct px_arp_entry g_arp_table[] = {
+static struct px_arp_entry g_arp_table[] = {
     {"10.1.90.2", "58:a2:e1:a7:a9:ee"}, // stream1
     {"10.1.95.2", "a0:88:c2:d6:9d:d2"}, // stream2
     {"10.2.90.2", "a0:88:c2:d6:9e:32"}, // stream3
@@ -565,10 +565,19 @@ create_flow(uint16_t port_id, struct pattern *key, struct action *act)
     (void)act;
 
     /* make dst MAC action */
+#if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0)
+    struct rte_flow_action_modify_field modify_dst_mac;
+    modify_dst_mac.operation = (enum rte_flow_modify_op)RTE_FLOW_MODIFY_SET;
+    modify_dst_mac.dst.field = RTE_FLOW_FIELD_MAC_DST;
+    modify_dst_mac.src.field = RTE_FLOW_FIELD_POINTER;
+    modify_dst_mac.src.pvalue = find_mac_in_arp(hpm->actx, key->dst_ip)->addr_bytes;
+    modify_dst_mac.width = RTE_ETHER_ADDR_LEN * 8;
+#else
     struct rte_flow_action_set_mac modify_dst_mac;
     memcpy(modify_dst_mac.mac_addr,
            find_mac_in_arp(hpm->actx, key->dst_ip)->addr_bytes,
            sizeof(struct rte_ether_addr));
+#endif
 
     struct rte_flow_action actions[] = {
         /* modify src MAC */
@@ -1522,6 +1531,29 @@ req_ring_insert(int core_id, int queue_id, struct request *req)
     return 0;
 }
 /*----------------------------------------------------------------------------*/
+static inline struct request *
+req_ring_get_new_req(int core_id, int queue_id)
+{
+    struct rule_manager *rm = &g_rule_manager[core_id];
+    struct req_ring *rr = &rm->request_ring[queue_id];
+
+    /* check ring has new request */
+    if (rr->head == rr->tail)
+        return NULL;
+
+    return &rr->ring[rr->head % rr->size];
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+req_ring_consume(int core_id, int queue_id)
+{
+    struct rule_manager *rm = &g_rule_manager[core_id];
+    struct req_ring *rr = &rm->request_ring[queue_id];
+
+    if (++rr->head >= rr->size)
+        rr->head -= rr->size;
+}
+/*----------------------------------------------------------------------------*/
 int hp_create_rule(int core_id, struct ri_node *node)
 {
     enum cache_cmd cmd;
@@ -1658,29 +1690,6 @@ int hp_stat_rule(int core_id, struct ri_node *node, struct count *stat)
     stat->bytes = target->cnt.bytes;
 
     return 0;
-}
-/*----------------------------------------------------------------------------*/
-static inline struct request *
-req_ring_get_new_req(int core_id, int queue_id)
-{
-    struct rule_manager *rm = &g_rule_manager[core_id];
-    struct req_ring *rr = &rm->request_ring[queue_id];
-
-    /* check ring has new request */
-    if (rr->head == rr->tail)
-        return NULL;
-
-    return &rr->ring[rr->head % rr->size];
-}
-/*----------------------------------------------------------------------------*/
-static inline void
-req_ring_consume(int core_id, int queue_id)
-{
-    struct rule_manager *rm = &g_rule_manager[core_id];
-    struct req_ring *rr = &rm->request_ring[queue_id];
-
-    if (++rr->head >= rr->size)
-        rr->head -= rr->size;
 }
 /*----------------------------------------------------------------------------*/
 static inline void
@@ -1889,7 +1898,8 @@ hp_host_hash_stat(struct hp_ctx *hctx)
 }
 /*----------------------------------------------------------------------------*/
 static inline int
-lru_queue_insert_and_destroy_evicted(int port_id, struct ri_node *node)
+lru_queue_insert_and_destroy_evicted(int port_id,
+                                     struct ri_node *node)
 {
     struct ri_node *evicted;
     /* insert to LRU queue */
@@ -1934,7 +1944,9 @@ rte_flow_slave_main(void *arg)
 
     /* init timer */
     if (queue_id == 0)
+    {
         init_timer(tctx);
+    }
 
     while (1)
     {
@@ -1946,7 +1958,9 @@ rte_flow_slave_main(void *arg)
             {
                 /* print update rate */
                 if (queue_id == 0)
+                {
                     print_update_rate(tctx);
+                }
                 /* new request is on ring */
                 node = req->node;
                 port_id = req->port_id;
@@ -1965,7 +1979,9 @@ rte_flow_slave_main(void *arg)
                         /* this rule is already NIC-cached by offload slave */
                         /* worker core does not know whether this rule is already created by offload slave */
                         if (lru_queue_insert_and_destroy_evicted(port_id, node) < 0)
+                        {
                             continue;
+                        }
                         /* update stats */
                         req_ring_consume(core_id, queue_id);
                         continue;
@@ -1982,7 +1998,9 @@ rte_flow_slave_main(void *arg)
 
                     /* manage LRU queue */
                     if (lru_queue_insert_and_destroy_evicted(port_id, node) < 0)
+                    {
                         continue;
+                    }
                     req_ring_consume(core_id, queue_id);
                     continue;
                 }
@@ -2012,7 +2030,9 @@ rte_flow_slave_main(void *arg)
 
                     /* manage LRU queue */
                     if (lru_queue_insert_and_destroy_evicted(port_id, node) < 0)
+                    {
                         continue;
+                    }
                     req_ring_consume(core_id, queue_id);
                     continue;
                 }
@@ -2109,22 +2129,31 @@ int px_hairpin_setup(struct hp_manager *hpm,
 
     if (rte_eth_dev_hairpin_capability_get(port_id, &cap) < 0)
     {
+        printf("rte_eth_dev_hairpin_capability_get failed\n");
         return -1;
     }
 #if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0)
-    printf("\nmax_nb_desc: %d\nmax_nb_queues: %d\n"
+    printf("\nmax_nb_desc: %d\n"
+           "max_nb_queues: %d\n"
            "[RX] device memory supported? %d\n"
            "[RX] rte memory supported? %d\n"
            "[TX] device memory supported? %d\n"
            "[TX] rte memory supported? %d\n",
-           cap.max_nb_desc, cap.max_nb_queues,
+           cap.max_nb_desc,
+           cap.max_nb_queues,
            cap.rx_cap.locked_device_memory,
            cap.rx_cap.rte_memory,
            cap.tx_cap.locked_device_memory,
            cap.tx_cap.rte_memory);
 #else
-    printf("\nmax_nb_desc: %d\nmax_nb_queues: %d\n",
-           cap.max_nb_desc, cap.max_nb_queues);
+    printf("\nmax_nb_desc: %d\n"
+           "max_nb_queues: %d\n"
+           "max_rx_2_tx: %d\n"
+           "max_tx_2_rx: %d\n",
+           cap.max_nb_desc,
+           cap.max_nb_queues,
+           cap.max_rx_2_tx,
+           cap.max_tx_2_rx);
 #endif
 
     hairpin_conf.peer_count = 1;
@@ -2148,7 +2177,10 @@ int px_hairpin_setup(struct hp_manager *hpm,
         if (rte_eth_rx_hairpin_queue_setup(port_id, num_rxq + i,
                                            nb_rx_desc,
                                            &hairpin_conf))
+        {
+            printf("rte_eth_rx_hairpin_queue_setup failed\n");
             return -1;
+        }
     }
     /*
      * setup default actions per port:
@@ -2178,7 +2210,10 @@ int px_hairpin_setup(struct hp_manager *hpm,
         if (rte_eth_tx_hairpin_queue_setup(port_id, num_txq + i,
                                            nb_tx_desc,
                                            &hairpin_conf))
+        {
+            printf("rte_eth_tx_hairpin_queue_setup failed\n");
             return -1;
+        }
     }
     hpm->num_rules = 20000;
     hpm->num_rule_queue = 1;
@@ -2208,16 +2243,24 @@ hp_context_init(int thread_core_id, int core_num, int port_num)
     /* initialize global arrays */
     g_cache_manager = (struct cache_manager *)calloc(port_num, sizeof(struct cache_manager));
     if (!g_cache_manager)
+    {
         return NULL;
+    }
     // g_hp_manager = (struct hp_manager *)calloc(port_num, sizeof(struct hp_manager));
     // if (!g_hp_manager)
+    // {
     //     return NULL;
+    // }
     g_rule_manager = (struct rule_manager *)calloc(core_num, sizeof(struct rule_manager));
     if (!g_rule_manager)
+    {
         return NULL;
+    }
     g_offload_thread = (pthread_t *)calloc(thread_num, sizeof(pthread_t));
     if (!g_offload_thread)
+    {
         return NULL;
+    }
 
     /* create rte_flow_slave_main */
     for (thread_id = 0; thread_id < thread_num; thread_id++)
@@ -2226,22 +2269,30 @@ hp_context_init(int thread_core_id, int core_num, int port_num)
         tctx[thread_id].ring_queue_id = thread_id;
         if (pthread_create(&g_offload_thread[thread_id], NULL,
                            rte_flow_slave_main, &tctx[thread_id]) == -1)
+        {
             return NULL;
+        }
     }
 
     for (core_id = 0; core_id < core_num; core_id++)
     {
         /* initialize node pool for each core */
         if (node_pool_create(core_id, MAX_TABLE_SIZE_PER_CORE) < 0)
+        {
             return NULL;
+        }
         /* initialize hash table for each core */
         if (ht_create(core_id, MAX_TABLE_SIZE_PER_CORE) < 0)
+        {
             return NULL;
+        }
         /* initialize request ring for each core */
         for (port_id = 0; port_id < port_num; port_id++)
         {
             if (req_ring_create(core_id, port_id, MAX_REQUEST_RING_SIZE) < 0)
+            {
                 return NULL;
+            }
         }
     }
 
@@ -2249,7 +2300,9 @@ hp_context_init(int thread_core_id, int core_num, int port_num)
     for (port_id = 0; port_id < port_num; port_id++)
     {
         if (lru_queue_init(port_id, MAX_CACHE_SIZE_PER_PORT) < 0)
+        {
             return NULL;
+        }
     }
 
     return g_hctx;

@@ -382,23 +382,37 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
    * with minor tweaks */
   rte_eth_dev_info_get(ret_port_id, &dev_info);
 
+  eth_conf = px_eth_conf(ret_port_id, NULL, rss_key, sizeof(rss_key),
+                         SNBUF_DATA,
 #if USE_CGRO || USE_DGRO
-  eth_conf = px_eth_conf(ret_port_id, NULL, rss_key, sizeof(rss_key), SNBUF_DATA, NICMEM);
-#elif USE_LRO
-  eth_conf = default_eth_conf(ret_port_id, NULL, rss_key, sizeof(rss_key), SNBUF_DATA, NICMEM);
+                         1,
 #else
-  eth_conf = default_eth_conf(ret_port_id, NULL, rss_key, sizeof(rss_key), 0, NICMEM);
+                         0,
 #endif
+#if NICMEM
+                         1
+#else
+                         0
+#endif
+                         );
   if (arg.loopback()) {
     eth_conf.lpbk_mode = 1;
   }
-#if USE_CGRO
+#if USE_CGRO || NICMEM
   ret = px_eth_dev_configure(ret_port_id,
                              num_rxq,
                              num_txq,
+#if USE_CGRO
                              NUM_LATENT_RXQ,
+#else
+                             1,
+#endif
                              NICMEM ? 32768 - 1 : 0,
+#if USE_CGRO
                              STALL_TIMEOUT_NS,
+#else
+                             0,
+#endif
 #if HAIRPIN_OFFLOAD
                              NUM_HAIRPIN_Q,
                              NUM_HAIRPIN_Q,
@@ -408,7 +422,10 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
 #endif
                              &eth_conf);
 #else
-  ret = rte_eth_dev_configure(ret_port_id, num_rxq, num_txq, &eth_conf);
+  ret = rte_eth_dev_configure(ret_port_id,
+                              num_rxq,
+                              num_txq,
+                              &eth_conf);
 #endif
   if (ret != 0) {
     VLOG(1) << "Failed to configure with hardware checksum offload. "
@@ -557,7 +574,8 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
   /* make patterns */
   struct rte_flow_item_ipv4 ipv4_mask;
   memset(&ipv4_mask, 0, sizeof(struct rte_flow_item_ipv4));
-  ipv4_mask.hdr.src_addr = ipv4_mask.hdr.dst_addr = UINT32_MAX;
+  ipv4_mask.hdr.src_addr = UINT32_MAX;
+  ipv4_mask.hdr.dst_addr = UINT32_MAX;
   struct px_pattern patterns[2];
   patterns[0].type = RTE_FLOW_ITEM_TYPE_IPV4;
   patterns[0].mask = &ipv4_mask;
@@ -596,7 +614,9 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
 #endif
   for (uint16_t qid = 0; qid < num_rxq; qid++)
   {
-    if (px_init(dpdk_port_id_, qid, bess::PacketBatch::kMaxBurst, 0, 0, USE_LINK) < 0)
+    if (px_init(dpdk_port_id_, qid, bess::PacketBatch::kMaxBurst, 0,
+                !JUMBO_FRAME ? 4096 : 0,
+                USE_LINK) < 0)
       return CommandFailure(ENOMEM, "Flow table creation failed");
     if (px_add_rule(dpdk_port_id_, qid,
                     patterns, sizeof(patterns) / sizeof(patterns[0]),

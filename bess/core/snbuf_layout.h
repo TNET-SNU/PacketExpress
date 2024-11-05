@@ -69,9 +69,12 @@
 // #define SNBUF_DATA 9024
 #endif
 #else
-// #define SNBUF_DATA 9024 // default value for 9000B LRO
-// #define SNBUF_DATA 16384 // default value for 9000B LRO
-#define SNBUF_DATA 65024 // 65536 - 512 // 64KB LRO
+/* default value for 9000B LRO */
+// #define SNBUF_DATA 9024
+/* default value for 9000B LRO */
+// #define SNBUF_DATA 16384
+/* 65536 - 512 // 64KB LRO */
+#define SNBUF_DATA 65024
 #endif
 
 #define SNBUF_MBUF_OFF 0

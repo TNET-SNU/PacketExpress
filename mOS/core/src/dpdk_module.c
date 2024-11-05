@@ -37,7 +37,7 @@
 #define MAX_SOCKETS			2
 
 #if USE_LRO
-#define MBUF_DATA_SIZE		65214
+#define MBUF_DATA_SIZE		65024
 #elif JUMBO_FRAME
 #define MBUF_DATA_SIZE		9024
 #else
@@ -46,34 +46,11 @@
 
 #define MBUF_SIZE 			(MBUF_DATA_SIZE + sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM)
 #define NB_MBUF				262143
-#define MEMPOOL_CACHE_SIZE		512
 //#define RX_IDLE_ENABLE			1
 #define RX_IDLE_TIMEOUT			1	/* in micro-seconds */
 #define RX_IDLE_THRESH			64
 
-#define USE_CUSTOM_THRESH	0
-/*
- * RX and TX Prefetch, Host, and Write-back threshold values should be
- * carefully set for optimal performance. Consult the network
- * controller's datasheet and supporting DPDK documentation for guidance
- * on how these parameters should be set.
- */
-#define RX_PTHRESH 			8 /**< Default values of RX prefetch threshold reg. */
-#define RX_HTHRESH 			8 /**< Default values of RX host threshold reg. */
-#define RX_WTHRESH 			4 /**< Default values of RX write-back threshold reg. */
-
-/*
- * These default values are optimized for use with the ConnectX-6 2 * 100 GbE
- * Controller and the DPDK mlx5_core PMD. Consider using other values for other
- * network controllers and/or network drivers.
- */
-#define TX_PTHRESH 			36 /**< Default values of TX prefetch threshold reg. */
-#define TX_HTHRESH			0  /**< Default values of TX host threshold reg. */
-#define TX_WTHRESH			0  /**< Default values of TX write-back threshold reg. */
-
 #define MAX_PKT_BURST		64
-#define MAX_PKT_BURST_KEY	64
-#define MAX_PKT_BURST_RAW	64
 
 /*
  * Configurable number of RX/TX ring descriptors
@@ -81,17 +58,18 @@
 #define RTE_TEST_RX_DESC_DEFAULT	/* 8192 */ /* 4096 */ /* 2048 */ 1024 /* 512 */ /* 256 */
 #define RTE_TEST_TX_DESC_DEFAULT	/* 8192 */ /* 4096 */ /* 2048 */ 1024 /* 512 */ /* 256 */
 
-static uint16_t nb_rxd_data = RTE_TEST_RX_DESC_DEFAULT;
+static uint16_t nb_rxd = RTE_TEST_RX_DESC_DEFAULT;
 static uint16_t nb_txd = RTE_TEST_TX_DESC_DEFAULT;
 /*----------------------------------------------------------------------------*/
 static struct rte_mempool *pktmbuf_pool[MAX_SOCKETS] = {NULL};
 static uint8_t cpu_qid_map[RTE_MAX_ETHPORTS][MAX_CPUS] = {{0}};
 
 static uint8_t g_key[] = {
-    0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
-    0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
-    0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
-    0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A
+    0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+	0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+	0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+	0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+	0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A
 };
 
 //#define DEBUG				1
@@ -101,81 +79,6 @@ static struct rte_ether_addr ports_eth_addr[RTE_MAX_ETHPORTS];
 #endif
 
 static struct rte_eth_dev_info dev_info[RTE_MAX_ETHPORTS];
-
-#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
-static struct rte_eth_conf port_conf = {
-	.rxmode = {
-		.mq_mode	= 	ETH_MQ_RX_RSS,
-		.offloads	=	DEV_RX_OFFLOAD_RSS_HASH |
-						DEV_RX_OFFLOAD_CHECKSUM |
-						DEV_RX_OFFLOAD_RSS_HASH |
-						DEV_RX_OFFLOAD_TCP_LRO,
-		.max_lro_pkt_size =   MBUF_DATA_SIZE,
-	},
-	.rx_adv_conf = {
-		.rss_conf = {
-			.rss_key = (uint8_t *)g_key,
-			.rss_key_len = sizeof(g_key),
-			.rss_hf = ETH_RSS_TCP | ETH_RSS_UDP |
-					  ETH_RSS_IP
-		},
-	},
-	.txmode = {
-		.mq_mode = ETH_MQ_TX_NONE,
-		.offloads = DEV_TX_OFFLOAD_IPV4_CKSUM |
-					DEV_TX_OFFLOAD_UDP_CKSUM |
-					DEV_TX_OFFLOAD_TCP_CKSUM |
-                    DEV_TX_OFFLOAD_TCP_TSO
-	},
-};
-#else
-static struct rte_eth_conf port_conf = {
-	.rxmode = {
-		.mq_mode	= 	RTE_ETH_MQ_RX_RSS,
-		.mtu = RTE_ETHER_MTU,
-		.offloads	=	RTE_ETH_RX_OFFLOAD_RSS_HASH |
-						RTE_ETH_RX_OFFLOAD_CHECKSUM |
-						RTE_ETH_RX_OFFLOAD_RSS_HASH |
-						RTE_ETH_RX_OFFLOAD_TCP_LRO,
-		.max_lro_pkt_size =   MBUF_DATA_SIZE,
-	},
-	.rx_adv_conf = {
-		.rss_conf = {
-			.rss_key = (uint8_t *)g_key,
-			.rss_key_len = sizeof(g_key),
-			.rss_hf = RTE_ETH_RSS_TCP | RTE_ETH_RSS_UDP |
-					  RTE_ETH_RSS_IP
-		},
-	},
-	.txmode = {
-		.mq_mode = RTE_ETH_MQ_TX_NONE,
-		.offloads = RTE_ETH_TX_OFFLOAD_IPV4_CKSUM |
-					RTE_ETH_TX_OFFLOAD_UDP_CKSUM |
-					RTE_ETH_TX_OFFLOAD_TCP_CKSUM |
-                    RTE_ETH_TX_OFFLOAD_TCP_TSO
-	},
-};
-#endif
-
-
-static struct rte_eth_rxconf rx_conf = {
-	.rx_thresh = {
-		.pthresh = 		RX_PTHRESH, /* RX prefetch threshold reg */
-		.hthresh = 		RX_HTHRESH, /* RX host threshold reg */
-		.wthresh = 		RX_WTHRESH, /* RX write-back threshold reg */
-	},
-	.rx_free_thresh = 		32,
-};
-
-static struct rte_eth_txconf tx_conf = {
-	.tx_thresh = {
-		.pthresh = 		TX_PTHRESH, /* TX prefetch threshold reg */
-		.hthresh = 		TX_HTHRESH, /* TX host threshold reg */
-		.wthresh = 		TX_WTHRESH, /* TX write-back threshold reg */
-	},
-	.tx_free_thresh = 		0, /* Use PMD default values */
-	.tx_rs_thresh = 		0, /* Use PMD default values */
-};
 
 struct mbuf_table {
 	unsigned rlen; /* length of queued packets */
@@ -310,11 +213,9 @@ dpdk_send_pkts(struct mtcp_thread_context *ctxt, int nif)
 	/* if there are packets in the queue... flush them out to the wire */
 	cnt = dpc->wmbufs[nif].wlen;
 	if (cnt > 0) {
-		struct rte_mbuf **pkts;
 #ifdef ENABLE_STATS_IOCTL
 		struct stats_struct ss;
 #endif /* !ENABLE_STATS_IOCTL */
-		pkts = dpc->wmbufs[nif].m_table;
 #ifdef NETSTAT
 		mtcp->nstat.tx_packets[nif] += cnt;
 #ifdef ENABLE_STATS_IOCTL
@@ -333,18 +234,12 @@ dpdk_send_pkts(struct mtcp_thread_context *ctxt, int nif)
 		UNUSED(mtcp);
 #endif
 
-#if !USE_CGRO && (USE_LRO || USE_DGRO)
-		px_setup_tso_burst(pkts, cnt);
+#if USE_CGRO || USE_LRO || USE_DGRO
+		px_setup_tso_burst(dpc->wmbufs[nif].m_table, dpc->wmbufs[nif].wlen);
 #endif
-
-		do {
-			/* tx cnt # of packets */
-			ret = rte_eth_tx_burst(nif, qid, pkts, cnt);
-			pkts += ret;
-			cnt -= ret;
-			/* if not all pkts were sent... then repeat the cycle */
-		} while (cnt > 0);
-		/* reset the len of mbufs var after flushing of packets */
+		ret = rte_eth_tx_burst(nif, qid, dpc->wmbufs[nif].m_table, dpc->wmbufs[nif].wlen);
+		if (ret < dpc->wmbufs[nif].wlen)
+			rte_pktmbuf_free_bulk(dpc->wmbufs[nif].m_table + ret, dpc->wmbufs[nif].wlen - ret);
 		dpc->wmbufs[nif].wlen = 0;
 	}
 
@@ -357,7 +252,6 @@ dpdk_set_wptr(struct mtcp_thread_context *ctxt, int out_nif,
 {
 	struct dpdk_private_context *dpc;
 	mtcp_manager_t mtcp;
-	struct rte_mbuf *m;
 
 	dpc = (struct dpdk_private_context *) ctxt->io_private_context;
 	mtcp = ctxt->mtcp_manager;
@@ -366,28 +260,14 @@ dpdk_set_wptr(struct mtcp_thread_context *ctxt, int out_nif,
 	if (unlikely(dpc->wmbufs[out_nif].wlen == MAX_PKT_BURST))
 		return;
 
-	m = dpc->wmbufs[out_nif].m_table[dpc->wmbufs[out_nif].wlen++] = 
+	dpc->wmbufs[out_nif].m_table[dpc->wmbufs[out_nif].wlen++] = 
 		dpc->rmbufs[in_nif].m_table[index];
-	m->dynfield1[0] = 0;
 #ifdef NETSTAT
-	mtcp->nstat.tx_bytes[out_nif] += m->pkt_len + ETHER_OVR;
+	mtcp->nstat.tx_bytes[out_nif] += 
+		dpc->rmbufs[in_nif].m_table[index]->pkt_len + ETHER_OVR;
 #endif
 	
 	return;
-}
-/*----------------------------------------------------------------------------*/
-static inline void
-free_pkts(struct rte_mbuf **mtable, unsigned len)
-{	
-	/* free the freaking packets */
-	for (int i = 0; i < len; i++) {
-		if (mtable[i]) {
-			if (mtable[i]->dynfield1[0] == 1) {
-				rte_pktmbuf_free(mtable[i]);
-				RTE_MBUF_PREFETCH_TO_FREE(mtable[i+1]);
-			}
-		}
-	}
 }
 /*----------------------------------------------------------------------------*/
 int32_t
@@ -403,11 +283,6 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 	/* if queue is unassigned, skip it.. */
 	if (qid == 0xFF)
 		return 0;
-	
-	if (dpc->rmbufs[ifidx].rlen != 0) {
-		free_pkts(dpc->rmbufs[ifidx].m_table, dpc->rmbufs[ifidx].rlen);
-		dpc->rmbufs[ifidx].rlen = 0;
-	}
 	
 	/* rx from data mbuf */
 #if USE_CGRO
@@ -450,11 +325,9 @@ dpdk_get_rptr(struct mtcp_thread_context *ctxt, int ifidx, int index, uint16_t *
 
 	if (index < dpc->rmbufs[ifidx].rlen)
 		m = dpc->rmbufs[ifidx].m_table[index];
-	/* tag to check if the packet is a local or a forwarded pkt */
-	m->dynfield1[0] = 1;
+	else
+		return NULL;
 	
-	/* don't enable pre-fetching... performance goes down */
-	//rte_prefetch0(rte_pktmbuf_mtod(m, void *));
 	pktbuf = rte_pktmbuf_mtod(m, uint8_t *);
 	*len = ETH_HLEN + htons(*(uint16_t *)(pktbuf + ETH_HLEN + 2));
 	*rss_hash = m->hash.rss;
@@ -505,10 +378,6 @@ dpdk_destroy_handle(struct mtcp_thread_context *ctxt)
 	struct dpdk_private_context *dpc;
 
 	dpc = (struct dpdk_private_context *) ctxt->io_private_context;	
-
-	/* free wmbufs */
-	// for (int i = 0; i < g_config.mos->netdev_table->num; i++)
-	// 	free_pkts(dpc->wmbufs_raw[i].m_table, MAX_PKT_BURST_RAW);
 
 #ifdef ENABLE_STATS_IOCTL
 	/* free fd */
@@ -647,6 +516,7 @@ void
 dpdk_load_module_lower_half(void)
 {
 	int portid, rxlcore_id = 0, ret;
+	struct rte_eth_conf port_conf;
 	struct rte_eth_fc_conf fc_conf;	/* for Ethernet flow control settings */
 
 	/* resetting cpu_qid mapping */
@@ -663,11 +533,11 @@ dpdk_load_module_lower_half(void)
 			if (!(pktmbuf_pool[sid] =
 				rte_mempool_create(name, NB_MBUF,
 #if NICMEM
-								   sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM + NICMEM_DMA_SIZE,
+								   MBUF_SIZE - MBUF_DATA_SIZE + NICMEM_DMA_SIZE + NICMEM_DMA_SIZE,
 #else
 								   MBUF_SIZE,
 #endif
-						   		   MEMPOOL_CACHE_SIZE,
+						   		   RTE_MEMPOOL_CACHE_MAX_SIZE,
 								   sizeof(struct rte_pktmbuf_pool_private),
 								   rte_pktmbuf_pool_init, NULL,
 								   rte_pktmbuf_init, NULL,
@@ -701,14 +571,19 @@ dpdk_load_module_lower_half(void)
 #endif
 
 			/* re-adjust rss_hf */
-#if USE_DGRO || USE_CGRO
-			port_conf = px_eth_conf(portid, NULL, g_key, sizeof(g_key), MBUF_DATA_SIZE, NICMEM);
-#elif USE_LRO
-			port_conf = default_eth_conf(portid, NULL, g_key, sizeof(g_key), MBUF_DATA_SIZE, NICMEM);
+			port_conf = px_eth_conf(portid, NULL, g_key, sizeof(g_key),
+									MBUF_DATA_SIZE,
+#if USE_CGRO || USE_DGRO
+									1,
 #else
-			port_conf = default_eth_conf(portid, NULL, g_key, sizeof(g_key), 0, NICMEM);
+									0,
 #endif
-			port_conf.rx_adv_conf.rss_conf.rss_hf &= dev_info[portid].flow_type_rss_offloads;
+#if NICMEM
+									1
+#else
+									0
+#endif
+									);
 			assert(num_queue == g_config.mos->num_cores);
 			/* set 'num_queues' (used for GetRSSCPUCore() in util.c) */
 			num_queues = num_queue;
@@ -716,15 +591,28 @@ dpdk_load_module_lower_half(void)
 			/* init port */
 			printf("[port %u] Initializing port... ", (unsigned) portid);
 			fflush(stdout);
-#if USE_CGRO
+#if USE_CGRO || NICMEM
 			ret = px_eth_dev_configure(portid,
 									   num_queue,
 									   num_queue,
+#if USE_CGRO
 									   NUM_LATENT_RXQ,
-									   NICMEM ? 32768 - 1 : 0,
+#else
+									   1,
+#endif
+									   NICMEM ? 16384 - 1 : 0,
+#if USE_CGRO
 									   STALL_TIMEOUT_NS,
-									   HAIRPIN_OFFLOAD ? NUM_HAIRPIN_Q : 0,
-									   HAIRPIN_OFFLOAD ? NUM_HAIRPIN_Q : 0,
+#else
+									   0,
+#endif
+#if HAIRPIN_OFFLOAD
+									   NUM_HAIRPIN_Q,
+									   NUM_HAIRPIN_Q,
+#else
+									   0,
+									   0,
+#endif
 									   &port_conf);
 #else
 			ret = rte_eth_dev_configure(portid,
@@ -748,16 +636,14 @@ dpdk_load_module_lower_half(void)
 					continue;
 				/* first RX queue for data */
 #if USE_CGRO || NICMEM
-				ret = px_eth_rx_queue_setup(portid, queue_id, nb_rxd_data,
+				ret = px_eth_rx_queue_setup(portid, queue_id, nb_rxd,
 											rte_eth_dev_socket_id(portid),
-											(USE_CUSTOM_THRESH) ? 
-											&rx_conf : &dev_info[portid].default_rxconf,
+											&dev_info[portid].default_rxconf,
 											pktmbuf_pool[rte_eth_dev_socket_id(portid)]);
 #else
-				ret = rte_eth_rx_queue_setup(portid, queue_id, nb_rxd_data,
+				ret = rte_eth_rx_queue_setup(portid, queue_id, nb_rxd,
 											rte_eth_dev_socket_id(portid),
-											(USE_CUSTOM_THRESH) ? 
-											&rx_conf : &dev_info[portid].default_rxconf,
+											&dev_info[portid].default_rxconf,
 											pktmbuf_pool[rte_eth_dev_socket_id(portid)]);
 #endif
 				if (ret < 0)
@@ -777,7 +663,7 @@ dpdk_load_module_lower_half(void)
 					continue;
 				if ((ret = rte_eth_tx_queue_setup(portid, queue_id, nb_txd,
 												  rte_eth_dev_socket_id(portid),
-												  (USE_CUSTOM_THRESH) ? &tx_conf : &dev_info[portid].default_txconf)) < 0)
+												  &dev_info[portid].default_txconf)) < 0)
 					rte_exit(EXIT_FAILURE, "rte_eth_tx_queue_setup: "
 										   "err=%d, port=%u, queue_id: %d\n",
 										   ret, (unsigned) portid, rxlcore_id);
@@ -798,39 +684,27 @@ dpdk_load_module_lower_half(void)
 			/* make patterns */
 			struct rte_flow_item_ipv4 ipv4_mask;
 			memset(&ipv4_mask, 0, sizeof(struct rte_flow_item_ipv4));
-			ipv4_mask.hdr.src_addr = ipv4_mask.hdr.dst_addr = UINT32_MAX;
-			struct rte_flow_item_tcp tcp_mask;
-			memset(&tcp_mask, 0, sizeof(struct rte_flow_item_tcp));
-			tcp_mask.hdr.src_port = tcp_mask.hdr.dst_port = UINT16_MAX;
-			struct rte_flow_item_tcp udp_mask;
-			memset(&udp_mask, 0, sizeof(struct rte_flow_item_udp));
-			udp_mask.hdr.src_port = udp_mask.hdr.dst_port = UINT16_MAX;
+			ipv4_mask.hdr.src_addr = UINT32_MAX;
+			ipv4_mask.hdr.dst_addr = UINT32_MAX;
 			struct px_pattern patterns[2];
 			patterns[0].type = RTE_FLOW_ITEM_TYPE_IPV4;
 			patterns[0].mask = &ipv4_mask;
+			struct rte_flow_item_tcp tcp_mask;
+			memset(&tcp_mask, 0, sizeof(struct rte_flow_item_tcp));
+			tcp_mask.hdr.src_port = UINT16_MAX;
+			tcp_mask.hdr.dst_port = UINT16_MAX;
 			patterns[1].type = RTE_FLOW_ITEM_TYPE_TCP;
 			patterns[1].mask = &tcp_mask;
 
 			/* make actions */
 			struct px_action actions[2];
-			#define USE_TCP_CONCAT 0
-			#if USE_TCP_CONCAT
-			struct rte_flow_action_raw_decap decap;
-			memset(&decap, 0, sizeof(struct rte_flow_action_raw_decap));
-			decap.size = sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr);
-			actions[0].type = RTE_FLOW_ACTION_TYPE_RAW_DECAP;
-			actions[0].conf = &decap;
-			actions[1].type = PX_ACTION_TYPE_CONCAT;
-			#else
 			actions[0].type = RTE_FLOW_ACTION_TYPE_VOID;
 			actions[1].type = RTE_FLOW_ACTION_TYPE_VOID;
-			#endif
-
 			for (uint16_t qid = 0; qid < g_config.mos->num_cores; qid++)
 			{
-				if (px_init(portid, qid, MAX_PKT_BURST, 0, 0, USE_LINK) < 0)
+				if (px_init(portid, qid, MAX_PKT_BURST, 0, !JUMBO_FRAME ? 4096 : 0, USE_LINK) < 0)
 					rte_exit(EXIT_FAILURE, "px_init failed\n");
-				if (px_add_rule(portid, qid, patterns, 2, actions, 3) < 0)
+				if (px_add_rule(portid, qid, patterns, 2, actions, 2) < 0)
 					rte_exit(EXIT_FAILURE, "px_add_rule failed\n");
 			}
 #endif

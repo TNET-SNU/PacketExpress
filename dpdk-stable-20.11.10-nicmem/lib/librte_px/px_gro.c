@@ -3,8 +3,6 @@
 static struct px_dev g_px_dev[RTE_MAX_ETHPORTS] = {0};
 static struct px_ctx g_pctx[RTE_MAX_ETHPORTS][PX_MAX_QUEUES_PER_PORT] = {0};
 static struct rte_mempool *g_clone_pool[RTE_MAX_NUMA_NODES] = {NULL};
-static uint32_t g_nb_rx_desc[RTE_MAX_ETHPORTS][PX_MAX_QUEUES_PER_PORT] = {0};
-static uint32_t g_nb_tx_desc[RTE_MAX_ETHPORTS][PX_MAX_QUEUES_PER_PORT] = {0};
 uint8_t g_rss_key[40] = {0xD8, 0x2A, 0x6C, 0x5A, 0xDD, 0x3B, 0x9D, 0x1E,
                          0x14, 0xCE, 0x2F, 0x37, 0x86, 0xB2, 0x69, 0xF0,
                          0x44, 0x31, 0x7E, 0xA2, 0x07, 0xA5, 0x0A, 0x99,
@@ -179,7 +177,14 @@ merge_tcp(struct px_item *cur_item,
 #endif
 
     /* remove the packet header of tail packet */
-    rte_pktmbuf_adj(pkt_tail, get_hdr_len(pkt_tail));
+    if (!rte_pktmbuf_adj(pkt_tail, get_hdr_len(pkt_tail)))
+    {
+        printf("rte_pktmbuf_adj failed\n");
+        return 0;
+    }
+
+    /* mark as decapsulated */
+    pkt_tail->ol_flags |= (IND_ATTACHED_MBUF << 1);
 
     /* chain two packets together */
     if (cmp == 1)
@@ -679,7 +684,7 @@ setup_sctp(struct rte_mbuf *pkt)
 static inline uint32_t
 get_rss_hash(struct rte_mbuf *pkt)
 {
-    return pkt->hash.rss >> 4;
+    return pkt->hash.rss >> 5;
 }
 /*---------------------------------------------------------------------------*/
 static inline uint32_t
@@ -913,8 +918,8 @@ separate_edge_seg(struct px_ctx *pctx,
                   uint16_t last_segsz)
 {
     struct rte_mempool *clone_pool = g_clone_pool[pctx->socket_id];
-    // struct rte_mempool *clone_pool = pkt->pool;
-    struct rte_mbuf *edge = pkt, *edge_tail = NULL, *edge_head, *next;
+    struct rte_mbuf *edge = pkt, *edge_tail = NULL, *edge_head;
+    struct rte_mbuf *prev = NULL, *next;
     uint32_t hdr_size = get_hdr_len(pkt);
     uint32_t target_size = pkt->pkt_len - last_segsz;
     uint32_t seq_diff, trim_size = 0, pkt_size = 0;
@@ -929,6 +934,7 @@ separate_edge_seg(struct px_ctx *pctx,
             trim_size = pkt_size - target_size;
             break;
         }
+        prev = edge;
         edge = edge->next;
     }
 
@@ -941,43 +947,87 @@ separate_edge_seg(struct px_ctx *pctx,
     edge->next = NULL;
 
     /* make edge_tail segment */
-    edge_tail = rte_pktmbuf_clone(edge, clone_pool);
-    if (!edge_tail)
+    if (is_nicmem(edge))
     {
-        goto err;
+        edge_tail = rte_pktmbuf_clone(edge, clone_pool);
+        if (!edge_tail)
+        {
+            goto err;
+        }
+    }
+    else
+    {
+        edge_tail = rte_pktmbuf_clone(edge, clone_pool);
+        if (!edge_tail)
+        {
+            goto err;
+        }
     }
     edge_tail->data_off += edge->data_len;
     edge_tail->data_len = trim_size;
     edge_tail->next = next;
 
     /* make edge_head segment */
-    if (seg_idx)
+    if (is_nicmem(edge))
     {
-        /*
-         * edge header is not valid when transmitted
-         * so, we can modify header fields without deep copy
-         */
-        edge_head = rte_pktmbuf_clone(edge, clone_pool);
-        if (!edge_head)
+        /* destroy the chain to next mbuf first */
+        prev->next = NULL;
+        if (prev->ol_flags & (IND_ATTACHED_MBUF << 1))
         {
-            goto err;
+            prev->ol_flags &= ~(IND_ATTACHED_MBUF << 1);
+            /* prev segment is decapsulated */
+            edge_head = rte_pktmbuf_clone(prev, clone_pool);
+            if (!edge_head)
+            {
+                goto err;
+            }
+            edge_head->data_off -= hdr_size;
+            seq_diff = prev->data_len + edge->data_len;
         }
-        edge_head->data_off -= hdr_size;
-        seq_diff = edge->data_len;
+        else
+        {
+            /* prev segment still has valid header */
+            edge_head = rte_pktmbuf_copy(prev, clone_pool, 0, hdr_size);
+            if (!edge_head)
+            {
+                goto err;
+            }
+            seq_diff = prev->data_len - hdr_size + edge->data_len;
+        }
+        /* restore the chain to next mbuf */
+        prev->next = edge;
     }
     else
     {
-        /*
-         * edge header is valid when transmitted
-         * so, we cannot modify header fields without deep copy
-         */
-        edge_head = rte_pktmbuf_copy(edge, clone_pool, 0, hdr_size);
-        if (!edge_head)
+        if (seg_idx)
         {
-            goto err;
+            /*
+             * edge header is not valid when transmitted
+             * so, we can modify header fields without deep copy
+             */
+            edge_head = rte_pktmbuf_clone(edge, clone_pool);
+            if (!edge_head)
+            {
+                goto err;
+            }
+            edge_head->data_off -= hdr_size;
+            seq_diff = edge->data_len;
         }
-        seq_diff = edge->data_len - hdr_size;
+        else
+        {
+            /*
+             * edge header is valid when transmitted
+             * so, we cannot modify header fields without deep copy
+             */
+            edge_head = rte_pktmbuf_copy(edge, clone_pool, 0, hdr_size);
+            if (!edge_head)
+            {
+                goto err;
+            }
+            seq_diff = edge->data_len - hdr_size;
+        }
     }
+
     edge_head->data_len = hdr_size;
     edge_head->next = edge_tail;
     edge_head->pkt_len = hdr_size + last_segsz;
@@ -994,6 +1044,10 @@ err:
     fprintf(stderr, "duplication failed\n");
     edge->data_len += trim_size;
     edge->next = next;
+    if (prev)
+    {
+        prev->next = edge;
+    }
     if (edge_tail)
     {
         edge_tail->next = NULL;
@@ -1299,7 +1353,7 @@ parse_for_tcp_gro(struct rte_mbuf *pkt,
     tcp_hdr = rte_pktmbuf_mtod_offset(pkt,
                                       struct rte_tcp_hdr *,
                                       pkt->l2_len + pkt->l3_len);
-    setup_tcp(pkt, (tcp_hdr->data_off >> 4) << 2);
+    setup_tcp(pkt, tcp_hdr->data_off >> 4 << 2);
 
     /* only process ACK packet */
     *tcp_flags = tcp_hdr->tcp_flags;
@@ -1402,13 +1456,15 @@ parse_packet(struct rte_mbuf *pkt,
         return -1;
     }
 
+    // printf("pkt_len: %d, l2_len: %d, l3_len: %d, l4_len: %d\n",
+    //        pkt->pkt_len, pkt->l2_len, pkt->l3_len, pkt->l4_len);
+    // tupledump(pkt);
+
     /* only process payload length > 0 */
     if (unlikely(pkt->pkt_len <= get_hdr_len(pkt)))
     {
         return -1;
     }
-
-    // printf("pkt->lro_segsz: %d\n", pkt->tso_segsz);
 
     return ret;
 }
@@ -1880,53 +1936,59 @@ px_core(struct px_ctx *pctx,
             }
 
             /* check if MTU translation necessary */
-            if (pctx->mss_ctx)
+
+            /* check SYN flag */
+            if (tcp_flags & RTE_TCP_SYN_FLAG)
             {
-                /* get four tuple and reverse four tuple */
-                key = get_four_tuple(pkt);
-                reverse_key = (struct four_tuple){
-                    .src_ip = key->dst_ip,
-                    .dst_ip = key->src_ip,
-                    .src_port = key->dst_port,
-                    .dst_port = key->src_port,
-                };
 
-                /* check SYN flag */
-                if (tcp_flags & RTE_TCP_SYN_FLAG)
+                /* mss parsing */
+                mss_ptr = get_tcp_mss(pkt);
+                if (!mss_ptr)
                 {
-                    /* mss parsing */
-                    mss_ptr = get_tcp_mss(pkt);
-                    if (!mss_ptr)
-                    {
-                        fprintf(stderr, "[Err] no MSS field\n");
-                        /* push back */
-                        pkts[cnt++] = pkt;
-                        continue;
-                    }
-
-                    /* insert MSS to hashtable */
-                    if (pctx->mss_ctx)
-                    {
-                        insert_mss_entry(pctx->mss_ctx,
-                                         pkt->hash.rss,
-                                         &reverse_key,
-                                         ntohs(*mss_ptr));
-                    }
-
-                    /* update MSS */
-                    update_mss(mss_ptr);
+                    fprintf(stderr, "[Err] no MSS field\n");
+                    /* push back */
+                    pkts[cnt++] = pkt;
+                    continue;
                 }
 
-                /* check FIN | RST flag */
-                if (tcp_flags & (RTE_TCP_FIN_FLAG | RTE_TCP_RST_FLAG))
+                if (pctx->mss_ctx)
                 {
+                    /* get four tuple and reverse four tuple */
+                    key = get_four_tuple(pkt);
+                    reverse_key = (struct four_tuple){
+                        .src_ip = key->dst_ip,
+                        .dst_ip = key->src_ip,
+                        .src_port = key->dst_port,
+                        .dst_port = key->src_port,
+                    };
+                    /* insert MSS to hashtable */
+                    insert_mss_entry(pctx->mss_ctx,
+                                     pkt->hash.rss,
+                                     &reverse_key,
+                                     ntohs(*mss_ptr));
+                }
+
+                /* update MSS */
+                update_mss(mss_ptr);
+            }
+
+            /* check FIN | RST flag */
+            if (tcp_flags & (RTE_TCP_FIN_FLAG | RTE_TCP_RST_FLAG))
+            {
+                if (pctx->mss_ctx)
+                {
+                    /* get four tuple and reverse four tuple */
+                    key = get_four_tuple(pkt);
+                    reverse_key = (struct four_tuple){
+                        .src_ip = key->dst_ip,
+                        .dst_ip = key->src_ip,
+                        .src_port = key->dst_port,
+                        .dst_port = key->src_port,
+                    };
                     /* evict MSSes from hashtable */
-                    if (pctx->mss_ctx)
-                    {
-                        evict_mss_entry(pctx->mss_ctx,
-                                        pkt->hash.rss,
-                                        &reverse_key);
-                    }
+                    evict_mss_entry(pctx->mss_ctx,
+                                    pkt->hash.rss,
+                                    &reverse_key);
                 }
             }
 
@@ -2051,13 +2113,6 @@ void px_deinit(uint16_t port_id,
         px_ring_deinit(&pctx->tx_ring);
     }
 
-    /* free clone pool */
-    if (g_clone_pool[pctx->socket_id])
-    {
-        rte_mempool_free(g_clone_pool[pctx->socket_id]);
-        g_clone_pool[pctx->socket_id] = NULL;
-    }
-
     /* reset pctx */
     memset(pctx, 0, sizeof(*pctx));
 
@@ -2074,17 +2129,13 @@ int px_init(uint16_t port_id,
             int mss_table_size,
             int do_link)
 {
+    struct px_dev *px_dev = &g_px_dev[port_id];
     struct px_ctx *pctx;
     struct px_stall *stall;
-    uint16_t table_size;
+    uint16_t table_size, num_rxq_incr = px_dev->num_rxq_incr;
     int i;
 
-    if (!g_nb_rx_desc[port_id][queue_id])
-    {
-        rte_exit(EXIT_FAILURE,
-                 "please set up RX queues before init PX\n");
-    }
-    if (!g_px_dev[port_id].num_rxq_incr)
+    if (!num_rxq_incr)
     {
         rte_exit(EXIT_FAILURE,
                  "please set up the number of latent queues before init PX\n");
@@ -2110,9 +2161,9 @@ int px_init(uint16_t port_id,
     }
 
     /* estimate table size */
-    // table_size = burst * (g_px_dev[port_id].stall_limit + 1);
+    // table_size = burst * (px_dev->stall_limit + 1);
 
-    if (g_px_dev[port_id].timeout_ns)
+    if (px_dev->timeout_ns)
     {
         /* ToDo: Use mempool for items, flows, buckets, stalls array
          * estimate the buffer size as BW * Delay */
@@ -2157,10 +2208,10 @@ int px_init(uint16_t port_id,
     /* make rule queue */
     TAILQ_INIT(&pctx->rule_set.rules);
 
-    if (g_px_dev[port_id].timeout_ns)
+    if (px_dev->timeout_ns)
     {
         /* make stall queue descriptors */
-        pctx->stalls = (struct px_stall *)calloc(g_px_dev[port_id].num_rxq_incr,
+        pctx->stalls = (struct px_stall *)calloc(num_rxq_incr,
                                                  sizeof(struct px_stall));
         if (!pctx->stalls)
         {
@@ -2168,7 +2219,7 @@ int px_init(uint16_t port_id,
         }
 
         /* make stall items array for each latent queue */
-        for (i = 0; i < g_px_dev[port_id].num_rxq_incr; i++)
+        for (i = 0; i < num_rxq_incr; i++)
         {
             stall = &pctx->stalls[i];
             stall->items = (struct px_item *)calloc(pctx->array_size,
@@ -2181,32 +2232,15 @@ int px_init(uint16_t port_id,
         }
 
         /* create PX RX ring as same size as original RX ring */
-        if (px_ring_init(&pctx->rx_ring, g_nb_rx_desc[port_id][queue_id]) < 0)
+        if (px_ring_init(&pctx->rx_ring, px_dev->nb_rx_desc[queue_id]) < 0)
         {
             rte_exit(EXIT_FAILURE, "px_ring_init failed\n");
         }
 
         /* create PX TX ring as same size as original TX ring */
-        if (px_ring_init(&pctx->tx_ring, g_nb_tx_desc[port_id][queue_id]) < 0)
+        if (px_ring_init(&pctx->tx_ring, px_dev->nb_tx_desc[queue_id]) < 0)
         {
             rte_exit(EXIT_FAILURE, "px_ring_init failed\n");
-        }
-    }
-
-    /* make a clone pool for packet stall */
-    if (!g_clone_pool[pctx->socket_id])
-    {
-        /* create the mbuf pools for tx/rx of session data packets */
-        g_clone_pool[pctx->socket_id] =
-            rte_mempool_create("mbuf-clone-pool", NB_MBUF, 512,
-                               RTE_MEMPOOL_CACHE_MAX_SIZE,
-                               sizeof(struct rte_pktmbuf_pool_private),
-                               rte_pktmbuf_pool_init, NULL,
-                               rte_pktmbuf_init, NULL,
-                               pctx->socket_id, 0);
-        if (!g_clone_pool[pctx->socket_id])
-        {
-            rte_exit(EXIT_FAILURE, "Cannot init mbuf pool for clone\n");
         }
     }
 
@@ -2218,117 +2252,6 @@ int px_init(uint16_t port_id,
 
     return 0;
 }
-/*---------------------------------------------------------------------------*/
-struct rte_eth_conf
-default_eth_conf(uint16_t port_id,
-                 struct rte_eth_conf *conf,
-                 uint8_t *rss_key,
-                 int rss_key_len,
-                 int lro_size,
-                 int is_nicmem)
-{
-    struct rte_eth_dev_info dev_info;
-    struct rte_eth_conf new_conf = {};
-
-    rte_eth_dev_info_get(port_id, &dev_info);
-    if (!conf)
-    {
-        conf = &new_conf;
-    }
-    if (!rss_key)
-    {
-        rss_key = g_rss_key;
-        rss_key_len = sizeof(g_rss_key);
-    }
-
-#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
-    conf->link_speeds = ETH_LINK_SPEED_AUTONEG;
-    conf->rxmode.mq_mode = ETH_MQ_RX_RSS;
-    conf->rxmode.offloads = DEV_RX_OFFLOAD_RSS_HASH |
-                            DEV_RX_OFFLOAD_IPV4_CKSUM |
-                            DEV_RX_OFFLOAD_UDP_CKSUM |
-                            DEV_RX_OFFLOAD_TCP_CKSUM;
-    conf->txmode.offloads = DEV_TX_OFFLOAD_IPV4_CKSUM |
-                            DEV_TX_OFFLOAD_TCP_CKSUM |
-                            DEV_TX_OFFLOAD_UDP_CKSUM |
-                            DEV_TX_OFFLOAD_TCP_TSO;
-    conf->rxmode.max_rx_pkt_len = RTE_ETHER_MAX_LEN;
-    conf->rxmode.split_hdr_size = 0;
-
-    if (lro_size > (RTE_ETHER_MAX_LEN / 64 + 1) * 64)
-    {
-        conf->rxmode.max_lro_pkt_size = lro_size;
-        conf->rxmode.offloads |= DEV_RX_OFFLOAD_TCP_LRO;
-    }
-
-    if (is_nicmem)
-    {
-#if RTE_VERSION < RTE_VERSION_NUM(20, 11, 10, 99)
-        conf->rxmode.offloads |= DEV_RX_OFFLOAD_BUFFER_SPLIT |
-                                 DEV_RX_OFFLOAD_SCATTER;
-#else
-        conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT |
-                                 DEV_RX_OFFLOAD_SCATTER;
-#endif
-    }
-
-    conf->rx_adv_conf.rss_conf.rss_key = rss_key;
-    conf->rx_adv_conf.rss_conf.rss_key_len = rss_key_len;
-    conf->rx_adv_conf.rss_conf.rss_hf =
-        (ETH_RSS_IP | ETH_RSS_UDP |
-         ETH_RSS_TCP | ETH_RSS_SCTP) &
-        dev_info.flow_type_rss_offloads;
-#else
-    conf->link_speeds = RTE_ETH_LINK_SPEED_AUTONEG;
-    conf->rxmode.mq_mode = RTE_ETH_MQ_RX_RSS;
-    conf->rxmode.offloads = RTE_ETH_RX_OFFLOAD_RSS_HASH |
-                            RTE_ETH_RX_OFFLOAD_IPV4_CKSUM |
-                            RTE_ETH_RX_OFFLOAD_UDP_CKSUM |
-                            RTE_ETH_RX_OFFLOAD_TCP_CKSUM;
-    conf->txmode.offloads = RTE_ETH_TX_OFFLOAD_IPV4_CKSUM |
-                            RTE_ETH_TX_OFFLOAD_TCP_CKSUM |
-                            RTE_ETH_TX_OFFLOAD_UDP_CKSUM |
-                            RTE_ETH_TX_OFFLOAD_TCP_TSO;
-
-    if (lro_size > (RTE_ETHER_MAX_LEN / 64 + 1) * 64)
-    {
-        conf->rxmode.max_lro_pkt_size = lro_size;
-        conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_TCP_LRO;
-    }
-
-    if (is_nicmem)
-    {
-        conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT |
-                                 RTE_ETH_RX_OFFLOAD_SCATTER;
-    }
-
-    conf->rx_adv_conf.rss_conf.rss_key = rss_key;
-    conf->rx_adv_conf.rss_conf.rss_key_len = rss_key_len;
-    conf->rx_adv_conf.rss_conf.rss_hf =
-        (RTE_ETH_RSS_IP | RTE_ETH_RSS_UDP |
-         RTE_ETH_RSS_TCP | RTE_ETH_RSS_SCTP) &
-        dev_info.flow_type_rss_offloads;
-#endif
-
-    return *conf;
-}
-/*----------------------------------------------------------------------------*/
-// int px_adjust_lro(struct rte_eth_conf *conf, uint32_t lro_size)
-// {
-//     if (!conf)
-//     {
-//         return -1;
-//     }
-//     g_px_dev[port_id].lro_size = lro_size;
-
-// #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
-//     conf->rxmode.max_lro_pkt_size = lro_size;
-//     conf->rxmode.offloads |= DEV_RX_OFFLOAD_TCP_LRO;
-// #else
-
-// #endif
-
-// }
 /*----------------------------------------------------------------------------*/
 struct rte_eth_conf
 px_eth_conf(uint16_t port_id,
@@ -2336,6 +2259,7 @@ px_eth_conf(uint16_t port_id,
             uint8_t *rss_key,
             int rss_key_len,
             int lro_size,
+            int is_gro,
             int is_nicmem)
 {
     struct rte_eth_dev_info dev_info;
@@ -2362,16 +2286,19 @@ px_eth_conf(uint16_t port_id,
     conf->txmode.offloads |= DEV_TX_OFFLOAD_IPV4_CKSUM |
                              DEV_TX_OFFLOAD_TCP_CKSUM |
                              DEV_TX_OFFLOAD_UDP_CKSUM |
-                             DEV_TX_OFFLOAD_TCP_TSO |
-                             DEV_TX_OFFLOAD_MULTI_SEGS;
+                             DEV_TX_OFFLOAD_TCP_TSO;
 
     conf->rxmode.max_rx_pkt_len = RTE_ETHER_MAX_LEN;
     conf->rxmode.split_hdr_size = 0;
 
     if (lro_size > (RTE_ETHER_MAX_LEN / 64 + 1) * 64)
     {
-        conf->rxmode.max_lro_pkt_size = lro_size;
         conf->rxmode.offloads |= DEV_RX_OFFLOAD_TCP_LRO;
+    }
+
+    if (is_gro)
+    {
+        conf->txmode.offloads |= DEV_TX_OFFLOAD_MULTI_SEGS;
     }
 
     if (is_nicmem)
@@ -2385,6 +2312,7 @@ px_eth_conf(uint16_t port_id,
 #endif
     }
 
+    conf->rxmode.max_lro_pkt_size = lro_size;
     conf->rx_adv_conf.rss_conf.rss_key = rss_key;
     conf->rx_adv_conf.rss_conf.rss_key_len = rss_key_len;
     conf->rx_adv_conf.rss_conf.rss_hf =
@@ -2400,13 +2328,16 @@ px_eth_conf(uint16_t port_id,
     conf->txmode.offloads |= RTE_ETH_TX_OFFLOAD_IPV4_CKSUM |
                              RTE_ETH_TX_OFFLOAD_TCP_CKSUM |
                              RTE_ETH_TX_OFFLOAD_UDP_CKSUM |
-                             RTE_ETH_TX_OFFLOAD_TCP_TSO |
-                             RTE_ETH_TX_OFFLOAD_MULTI_SEGS;
+                             RTE_ETH_TX_OFFLOAD_TCP_TSO;
 
     if (lro_size > (RTE_ETHER_MAX_LEN / 64 + 1) * 64)
     {
-        conf->rxmode.max_lro_pkt_size = lro_size;
         conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_TCP_LRO;
+    }
+
+    if (is_gro)
+    {
+        conf->txmode.offloads |= RTE_ETH_TX_OFFLOAD_MULTI_SEGS;
     }
 
     if (is_nicmem)
@@ -2414,7 +2345,7 @@ px_eth_conf(uint16_t port_id,
         conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT |
                                  RTE_ETH_RX_OFFLOAD_SCATTER;
     }
-
+    conf->rxmode.max_lro_pkt_size = lro_size;
     conf->rx_adv_conf.rss_conf.rss_key = rss_key;
     conf->rx_adv_conf.rss_conf.rss_key_len = rss_key_len;
     conf->rx_adv_conf.rss_conf.rss_hf =
@@ -2437,11 +2368,50 @@ int px_eth_dev_configure(uint16_t port_id,
                          struct rte_eth_conf *eth_conf)
 {
     int ret;
-
+    uint16_t socket_id;
     g_px_dev[port_id].num_rxq = num_rxq;
     g_px_dev[port_id].num_rxq_incr = num_rxq_incr;
     g_px_dev[port_id].num_txq = num_txq;
     g_px_dev[port_id].timeout_ns = timeout_ns;
+
+    /* check port_id first */
+    ret = rte_eth_dev_configure(port_id,
+                                num_rxq * num_rxq_incr,
+                                num_txq,
+                                eth_conf);
+
+    if (ret)
+    {
+        return ret;
+    }
+
+    /* make a clone pool for segmentation */
+    socket_id = rte_eth_dev_socket_id(port_id);
+    if (!g_clone_pool[socket_id])
+    {
+        char pool_name[MAX_NAME_SIZE];
+        snprintf(pool_name,
+                 MAX_NAME_SIZE,
+                 "mbuf-clone-pool-%d",
+                 socket_id);
+        /* create the mbuf pools for tx/rx of session data packets */
+        g_clone_pool[socket_id] =
+            rte_mempool_create(pool_name,
+                               262143,
+                               sizeof(struct rte_mbuf) +
+                                   RTE_PKTMBUF_HEADROOM +
+                                   NICMEM_DMA_SIZE,
+                               RTE_MEMPOOL_CACHE_MAX_SIZE,
+                               sizeof(struct rte_pktmbuf_pool_private),
+                               rte_pktmbuf_pool_init, NULL,
+                               rte_pktmbuf_init, NULL,
+                               socket_id, 0);
+        if (!g_clone_pool[socket_id])
+        {
+            rte_exit(EXIT_FAILURE, "Cannot init mbuf pool for clone: %d\n",
+                     socket_id);
+        }
+    }
 
     /* setup nicmem if necessary */
     if (num_nicmem)
@@ -2472,10 +2442,7 @@ int px_eth_dev_configure(uint16_t port_id,
         }
     }
 
-    return rte_eth_dev_configure(port_id,
-                                 num_rxq * num_rxq_incr,
-                                 num_txq,
-                                 eth_conf);
+    return ret;
 }
 /*---------------------------------------------------------------------------*/
 int px_eth_rx_queue_setup(uint16_t port_id,
@@ -2521,7 +2488,7 @@ int px_eth_rx_queue_setup(uint16_t port_id,
         mp = NULL;
     }
 
-    g_nb_rx_desc[port_id][rx_queue_id] = nb_rx_desc;
+    g_px_dev[port_id].nb_rx_desc[rx_queue_id] = nb_rx_desc;
 
     /* setup hairpin */
     if (g_px_dev[port_id].hpm.hp_num_rxq)
@@ -2529,8 +2496,8 @@ int px_eth_rx_queue_setup(uint16_t port_id,
         ret = px_hairpin_setup(&g_px_dev[port_id].hpm,
                                g_px_dev[port_id].num_rxq,
                                g_px_dev[port_id].num_txq,
-                               g_nb_rx_desc[port_id][rx_queue_id] / 2,
-                               g_nb_rx_desc[port_id][rx_queue_id]);
+                               nb_rx_desc / 2,
+                               nb_rx_desc);
         if (ret)
         {
             return ret;
@@ -2581,7 +2548,8 @@ int px_eth_tx_queue_setup(uint16_t port_id,
     {
         return ret;
     }
-    g_nb_tx_desc[port_id][tx_queue_id] = nb_tx_desc;
+
+    g_px_dev[port_id].nb_tx_desc[tx_queue_id] = nb_tx_desc;
 
     return 0;
 }

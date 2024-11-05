@@ -496,8 +496,8 @@ int decode_action_rule(struct decoded_action *rule,
             continue;
         }
     }
-    printf("DECAP: %d, CONCAT: %d\n",
-           rule->decap_size, rule->do_concat);
+    // printf("DECAP: %d, CONCAT: %d\n",
+    //        rule->decap_size, rule->do_concat);
 
     return 0;
 }

@@ -3,9 +3,6 @@
 
 SHELL := /bin/bash
 DISABLE_NUMA=@NONUMA@
-ENABLE_DPDK=1
-ENABLE_PCAP=0
-ENABLE_NETMAP=0
 
 ### TARGET ###
 MTCP_LIB_DIR=../lib
@@ -24,7 +21,8 @@ GCC_OPT = -m64 -Wall -fPIC -DNEWEV -fgnu89-inline -Werror -fcommon -Wno-error=de
 #DBG_OPT += -DPKTDUMP
 #DBG_OPT += -DDUMP_STREAM
 #GCC_OPT += -g -DNETSTAT -DINFO -DDBGERR -DDBGCERR
-GCC_OPT += -DNDEBUG -O3 -g -DNETSTAT -DINFO -DDBGERR -DDBGCERR
+# GCC_OPT += -DNDEBUG -O3 -g -DNETSTAT -DINFO -DDBGERR -DDBGCERR
+GCC_OPT += -DNDEBUG -O0 -g -DNETSTAT -DINFO -DDBGERR -DDBGCERR
 GCC_OPT += $(DBG_OPT)
 
 ifeq ($V,) # no echo
@@ -49,25 +47,12 @@ GCC_OPT += -DDISABLE_NUMA
 LIBS += -lnuma
 endif
 
-ifeq ($(ENABLE_DPDK), 1)
 PKGCONF = pkg-config
 DPDK_CFLAGS = $(shell $(PKGCONF) --cflags libdpdk)
 DPDK_LDFLAGS += $(shell $(PKGCONF) --libs libdpdk)
 INC += $(DPDK_CFLAGS) -DENABLE_DPDK
 LDFLAGS += $(DPDK_LDFLAGS)
 LIBS += -export-dynamic
-endif
-
-ifeq ($(ENABLE_PCAP), 1)
-# PacketShader LIBRARY and HEADER
-GCC_OPT += -D__thread="" -DBE_RESILIENT_TO_PACKET_DROP
-INC += -DENABLE_PCAP
-LIBS += -lpcap
-endif
-
-ifeq ($(ENABLE_NETMAP), 1)
-INC += -DENABLE_NETMAP
-endif
 
 ### SOURCE CODE ###
 SRCS = core.c tcp_stream.c config.c api.c mos_api.c eventpoll.c socket.c pipe.c \
@@ -76,19 +61,7 @@ SRCS = core.c tcp_stream.c config.c api.c mos_api.c eventpoll.c socket.c pipe.c 
 	   tcp_rb_frag_queue.c tcp_send_buffer.c tcp_sb_queue.c tcp_stream_queue.c \
 	bpf/sf_bpf_filter.c bpf/sfbpf-int.c bpf/sf_gencode.c bpf/sf_grammar.c \
 	bpf/sf_nametoaddr.c bpf/sf_optimize.c bpf/sf_scanner.c \
-	event_callback.c tcp_rb.c icmp.c scalable_event.c key_value_store.c
-
-ifeq ($(ENABLE_DPDK), 1)
-SRCS += dpdk_module.c
-endif
-
-ifeq ($(ENABLE_PCAP), 1)
-SRCS += pcap_module.c
-endif
-
-ifeq ($(ENABLE_NETMAP), 1)
-SRCS += netmap_module.c
-endif
+	event_callback.c tcp_rb.c icmp.c scalable_event.c key_value_store.c dpdk_module.c
 
 OBJS = $(patsubst %.c,%.o,$(SRCS))
 DEPS = $(patsubst %.c,.%.d,$(SRCS))
@@ -121,10 +94,10 @@ CFLAGS += -D USE_LRO=1
 # CFLAGS += -D USE_DGRO=1
 
 # 2. CUSTOM GRO on, no latent RXQ, no stall
-CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=1 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
+# CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=1 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
 
 # 3. CUSTOM GRO on, no stall
-# CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
+CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
 
 # 4. CUSTOM GRO on, stall 50us
 # CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=36000 -D USE_LINK=0
@@ -137,6 +110,17 @@ CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=1 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
 # To use nicmem, make sure to use DPDK version 20.11
 # CFLAGS += -D NICMEM=0
 CFLAGS += -D NICMEM=1
+
+################################################################################
+
+# Choose one of below
+
+# To use hairpin offload, make sure to use DPDK version 22.11
+# CXXFLAGS += -D HAIRPIN_OFFLOAD=1 -D NUM_HAIRPIN_Q=1
+# (not supported yet) if want to use rte_flow_async API, use below
+# CXXFLAGS += -D RTE_FLOW_ASYNC_API=1 -D NUM_HAIRPIN_Q=1
+
+# CXXFLAGS += -D RTE_FLOW_MEASURE_DELAY=1
 
 ################################################################################
 

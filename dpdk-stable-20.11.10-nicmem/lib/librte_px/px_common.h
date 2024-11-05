@@ -143,7 +143,7 @@ static inline uint16_t *
 get_eth_type(struct rte_mbuf *pkt)
 {
     return rte_pktmbuf_mtod_offset(pkt, uint16_t *,
-                                   sizeof(struct rte_ether_addr) * 2);
+                                   RTE_ETHER_ADDR_LEN * 2);
 }
 /*---------------------------------------------------------------------------*/
 static inline uint8_t *
@@ -360,6 +360,19 @@ unmark_px(struct rte_mbuf *pkt)
 {
     uint8_t *tos = get_ip_tos(pkt);
     return *tos &= ~PX_MARK_ON_TOS;
+}
+/*---------------------------------------------------------------------------*/
+static inline void
+tupledump(struct rte_mbuf *pkt)
+{
+    struct four_tuple *ft = get_four_tuple(pkt);
+    printf("%d.%d.%d.%d:%d -> %d.%d.%d.%d:%d\n",
+           *(uint8_t *)&ft->src_ip, *((uint8_t *)&ft->src_ip + 1),
+           *((uint8_t *)&ft->src_ip + 2), *((uint8_t *)&ft->src_ip + 3),
+           ntohs(ft->src_port),
+           *((uint8_t *)&ft->dst_ip), *((uint8_t *)&ft->dst_ip + 1),
+           *((uint8_t *)&ft->dst_ip + 2), *((uint8_t *)&ft->dst_ip + 3),
+           ntohs(ft->dst_port));
 }
 /*---------------------------------------------------------------------------*/
 #ifdef __cplusplus

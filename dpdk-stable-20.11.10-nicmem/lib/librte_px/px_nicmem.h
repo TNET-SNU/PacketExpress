@@ -19,6 +19,12 @@ struct px_nicmem_ctx
     struct rte_eth_rxseg_split rx_seg[2];
 };
 /*---------------------------------------------------------------------------*/
+static inline int
+is_nicmem(struct rte_mbuf *pkt)
+{
+    return (pkt->ol_flags & EXT_ATTACHED_MBUF) > 0ULL;
+}
+/*---------------------------------------------------------------------------*/
 int px_nicmem_configure(struct px_nicmem_ctx *nm_ctx,
                         uint16_t port_id,
                         uint16_t lro_size,
