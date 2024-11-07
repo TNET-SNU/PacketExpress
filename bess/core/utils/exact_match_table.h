@@ -160,7 +160,6 @@ class ExactMatchTable {
     .key_len = sizeof(ExactMatchKey), .hash_func = rte_hash_crc,
     .hash_func_init_val = 0, .socket_id = (int)rte_socket_id(),
     .extra_flag = RTE_HASH_EXTRA_FLAGS_RW_CONCURRENCY
-    // .extra_flag = RTE_HASH_EXTRA_FLAGS_RW_CONCURRENCY_LF
   };
 
   using EmTable =

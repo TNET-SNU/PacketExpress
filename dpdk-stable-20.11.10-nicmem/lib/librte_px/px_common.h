@@ -96,21 +96,6 @@ struct four_tuple
     uint16_t dst_port;
 } __attribute__((packed));
 /*---------------------------------------------------------------------------*/
-struct px_stat
-{
-    int reset;
-    int ready;
-    uint64_t pkt_cnt;
-    uint64_t bytes_cnt;
-    uint64_t segs_cnt;
-    uint64_t nb_pkts_in_batch;
-    uint64_t nb_batches;
-#if PX_MEASURE_DIST
-#define DIST_UNIT (3 * RTE_ETHER_MTU)
-    uint64_t dist[UINT16_MAX / DIST_UNIT + 1];
-#endif
-};
-/*---------------------------------------------------------------------------*/
 static inline void
 hexdump(const char *title,
         uint8_t *buf,
@@ -337,6 +322,42 @@ is_sctp(struct rte_mbuf *pkt)
     return *get_ip_protoid(pkt) == IPPROTO_SCTP;
 #else
     return pkt->packet_type & RTE_PTYPE_L4_SCTP;
+#endif
+}
+/*---------------------------------------------------------------------------*/
+/* Fill mbuf fields for TSO */
+/* ToDo: make TSO consider GTP and outer headers */
+static inline void
+setup_tso(struct rte_mbuf *pkt,
+          uint16_t tso_segsz)
+{
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    pkt->ol_flags |= PKT_TX_TCP_SEG;
+#else
+    pkt->ol_flags |= RTE_MBUF_F_TX_TCP_SEG;
+#endif
+    pkt->tso_segsz = tso_segsz;
+}
+/*---------------------------------------------------------------------------*/
+/* Fill mbuf fields for TSO */
+/* ToDo: make TSO consider GTP and outer headers */
+static inline void
+unset_tso(struct rte_mbuf *pkt)
+{
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    pkt->ol_flags &= ~PKT_TX_TCP_SEG;
+#else
+    pkt->ol_flags &= ~RTE_MBUF_F_TX_TCP_SEG;
+#endif
+}
+/*---------------------------------------------------------------------------*/
+static inline int
+is_tso(struct rte_mbuf *pkt)
+{
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    return pkt->ol_flags & PKT_TX_TCP_SEG;
+#else
+    return pkt->ol_flags & RTE_MBUF_F_TX_TCP_SEG;
 #endif
 }
 /*---------------------------------------------------------------------------*/

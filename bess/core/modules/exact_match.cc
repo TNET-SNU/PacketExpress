@@ -138,25 +138,6 @@ CommandResponse ExactMatch::Init(const bess::pb::ExactMatchArg &arg) {
 
   default_gate_ = DROP_GATE;
   table_.Init(arg.entries());
-  /* use when record rules */
-  // fp_ = fopen("far_bin", "ab");
-  /* use when feed rules */
-  // fp_ = fopen("pdr_bin", "rb");
-  // uint8_t buf[256];
-  // int readbyte;
-  // int bs;
-  // while(1) {
-  //   if (!(readbyte = fread(buf, sizeof(int), 1, fp_)) && feof(fp_))
-  //     break;
-  //   assert(readbyte == sizeof(int));
-  //   bs = *(int *)buf;
-  //   printf("bs: %d\n", bs);
-  //   assert(bs < 256);
-  //   if (!(readbyte = fread(buf, 1, bs, fp_)) && feof(fp_))
-  //     break;
-  //   assert(readbyte == bs);
-  //   CommandAdd(*(bess::pb::ExactMatchCommandAddArg *)buf);
-  // }
   return CommandSuccess();
 }
 

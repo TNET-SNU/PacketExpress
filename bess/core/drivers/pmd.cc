@@ -614,13 +614,9 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
 #endif
   for (uint16_t qid = 0; qid < num_rxq; qid++)
   {
-    if (px_init(dpdk_port_id_, qid, bess::PacketBatch::kMaxBurst, 0,
-                !JUMBO_FRAME ? 4096 : 0,
-                USE_LINK) < 0)
+    if (px_init(dpdk_port_id_, qid, bess::PacketBatch::kMaxBurst, 1, !JUMBO_FRAME ? 4096 : 0, USE_LINK) < 0)
       return CommandFailure(ENOMEM, "Flow table creation failed");
-    if (px_add_rule(dpdk_port_id_, qid,
-                    patterns, sizeof(patterns) / sizeof(patterns[0]),
-                    actions, sizeof(actions) / sizeof(actions[0])) < 0)
+    if (px_add_rule(dpdk_port_id_, qid, patterns, 2, actions, 2) < 0)
       return CommandFailure(ENOMEM, "Pattern insertion failed");
   }
 #endif

@@ -102,25 +102,6 @@ CommandResponse Qos::Init(const bess::pb::QosArg &arg) {
   }
 
   table_.Init(total_key_size_, arg.entries());
-  /* use when record rules */
-  // fp_ = fopen("qer_bin", "ab");
-  /* use when feed rules */
-  // fp_ = fopen("qer_bin", "rb");
-  // uint8_t buf[256];
-  // int readbyte;
-  // int bs;
-  // while(1) {
-  //   if (!(readbyte = fread(buf, sizeof(int), 1, fp_)) && feof(fp_))
-  //     break;
-  //   assert(readbyte == sizeof(int));
-  //   bs = *(int *)buf;
-  //   printf("bs: %d\n", bs);
-  //   assert(bs < 256);
-  //   if (!(readbyte = fread(buf, 1, bs, fp_)) && feof(fp_))
-  //     break;
-  //   assert(readbyte == bs);
-  //   CommandAdd(*(bess::pb::QosCommandAddArg *)buf);
-  // }
   return CommandSuccess();
 }
 

@@ -583,32 +583,6 @@ unset_tcppsh(struct rte_mbuf *pkt)
     *flags = *flags & ~RTE_TCP_PSH_FLAG;
 }
 /*---------------------------------------------------------------------------*/
-/* Fill mbuf fields for TSO */
-/* ToDo: make TSO consider GTP and outer headers */
-static inline void
-setup_tso(struct rte_mbuf *pkt,
-          uint16_t tso_segsz)
-{
-#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
-    pkt->ol_flags |= PKT_TX_TCP_SEG;
-#else
-    pkt->ol_flags |= RTE_MBUF_F_TX_TCP_SEG;
-#endif
-    pkt->tso_segsz = tso_segsz;
-}
-/*---------------------------------------------------------------------------*/
-/* Fill mbuf fields for TSO */
-/* ToDo: make TSO consider GTP and outer headers */
-static inline void
-unset_tso(struct rte_mbuf *pkt)
-{
-#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
-    pkt->ol_flags &= ~PKT_TX_TCP_SEG;
-#else
-    pkt->ol_flags &= ~RTE_MBUF_F_TX_TCP_SEG;
-#endif
-}
-/*---------------------------------------------------------------------------*/
 static inline void
 update_tcp(struct rte_mbuf *pkt,
            uint16_t tso_segsz)

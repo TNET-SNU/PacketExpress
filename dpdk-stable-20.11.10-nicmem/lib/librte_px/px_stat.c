@@ -11,7 +11,8 @@ void px_update_stats(uint16_t port_id,
 {
     struct px_stat *stat;
     struct rte_mbuf *pkt;
-    int i, nb_data_pkts = 0;
+    uint32_t data_len;
+    int i, pkt_cnt = 0, data_pkt_cnt = 0;
     stat = &g_px_stat[port_id][queue_id];
 
     /* if main core has already read my stats, reset mine */
@@ -25,13 +26,23 @@ void px_update_stats(uint16_t port_id,
     {
         pkt = pkts[i];
 
-        /* count only data packets */
-        if (get_data_len(pkt))
+        pkt_cnt++;
+        stat->pkt_cnt++;
+        data_len = get_data_len(pkt);
+        stat->bytes_cnt += pkt->pkt_len + ETHER_OVR;
+        if (is_tso(pkt))
         {
-            nb_data_pkts++;
-            stat->pkt_cnt++;
-            stat->segs_cnt += pkt->nb_segs;
-            stat->bytes_cnt += pkt->pkt_len;
+            /* consider duplicated headers after TSO */
+            stat->bytes_cnt += (data_len - 1) /
+                               pkt->tso_segsz *
+                               (get_hdr_len(pkt) + ETHER_OVR);
+        }
+        if (data_len)
+        {
+            data_pkt_cnt++;
+            stat->data_pkt_cnt++;
+            stat->data_pkt_segs_cnt += pkt->nb_segs;
+            stat->data_bytes_cnt += pkt->pkt_len;
 #if PX_MEASURE_DIST
             int dist_idx = (pkt->pkt_len - pkt->l2_len - 1) / DIST_UNIT;
             /* to cover 64K < packet size after GRO or linking */
@@ -45,14 +56,14 @@ void px_update_stats(uint16_t port_id,
     }
 
     /* if no data packets, return */
-    if (!nb_data_pkts)
+    if (!data_pkt_cnt)
     {
         return;
     }
 
     /* measure batch */
-    stat->nb_pkts_in_batch += nb_data_pkts;
-    stat->nb_batches++;
+    stat->data_pkt_cnt_in_batch += data_pkt_cnt;
+    stat->batch_cnt++;
 }
 /*---------------------------------------------------------------------------*/
 void px_print_stats(void)
@@ -66,20 +77,22 @@ void px_print_stats(void)
         for (queue_id = 0; queue_id < PX_MAX_QUEUES_PER_PORT; queue_id++)
         {
             iter = &g_px_stat[port_id][queue_id];
-            if (!iter->pkt_cnt)
+            if (!iter->data_pkt_cnt)
             {
                 continue;
             }
 #if PX_MEASURE_PER_QUEUE_STAT
             /* per queue stat */
             printf(" |-[P%2d][Q%2d] "
+                   "%5lu Gbps, %5lu Kpps, "
                    "Avg pkt size: %5lu, Avg segs/pkt: %5lu, "
                    "Avg batch size: %5lu, Num of pkts: %5lu\n",
                    port_id, queue_id,
-                   iter->pkt_cnt ? iter->bytes_cnt / iter->pkt_cnt : 0,
-                   iter->pkt_cnt ? iter->segs_cnt / iter->pkt_cnt : 0,
-                   iter->nb_batches ? iter->nb_pkts_in_batch / iter->nb_batches : 0,
-                   iter->pkt_cnt);
+                   iter->bytes_cnt * 8 / E9, iter->pkt_cnt / E3,
+                   iter->data_pkt_cnt ? iter->data_bytes_cnt / iter->data_pkt_cnt : 0,
+                   iter->data_pkt_cnt ? iter->data_pkt_segs_cnt / iter->data_pkt_cnt : 0,
+                   iter->batch_cnt ? iter->data_pkt_cnt_in_batch / iter->batch_cnt : 0,
+                   iter->data_pkt_cnt);
 #endif
 #if PX_MEASURE_DIST
             for (int i = 0; i < UINT16_MAX / DIST_UNIT + 1; i++)
@@ -89,34 +102,38 @@ void px_print_stats(void)
                 /* per queue packet dist */
                 printf("~%2dU: %.2lf%%%s",
                        (i + 1) * DIST_UNIT / RTE_ETHER_MTU,
-                       iter->pkt_cnt ? (double)iter->dist[i] / iter->pkt_cnt * 100 : 0,
+                       iter->data_pkt_cnt ? (double)iter->dist[i] / iter->data_pkt_cnt * 100 : 0,
                        (i < UINT16_MAX / DIST_UNIT) ? "  " : "\n");
 #endif
             }
 #endif
             total.pkt_cnt += iter->pkt_cnt;
             total.bytes_cnt += iter->bytes_cnt;
-            total.segs_cnt += iter->segs_cnt;
-            total.nb_pkts_in_batch += iter->nb_pkts_in_batch;
-            total.nb_batches += iter->nb_batches;
+            total.data_bytes_cnt += iter->data_bytes_cnt;
+            total.data_pkt_cnt += iter->data_pkt_cnt;
+            total.data_pkt_segs_cnt += iter->data_pkt_segs_cnt;
+            total.data_pkt_cnt_in_batch += iter->data_pkt_cnt_in_batch;
+            total.batch_cnt += iter->batch_cnt;
 
             /* notify reset to workers */
             iter->reset = 1;
         }
     }
     printf("[   TOTAL   ] "
+           "%5lu Gbps, %5lu Kpps, "
            "Avg pkt size: %5lu, Avg segs/pkt: %5lu, "
            "Avg batch size: %5lu, Num of pkts: %5lu\n\n",
-           total.pkt_cnt ? total.bytes_cnt / total.pkt_cnt : 0,
-           total.pkt_cnt ? total.segs_cnt / total.pkt_cnt : 0,
-           total.nb_batches ? total.nb_pkts_in_batch / total.nb_batches : 0,
-           total.pkt_cnt);
+           total.bytes_cnt * 8 / E9, total.pkt_cnt / E3,
+           total.data_pkt_cnt ? total.data_bytes_cnt / total.data_pkt_cnt : 0,
+           total.data_pkt_cnt ? total.data_pkt_segs_cnt / total.data_pkt_cnt : 0,
+           total.batch_cnt ? total.data_pkt_cnt_in_batch / total.batch_cnt : 0,
+           total.data_pkt_cnt);
 #if PX_MEASURE_DIST
     for (int i = 0; i < UINT16_MAX / DIST_UNIT + 1; i++)
     {
         printf("~%2dU: %.2lf%%%s",
                (i + 1) * DIST_UNIT / RTE_ETHER_MTU,
-               total.pkt_cnt ? (double)total.dist[i] / total.pkt_cnt * 100 : 0,
+               total.data_pkt_cnt ? (double)total.dist[i] / total.data_pkt_cnt * 100 : 0,
                (i < UINT16_MAX / DIST_UNIT) ? "  " : "\n");
     }
 #endif

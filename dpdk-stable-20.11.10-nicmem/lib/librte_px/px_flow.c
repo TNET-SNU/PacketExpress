@@ -77,7 +77,7 @@ int px_eth_dev_rss_reta_update(uint16_t port_id,
                                struct rte_eth_rss_reta_entry64 *reta_conf,
                                uint16_t reta_size)
 {
-    struct rte_eth_rss_reta_entry64 px_reta_conf[PS_RETA_GROUP_NUM];
+    struct rte_eth_rss_reta_entry64 px_reta_conf[PX_RETA_GROUP_NUM];
     struct rte_eth_dev_info dev_info;
     int i, j, group_num, inner_len;
 
@@ -123,7 +123,7 @@ int px_eth_dev_rss_reta_update(uint16_t port_id,
 void px_dump_reta(struct rte_eth_rss_reta_entry64 *reta_conf,
                   uint16_t reta_size)
 {
-    char buf[ETH_RSS_RETA_SIZE_512 * PS_RETA_GROUP_NUM];
+    char buf[ETH_RSS_RETA_SIZE_512 * PX_RETA_GROUP_NUM];
     uint32_t reta_id, reta_pos;
     size_t len;
     int i, pos;
@@ -169,7 +169,7 @@ void px_dump_reta(struct rte_eth_rss_reta_entry64 *reta_conf,
 /*---------------------------------------------------------------------------*/
 void px_eth_dump_reta(uint16_t port_id)
 {
-    struct rte_eth_rss_reta_entry64 px_reta_conf[PS_RETA_GROUP_NUM];
+    struct rte_eth_rss_reta_entry64 px_reta_conf[PX_RETA_GROUP_NUM];
     struct rte_eth_dev_info dev_info;
     int i;
 
