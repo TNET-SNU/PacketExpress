@@ -9,6 +9,7 @@
 #include "px_mss.h"
 #include "px_nicmem.h"
 #include "px_delay.h"
+#include "px_flow.h"
 #include "px_offload.h"
 #include "rte_gro.h"
 
@@ -245,6 +246,24 @@ void px_parse_batch(struct rte_mbuf **pkts,
 
 void px_setup_tso_burst(struct rte_mbuf **pkts,
 						uint16_t nb_pkts);
+
+static inline int
+is_decaped(struct rte_mbuf *pkt)
+{
+	return (pkt->ol_flags & (IND_ATTACHED_MBUF << 1)) > 0ULL;
+}
+
+static inline void
+mark_decaped(struct rte_mbuf *pkt)
+{
+	pkt->ol_flags |= (IND_ATTACHED_MBUF << 1);
+}
+
+static inline void
+unmark_decaped(struct rte_mbuf *pkt)
+{
+	pkt->ol_flags &= ~(IND_ATTACHED_MBUF << 1);
+}
 /*---------------------------------------------------------------------------*/
 
 #ifdef __cplusplus

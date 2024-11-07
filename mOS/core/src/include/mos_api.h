@@ -122,7 +122,6 @@ typedef union event_data {
 struct pkt_info {
 	uint32_t      cur_ts;    /**< packet receiving time (read-only:ro) */
 	int8_t        in_ifidx;  /**< input interface (ro) */
-	uint32_t      rss_hash;
 	
 	/* ETH */
 	uint16_t      eth_len;
@@ -159,8 +158,8 @@ struct pkt_info {
 struct pkt_ctx {
 	struct pkt_info  p;
 
-	int8_t        direction:4; /**< where does this packet originate from? (ro)*/
-	uint8_t       forward:4;   /**< 0: drop, 1: forward to out_ifidx (rw) */
+	int8_t        direction; /**< where does this packet originate from? (ro)*/
+	uint8_t       forward;   /**< 0: drop, 1: forward to out_ifidx (rw) */
 	int8_t        out_ifidx; /**< output interface (rw) */
 	int8_t        batch_index; /**< index of packet in the rx batch */
 	/* ~~ 64 byte boundary ~~ */
@@ -244,10 +243,6 @@ struct tcp_buf_info {
 	 * arrive out of order.
 	 */
 	uint32_t tcpbi_last_byte_received;
-	/**
-	 * 
-	 */
-	uint32_t tcpbi_recv_buf_size;
 };
 
 /** Structure to expose TCP ring buffer's fragment information. */
@@ -298,8 +293,6 @@ typedef void (*callback_t)(mctx_t mctx, int sock, int side,
 typedef bool (*filter_t)(mctx_t mctx, int sock, int side,
 		       event_t event, filter_arg_t *arg);
 
-/** 4-tuple information */
-typedef struct session_address *session_address_t;
 /*----------------------------------------------------------------------------*/
 /* Definition of monitor_filter type */
 union monitor_filter {
@@ -338,6 +331,7 @@ typedef union monitor_filter *monitor_filter_t;
  */
 int
 mtcp_bind_monitor_filter(mctx_t mctx, int sock, monitor_filter_t ft);
+/*----------------------------------------------------------------------------*/
 
 /** Register a callback function in hook_point
  * @param [in] mctx: mtcp context
@@ -362,9 +356,9 @@ mtcp_register_callback(mctx_t mctx, int sock, event_t event,
  *
  * (both for packet-level and flow-level) for events in hook_point
  */
-int
-mtcp_unregister_callback(mctx_t mctx, int sock, event_t event,
-		                       int hook_point);
+//int
+//mtcp_unregister_callback(mctx_t mctx, int sock, event_t event,
+//		                       int hook_point);
 
 /** Allocate a child event
  * @param [in] event: event id
@@ -399,24 +393,24 @@ mtcp_raise_event(mctx_t mctx, event_t event);
 /** Set user-level context
  * (e.g., to store any per-flow user-defined meatadata)
  * @param [in] mctx: mtcp context
- * @param [in] msock: the monitor socket id
+ * @param [in] sock: the monitor socket id
  * @param [in] uctx: user-level context
  */
 void
-mtcp_set_uctx(mctx_t mctx, int msock, void *uctx);
+mtcp_set_uctx(mctx_t mctx, int sock, void *uctx);
 
 /** Get user-level context
  * (e.g., to retrieve user-defined metadata stored in mtcp_set_uctx())
  * @param [in] mctx: mtcp context
- * @param [in] msock: the monitor socket id
+ * @param [in] sock: the monitor socket id
  * @return user-level context for input flow_ocntext
  */
 void *
-mtcp_get_uctx(mctx_t mctx, int msock);
+mtcp_get_uctx(mctx_t mctx, int sock);
 
 /** Peeking bytestream from flow_context
  * @param [in] mctx: mtcp context
- * @param [in] msock: monitoring stream socket id
+ * @param [in] sock: monitoring stream socket id
  * @param [in] side: side of monitoring (client side, server side or both)
  * @param [in] buf: buffer for read byte stream
  * @param [in] len: requested length
@@ -425,7 +419,8 @@ mtcp_get_uctx(mctx_t mctx, int msock);
  * It will return -1 if there is an error
 */
 ssize_t
-mtcp_peek(mctx_t mctx, int msock, int side, char *buf, size_t len);
+mtcp_peek(mctx_t mctx, int sock, int side,
+	     char *buf, size_t len);
 
 /**
  * The mtcp_ppeek() function reads up to count bytes from the TCP ring
@@ -447,14 +442,12 @@ mtcp_peek(mctx_t mctx, int msock, int side, char *buf, size_t len);
  * @param [in] seq_num: byte offset of the TCP bytestream (absolute offset: offset 0 = init_seq_num)
  * @return # of bytes actually read on success, -1 for error
  */
-ssize_t
-mtcp_ppeek(mctx_t mctx, int sock, int side,
-		   char *buf, size_t count, uint64_t off);
+ssize_t mtcp_ppeek(mctx_t mctx, int sock, int side, 
+			  char *buf, size_t count, uint64_t off);
 
 /* Use this macro to copy packets when mtcp_getlastpkt is called */
-// #define MTCP_CB_GETCURPKT_CREATE_COPY
+#define MTCP_CB_GETCURPKT_CREATE_COPY
 
-#ifdef MTCP_CB_GETCURPKT_CREATE_COPY
 /** Get current packet of mtcp context
  * @param [in] mctx: mTCP/mOS context
  * @param [in] sock: monitoring stream socket id
@@ -467,10 +460,6 @@ mtcp_ppeek(mctx_t mctx, int sock, int side,
  */
 int
 mtcp_getlastpkt(mctx_t mctx, int sock, int side, struct pkt_info *p);
-#else
-int
-mtcp_getlastpkt(mctx_t mctx, int sock, int side, struct pkt_ctx **pctx);
-#endif
 
 /** Register user's custom timer
  * @param [in] mctx: mtcp context
@@ -480,15 +469,6 @@ mtcp_getlastpkt(mctx_t mctx, int sock, int side, struct pkt_ctx **pctx);
  */
 int
 mtcp_settimer(mctx_t mctx, int id, struct timeval *timeout, callback_t cb);
-
-int
-mtcp_cb_stop(mctx_t mctx, int sock, int side);
-
-/**
- * Reset the connection (send RST packets to both sides)
- */
-int
-mtcp_reset_conn(mctx_t mctx, int sock);
 
 /** A sibling function to mtcp_settimer that returns
  * the current timestamp of the machine in microseconds.
@@ -556,16 +536,5 @@ mtcp_setlastpkt(mctx_t mctx, int sock, int side, off_t offset,
  */ 
 int
 mtcp_sendpkt(mctx_t mctx, int sock, const struct pkt_info *pkt);
-
-/*----------------------------------------------------------------------------*/
-typedef struct session_address *session_address_t;
-
-/** Find socket fd based on given 4-tuple
- * @param [in] mctx: mTCP/mOS context
- * @param [in] sess_addr: 4-tuple information
- * @return found socket id on success, -1 on failure
- */
-int
-mtcp_addrtosock(mctx_t mctx, session_address_t sess_addr, uint32_t rss_hash);
 
 #endif /* __MOS_API_H_ */

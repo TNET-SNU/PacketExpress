@@ -146,6 +146,8 @@ get_tcp_mss(struct rte_mbuf *pkt)
 static inline void
 update_mss(uint16_t *mss_ptr)
 {
+    // printf("%d -> %lu\n", ntohs(*mss_ptr), DEFAULT_MSS);
+
     /* use below on semantic test */
     // *mss_ptr = htons(UINT16_MAX -
     //                  sizeof(struct rte_ipv4_hdr) -

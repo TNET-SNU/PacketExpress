@@ -1268,7 +1268,6 @@ FreeConfigResources()
 int
 FetchEndianType()
 {
-#ifdef ENABLE_DPDK
 	char *argv;
 	char **argp = &argv;
 
@@ -1282,7 +1281,6 @@ FetchEndianType()
 		
 		return 0;
 	}
-#endif	
 	return 1;
 }
 /*----------------------------------------------------------------------------*/

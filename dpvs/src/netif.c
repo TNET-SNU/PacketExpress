@@ -3130,8 +3130,11 @@ static int __netif_update_rss_reta(struct netif_port *port)
         reta_conf[reta_id].mask = UINT64_MAX;
         reta_conf[reta_id].reta[reta_pos] = (uint16_t)(rssq[i % nrssq]);
     }
-
+#if USE_CGRO
+    if (px_eth_dev_rss_reta_update(port->id, reta_conf, port->dev_info.reta_size))
+#else
     if (rte_eth_dev_rss_reta_update(port->id, reta_conf, port->dev_info.reta_size))
+#endif
         return EDPVS_DPDKAPIFAIL;
 
     netif_dump_rss_reta(port);
@@ -4013,7 +4016,7 @@ int netif_port_start(struct netif_port *port)
                                  0
 #endif
                                  );
-#if USE_CGRO
+#if USE_CGRO || NICMEM
     ret = px_eth_dev_configure(port->id,
                                port->nrxq,
                                port->ntxq,
@@ -4130,16 +4133,12 @@ int netif_port_start(struct netif_port *port)
     actions[1].type = RTE_FLOW_ACTION_TYPE_VOID;
     for (qid = 0; qid < port->nrxq; qid++)
     {
-        if (px_init(port->id, qid, NETIF_MAX_PKT_BURST, 0, !JUMBO_FRAME ? 4096 : 0, USE_LINK) < 0) {
+        if (px_init(port->id, qid, NETIF_MAX_PKT_BURST, 1, !JUMBO_FRAME ? 4096 : 0, USE_LINK) < 0) {
             RTE_LOG(ERR, NETIF, "%s: fail to config %s:rx-queue-%d\n",
                     __func__, port->name, qid);
             return EDPVS_DPDKAPIFAIL;
         }
-        if (px_add_rule(port->id, qid,
-            patterns,
-            sizeof(patterns) / sizeof(patterns[0]),
-            actions,
-            sizeof(actions) / sizeof(actions[0])) < 0) {
+        if (px_add_rule(port->id, qid, patterns, 2, actions, 2) < 0) {
             RTE_LOG(ERR, NETIF, "%s: fail to config %s:rx-queue-%d\n",
                     __func__, port->name, qid);
             return EDPVS_DPDKAPIFAIL;
@@ -4197,6 +4196,7 @@ int netif_port_start(struct netif_port *port)
     if ((ret = netif_update_rss_reta(port)) != EDPVS_OK)
         RTE_LOG(WARNING, NETIF, "%s: %s update rss reta failed (cause: %s)\n",
                 __func__, port->name, dpvs_strerror(ret));
+    (void)netif_update_rss_reta;
 
     return EDPVS_OK;
 }

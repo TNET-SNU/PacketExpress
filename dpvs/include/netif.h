@@ -26,6 +26,9 @@
 #include "timer.h"
 #include "tc/tc.h"
 #include "conf/netif.h"
+#ifdef USE_CGRO
+#include "px_flow.h"
+#endif
 
 #define RTE_LOGTYPE_NETIF RTE_LOGTYPE_USER1
 

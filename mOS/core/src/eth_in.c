@@ -11,7 +11,7 @@
 /*----------------------------------------------------------------------------*/
 inline void
 FillInPacketEthContext (struct pkt_ctx *pctx, uint32_t cur_ts, int in_ifidx,
-		        int index, struct ethhdr *ethh, int eth_len, uint32_t rss_hash)
+		        int index, struct ethhdr *ethh, int eth_len)
 {
 	pctx->p.cur_ts = cur_ts;
 	pctx->p.in_ifidx = in_ifidx;
@@ -20,15 +20,13 @@ FillInPacketEthContext (struct pkt_ctx *pctx, uint32_t cur_ts, int in_ifidx,
 	pctx->p.eth_len = eth_len;
 	pctx->batch_index = index;
 	pctx->forward = g_config.mos->forward;
-	/* since NUMBINS is 131072 (2^17), we just move left by 15 */
-	pctx->p.rss_hash = rss_hash >> 15;
 	
 	return;
 }
 /*----------------------------------------------------------------------------*/
 int
 ProcessPacket(mtcp_manager_t mtcp, const int ifidx, const int index,
-		uint32_t cur_ts, unsigned char *pkt_data, int len, uint32_t rss_hash)
+		uint32_t cur_ts, unsigned char *pkt_data, int len)
 {
 	struct pkt_ctx pctx;
 	struct ethhdr *ethh = (struct ethhdr *)pkt_data;
@@ -52,7 +50,7 @@ ProcessPacket(mtcp_manager_t mtcp, const int ifidx, const int index,
 	 * - SLOWPATH
 	 */
 
-	FillInPacketEthContext(&pctx, cur_ts, ifidx, index, ethh, len, rss_hash);
+	FillInPacketEthContext(&pctx, cur_ts, ifidx, index, ethh, len);
 
 	switch (h_proto) {
 	  case ETH_P_IP:

@@ -146,7 +146,6 @@ GetBufInfo(socket_map_t sock, int side, void *optval, socklen_t *len)
 		tbi->tcpbi_last_byte_read = rcvbuf->pile;
 		tbi->tcpbi_next_byte_expected = rcvbuf->pile + tcprb_cflen(rcvbuf);
 		tbi->tcpbi_last_byte_received = (f ? f->tail : rcvbuf->head);
-		tbi->tcpbi_recv_buf_size = rcvbuf->len;
 	} else {
 		errno = ENODATA;
 		goto buf_info_error;
@@ -427,7 +426,7 @@ DestroyMonitorStreamSocket(mtcp_manager_t mtcp, socket_map_t msock)
 tcp_stream *
 CreateTCPStream(mtcp_manager_t mtcp, socket_map_t socket, int type, 
 		uint32_t saddr, uint16_t sport, uint32_t daddr, uint16_t dport,
-		uint32_t rss_hash)
+		unsigned int *hash)
 {
 	tcp_stream *stream = NULL;
 	int ret;
@@ -472,11 +471,11 @@ CreateTCPStream(mtcp_manager_t mtcp, socket_map_t socket, int type,
 
 	stream->id = mtcp->g_id++;
 	stream->saddr = saddr;
-	stream->daddr = daddr;
 	stream->sport = sport;
+	stream->daddr = daddr;
 	stream->dport = dport;
 
-	ret = HTInsert(mtcp->tcp_flow_table, stream, rss_hash);
+	ret = HTInsert(mtcp->tcp_flow_table, stream, hash);
 	if (ret < 0) {
 		TRACE_ERROR("Stream %d: "
 				"Failed to insert the stream into hash table.\n", stream->id);
@@ -584,20 +583,20 @@ CreateTCPStream(mtcp_manager_t mtcp, socket_map_t socket, int type,
 /*----------------------------------------------------------------------------*/
 inline tcp_stream *
 CreateDualTCPStream(mtcp_manager_t mtcp, socket_map_t socket, int type, uint32_t saddr, 
-		    uint16_t sport, uint32_t daddr, uint16_t dport, uint32_t rss_hash)
+		    uint16_t sport, uint32_t daddr, uint16_t dport, unsigned int *hash)
 {
         tcp_stream *cur_stream, *paired_stream;
         struct socket_map *walk;
 	
         cur_stream = CreateTCPStream(mtcp, socket, type,
-				     saddr, sport, daddr, dport, rss_hash);
+				     saddr, sport, daddr, dport, hash);
         if (cur_stream == NULL) {
                 TRACE_ERROR("Can't create tcp_stream!\n");
                 return NULL;
         }
 	
 		paired_stream = CreateTCPStream(mtcp, NULL, MOS_SOCK_UNUSED,
-						daddr, dport, saddr, sport, rss_hash);
+						daddr, dport, saddr, sport, hash);
         if (paired_stream == NULL) {
                 DestroyTCPStream(mtcp, cur_stream);
                 TRACE_ERROR("Can't create tcp_stream!\n");
@@ -618,12 +617,12 @@ CreateDualTCPStream(mtcp_manager_t mtcp, socket_map_t socket, int type, uint32_t
 inline tcp_stream *
 CreateClientTCPStream(mtcp_manager_t mtcp, socket_map_t socket, int type,
 			uint32_t saddr, uint16_t sport, uint32_t daddr, uint16_t dport,
-			uint32_t rss_hash)
+			unsigned int *hash)
 {
 	tcp_stream *cs;
 	struct socket_map *w;
 
-	cs = CreateTCPStream(mtcp, socket, type, daddr, dport, saddr, sport, rss_hash);
+	cs = CreateTCPStream(mtcp, socket, type, daddr, dport, saddr, sport, hash);
 	if (cs == NULL) {
 		TRACE_ERROR("Can't create tcp_stream!\n");
 		return NULL;
@@ -652,14 +651,13 @@ CreateClientTCPStream(mtcp_manager_t mtcp, socket_map_t socket, int type,
 /*----------------------------------------------------------------------------*/
 inline tcp_stream *
 AttachServerTCPStream(mtcp_manager_t mtcp, tcp_stream *cs, int type,
-			uint32_t saddr, uint16_t sport, uint32_t daddr, uint16_t dport,
-			uint32_t rss_hash)
+			uint32_t saddr, uint16_t sport, uint32_t daddr, uint16_t dport)
 {
 	tcp_stream *ss;
 	struct socket_map *w;
 
 	/* The 3rd arg is a temp hackk... FIXIT! TODO: XXX */
-	ss = CreateTCPStream(mtcp, NULL, MOS_SOCK_UNUSED, saddr, sport, daddr, dport, rss_hash);
+	ss = CreateTCPStream(mtcp, NULL, MOS_SOCK_UNUSED, saddr, sport, daddr, dport, NULL);
 	if (ss == NULL) {
 		TRACE_ERROR("Can't create tcp_stream!\n");
 		return NULL;
@@ -814,7 +812,7 @@ DestroySingleTCPStream(mtcp_manager_t mtcp, tcp_stream *stream)
 		
 		/* free ring buffers */
 		if (stream->sndvar->sndbuf) {
-			// SBFree(mtcp->rbm_snd, stream->sndvar->sndbuf);
+			SBFree(mtcp->rbm_snd, stream->sndvar->sndbuf);
 			stream->sndvar->sndbuf = NULL;
 		}
 	}
@@ -834,7 +832,7 @@ DestroySingleTCPStream(mtcp_manager_t mtcp, tcp_stream *stream)
 		pthread_mutex_lock(&mtcp->ctx->flow_pool_lock);
 
 	/* remove from flow hash table */
-	HTRemove(mtcp->tcp_flow_table, stream, stream->rcvvar->rss_hash);
+	HTRemove(mtcp->tcp_flow_table, stream);
 	stream->on_hash_table = FALSE;
 	
 	mtcp->flow_cnt--;

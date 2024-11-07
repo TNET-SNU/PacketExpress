@@ -81,14 +81,12 @@ static struct rte_ether_addr ports_eth_addr[RTE_MAX_ETHPORTS];
 static struct rte_eth_dev_info dev_info[RTE_MAX_ETHPORTS];
 
 struct mbuf_table {
-	unsigned rlen; /* length of queued packets */
-	unsigned wlen;
+	unsigned len; /* length of queued packets */
 	struct rte_mbuf *m_table[MAX_PKT_BURST];
 };
 
 struct dpdk_private_context {
 	struct mbuf_table rmbufs[RTE_MAX_ETHPORTS];
-	/* shares mbufs with rmbufs by default */
 	struct mbuf_table wmbufs[RTE_MAX_ETHPORTS];
 #ifdef RX_IDLE_ENABLE
 	uint8_t rx_idle;
@@ -211,7 +209,7 @@ dpdk_send_pkts(struct mtcp_thread_context *ctxt, int nif)
 		return 0;
 	
 	/* if there are packets in the queue... flush them out to the wire */
-	cnt = dpc->wmbufs[nif].wlen;
+	cnt = dpc->wmbufs[nif].len;
 	if (cnt > 0) {
 #ifdef ENABLE_STATS_IOCTL
 		struct stats_struct ss;
@@ -235,12 +233,12 @@ dpdk_send_pkts(struct mtcp_thread_context *ctxt, int nif)
 #endif
 
 #if USE_CGRO || USE_LRO || USE_DGRO
-		px_setup_tso_burst(dpc->wmbufs[nif].m_table, dpc->wmbufs[nif].wlen);
+		px_setup_tso_burst(dpc->wmbufs[nif].m_table, dpc->wmbufs[nif].len);
 #endif
-		ret = rte_eth_tx_burst(nif, qid, dpc->wmbufs[nif].m_table, dpc->wmbufs[nif].wlen);
-		if (ret < dpc->wmbufs[nif].wlen)
-			rte_pktmbuf_free_bulk(dpc->wmbufs[nif].m_table + ret, dpc->wmbufs[nif].wlen - ret);
-		dpc->wmbufs[nif].wlen = 0;
+		ret = rte_eth_tx_burst(nif, qid, dpc->wmbufs[nif].m_table, dpc->wmbufs[nif].len);
+		if (ret < dpc->wmbufs[nif].len)
+			rte_pktmbuf_free_bulk(dpc->wmbufs[nif].m_table + ret, dpc->wmbufs[nif].len - ret);
+		dpc->wmbufs[nif].len = 0;
 	}
 
 	return ret;
@@ -257,10 +255,10 @@ dpdk_set_wptr(struct mtcp_thread_context *ctxt, int out_nif,
 	mtcp = ctxt->mtcp_manager;
 	
 	/* sanity check */
-	if (unlikely(dpc->wmbufs[out_nif].wlen == MAX_PKT_BURST))
+	if (unlikely(dpc->wmbufs[out_nif].len == MAX_PKT_BURST))
 		return;
 
-	dpc->wmbufs[out_nif].m_table[dpc->wmbufs[out_nif].wlen++] = 
+	dpc->wmbufs[out_nif].m_table[dpc->wmbufs[out_nif].len++] = 
 		dpc->rmbufs[in_nif].m_table[index];
 #ifdef NETSTAT
 	mtcp->nstat.tx_bytes[out_nif] += 
@@ -305,7 +303,7 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 #endif
 	px_update_stats((uint8_t)ifidx, qid, dpc->rmbufs[ifidx].m_table, ret);
 #endif
-	dpc->rmbufs[ifidx].rlen = ret;
+	dpc->rmbufs[ifidx].len = ret;
 
 #ifdef RX_IDLE_ENABLE
 	dpc->rx_idle = (likely(ret != 0)) ? 0 : dpc->rx_idle + 1;
@@ -315,7 +313,7 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 }
 /*----------------------------------------------------------------------------*/
 uint8_t *
-dpdk_get_rptr(struct mtcp_thread_context *ctxt, int ifidx, int index, uint16_t *len, uint32_t *rss_hash)
+dpdk_get_rptr(struct mtcp_thread_context *ctxt, int ifidx, int index, uint16_t *len)
 {
 	struct dpdk_private_context *dpc;
 	struct rte_mbuf *m;
@@ -323,14 +321,13 @@ dpdk_get_rptr(struct mtcp_thread_context *ctxt, int ifidx, int index, uint16_t *
 
 	dpc = (struct dpdk_private_context *) ctxt->io_private_context;	
 
-	if (index < dpc->rmbufs[ifidx].rlen)
+	if (index < dpc->rmbufs[ifidx].len)
 		m = dpc->rmbufs[ifidx].m_table[index];
 	else
 		return NULL;
 	
 	pktbuf = rte_pktmbuf_mtod(m, uint8_t *);
 	*len = ETH_HLEN + htons(*(uint16_t *)(pktbuf + ETH_HLEN + 2));
-	*rss_hash = m->hash.rss;
 
 	return pktbuf;
 }
@@ -533,7 +530,7 @@ dpdk_load_module_lower_half(void)
 			if (!(pktmbuf_pool[sid] =
 				rte_mempool_create(name, NB_MBUF,
 #if NICMEM
-								   MBUF_SIZE - MBUF_DATA_SIZE + NICMEM_DMA_SIZE + NICMEM_DMA_SIZE,
+								   MBUF_SIZE - MBUF_DATA_SIZE + NICMEM_DMA_SIZE,
 #else
 								   MBUF_SIZE,
 #endif
@@ -558,17 +555,6 @@ dpdk_load_module_lower_half(void)
 			for (i = 0; i < sizeof(uint64_t) * 8; i++)
 				if (g_config.mos->netdev_table->ent[eth_idx]->cpu_mask & (1L << i))
 					num_queue++;
-			
-			/* check port capabilities */
-			rte_eth_dev_info_get(portid, &dev_info[portid]);
-			printf("dev_flags: %d\n", *dev_info[portid].dev_flags);
-			printf("name of switch in port %d: %s\n", portid, dev_info[portid].switch_info.name);
-			printf("domainid of switch in port %d: %d\n", portid, dev_info[portid].switch_info.domain_id);
-			printf("portid of switch in port %d: %d\n", portid, dev_info[portid].switch_info.port_id);
-#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
-#else
-			printf("rx domain of switch in port %d: %d\n", portid, dev_info[portid].switch_info.rx_domain);
-#endif
 
 			/* re-adjust rss_hf */
 			port_conf = px_eth_conf(portid, NULL, g_key, sizeof(g_key),
@@ -600,7 +586,7 @@ dpdk_load_module_lower_half(void)
 #else
 									   1,
 #endif
-									   NICMEM ? 16384 - 1 : 0,
+									   NICMEM ? 32768 - 1 : 0,
 #if USE_CGRO
 									   STALL_TIMEOUT_NS,
 #else
@@ -631,6 +617,7 @@ dpdk_load_module_lower_half(void)
 			rte_eth_macaddr_get(portid, &ports_eth_addr[portid]);
 #endif
 			queue_id = 0;
+			rte_eth_dev_info_get(portid, &dev_info[portid]);
 			for (rxlcore_id = 0; rxlcore_id < g_config.mos->num_cores; rxlcore_id++) {
 				if (!(g_config.mos->netdev_table->ent[eth_idx]->cpu_mask & (1L << rxlcore_id)))
 					continue;
@@ -695,7 +682,6 @@ dpdk_load_module_lower_half(void)
 			tcp_mask.hdr.dst_port = UINT16_MAX;
 			patterns[1].type = RTE_FLOW_ITEM_TYPE_TCP;
 			patterns[1].mask = &tcp_mask;
-
 			/* make actions */
 			struct px_action actions[2];
 			actions[0].type = RTE_FLOW_ACTION_TYPE_VOID;
@@ -767,14 +753,13 @@ io_module_func dpdk_module_func = {
 	.link_devices		   = NULL,
 	.release_pkt		   = NULL,
 	.get_wptr   		   = NULL,
-	.set_wptr		   = dpdk_set_wptr,
-	.send_pkts		   = dpdk_send_pkts,
-	.get_rptr	   	   = dpdk_get_rptr,
-	.get_nif		   = dpdk_get_nif,
-	.recv_pkts		   = dpdk_recv_pkts,
-	// .stall_pkts		   = dpdk_stall_pkts,
-	.select			   = dpdk_select,
-	.destroy_handle		   = dpdk_destroy_handle,
-	// .dev_ioctl		   = dpdk_dev_ioctl,
-	.dev_ioctl		   = NULL,
+	.set_wptr		       = dpdk_set_wptr,
+	.send_pkts			   = dpdk_send_pkts,
+	.get_rptr		   	   = dpdk_get_rptr,
+	.get_nif			   = dpdk_get_nif,
+	.recv_pkts			   = dpdk_recv_pkts,
+	.select				   = dpdk_select,
+	.destroy_handle        = dpdk_destroy_handle,
+	.dev_ioctl             = NULL,
 };
+/*----------------------------------------------------------------------------*/

@@ -22,9 +22,6 @@
 
 #define MAX(a, b) ((a)>(b)?(a):(b))
 #define MIN(a, b) ((a)<(b)?(a):(b))
-
-// #define UPDATE_TX_CHECKSUM	TRUE 
-#define UPDATE_TX_CHECKSUM	FALSE // already turned on offload by default
 /*----------------------------------------------------------------------------*/
 static inline uint16_t
 CalculateOptionLength(uint8_t flags)
@@ -203,23 +200,6 @@ SendTCPPacketStandalone(struct mtcp_manager *mtcp,
 	if (payloadlen > 0) {
 		memcpy((uint8_t *)tcph + TCP_HEADER_LEN + optlen, payload, payloadlen);
 	}
-
-#if UPDATE_TX_CHECKSUM
-	int rc = -1;
-	/* offload TCP checkum if possible */
-	if (likely(mtcp->iom->dev_ioctl != NULL))
-		rc = mtcp->iom->dev_ioctl(mtcp->ctx,
-					  pctx.out_ifidx,
-					  PKT_TX_TCP_CSUM,
-					  pctx.p.iph);
-	/* otherwise calculate TCP checksum in S/W */
-	if (rc == -1)
-		tcph->check = TCPCalcChecksum((uint16_t *)tcph, 
-					      TCP_HEADER_LEN + 
-					      optlen + payloadlen,
-					      saddr, daddr);
-#endif
-
 	if (tcph->syn || tcph->fin) {
 		payloadlen++;
 	}
@@ -338,22 +318,6 @@ SendTCPPacket(struct mtcp_manager *mtcp, tcp_stream *cur_stream,
 	if (payloadlen > 0) {
 		memcpy((uint8_t *)tcph + TCP_HEADER_LEN + optlen, payload, payloadlen);
 	}
-
-#if UPDATE_TX_CHECKSUM // already turned on offload by default
-	int rc = -1;
-	if (likely(mtcp->iom->dev_ioctl != NULL))
-		rc = mtcp->iom->dev_ioctl(mtcp->ctx,
-					  pctx.out_ifidx,
-					  PKT_TX_TCP_CSUM,
-					  pctx.p.iph);
-	/* otherwise calculate TCP checksum in S/W */
-	if (rc == -1)
-		tcph->check = TCPCalcChecksum((uint16_t *)tcph, 
-					      TCP_HEADER_LEN + 
-					      optlen + payloadlen, 
-					      cur_stream->saddr, 
-					      cur_stream->daddr);
-#endif
 
 	cur_stream->snd_nxt += payloadlen;
 

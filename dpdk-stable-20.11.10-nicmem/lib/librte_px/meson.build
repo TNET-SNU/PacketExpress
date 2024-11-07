@@ -9,6 +9,7 @@ sources = files(
         'px_stat.c',
         'px_mss.c',
         'px_nicmem.c',
+        'px_flow.c',
         'px_offload.c',
         'px_arp.c'
 )
@@ -22,6 +23,7 @@ headers = files(
         'px_delay.h',
         'px_mss.h',
         'px_nicmem.h',
+        'px_flow.h',
         'px_offload.h',
         'px_arp.h'
 )

@@ -83,7 +83,11 @@ static inline int __netif_flow_create(struct netif_port *dev,
         return EDPVS_DPDKAPIFAIL;
     }
 
+#ifdef USE_CGRO
+    flow->handler = px_flow_create(dev->id, attr, pattern, actions, &flow_error);
+#else
     flow->handler = rte_flow_create(dev->id, attr, pattern, actions, &flow_error);
+#endif
     netif_flow_unlock(dev);
     if (!flow->handler) {
         flow->pid = 0;

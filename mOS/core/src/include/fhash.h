@@ -30,8 +30,8 @@ struct hashtable *CreateHashtable(void);
 void DestroyHashtable(struct hashtable *ht);
 
 
-inline int HTInsert(struct hashtable *ht, tcp_stream *, uint32_t rss_hash);
-inline void *HTRemove(struct hashtable *ht, tcp_stream *, uint32_t rss_hash);
-inline tcp_stream *HTSearch(struct hashtable *ht, const tcp_stream *, uint32_t rss_hash);
+inline int HTInsert(struct hashtable *ht, tcp_stream *, unsigned int *hash);
+inline void *HTRemove(struct hashtable *ht, tcp_stream *);
+inline tcp_stream *HTSearch(struct hashtable *ht, const tcp_stream *, unsigned int *hash);
 
 #endif /* __FHASH_H_ */

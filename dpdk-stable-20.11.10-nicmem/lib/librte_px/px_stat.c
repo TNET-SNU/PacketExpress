@@ -2,7 +2,7 @@
 /*---------------------------------------------------------------------------*/
 static pthread_t g_stat_thread = 0;
 static struct px_stat g_px_stat[RTE_MAX_ETHPORTS][PX_MAX_QUEUES_PER_PORT] = {0};
-static volatile int g_shutdown = 0;
+static volatile int g_shutdown = 1;
 /*---------------------------------------------------------------------------*/
 void px_update_stats(uint16_t port_id,
                      uint16_t queue_id,
@@ -165,7 +165,7 @@ int px_start_print_thread(unsigned int stat_interval)
         return 0;
     }
 
-    if (!g_stat_thread)
+    if (g_shutdown)
     {
         args = (int *)malloc(sizeof(int));
         if (!args)
@@ -173,6 +173,9 @@ int px_start_print_thread(unsigned int stat_interval)
             return -1;
         }
         *args = stat_interval;
+
+        /* turn on the thread */
+        g_shutdown = 0;
         if (pthread_create(&g_stat_thread, NULL, px_stat_cb, args) != 0)
         {
             fprintf(stderr, "pthread_create failed\n");
@@ -185,7 +188,7 @@ int px_start_print_thread(unsigned int stat_interval)
 /*---------------------------------------------------------------------------*/
 int px_stop_print_thread(void)
 {
-    if (g_stat_thread)
+    if (!g_shutdown)
     {
         g_shutdown = 1;
         if (pthread_join(g_stat_thread, NULL) < 0)
@@ -193,7 +196,6 @@ int px_stop_print_thread(void)
             fprintf(stderr, "pthread_join failed\n");
             return -1;
         }
-        g_stat_thread = 0;
     }
 
     return 0;

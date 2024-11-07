@@ -22,6 +22,10 @@ DPDK_21 {
 	px_pktmbuf_free;
 	px_pktmbuf_free_bulk;
 	px_parse_batch;
+	px_flow_create;
+	px_eth_dev_rss_reta_update;
+	px_eth_dump_reta;
+	px_dump_reta;
 	px_setup_tso_burst;
 	reflect_4tuple;
 

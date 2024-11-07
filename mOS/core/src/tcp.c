@@ -20,8 +20,7 @@
 extern struct pkt_info *
 ClonePacketCtx(struct pkt_info *to, unsigned char *frame, struct pkt_info *from);
 
-// #define VERIFY_RX_CHECKSUM	TRUE
-#define VERIFY_RX_CHECKSUM	FALSE // already turned on offload by default
+#define VERIFY_RX_CHECKSUM	FALSE // already offloaded by default
 /*----------------------------------------------------------------------------*/
 static inline uint32_t
 DetectStreamType(mtcp_manager_t mtcp, struct pkt_ctx *pctx,
@@ -93,7 +92,7 @@ CreateServerStream(mtcp_manager_t mtcp, int type, struct pkt_ctx *pctx)
 	/* create new stream and add to flow hash table */
 	cur_stream = CreateTCPStream(mtcp, NULL, type,
 			pctx->p.iph->daddr, pctx->p.tcph->dest, 
-			pctx->p.iph->saddr, pctx->p.tcph->source, pctx->p.rss_hash);
+			pctx->p.iph->saddr, pctx->p.tcph->source, NULL);
 	if (!cur_stream) {
 		TRACE_ERROR("INFO: Could not allocate tcp_stream!\n");
 		return FALSE;
@@ -110,15 +109,15 @@ CreateServerStream(mtcp_manager_t mtcp, int type, struct pkt_ctx *pctx)
 }
 /*----------------------------------------------------------------------------*/
 static inline tcp_stream *
-CreateMonitorStream(mtcp_manager_t mtcp, struct pkt_ctx* pctx,
-					uint32_t stream_type)
+CreateMonitorStream(mtcp_manager_t mtcp, struct pkt_ctx* pctx, 
+		    uint32_t stream_type, unsigned int *hash)
 {
 	tcp_stream *stream = NULL;
 	struct socket_map *walk;
 	/* create a client stream context */
 	stream = CreateDualTCPStream(mtcp, NULL, stream_type, pctx->p.iph->daddr,
 				     pctx->p.tcph->dest, pctx->p.iph->saddr, 
-				     pctx->p.tcph->source, pctx->p.rss_hash);
+				     pctx->p.tcph->source, NULL);
 	if (!stream)
 		return FALSE;
 	
@@ -179,7 +178,7 @@ CreateMonitorStream(mtcp_manager_t mtcp, struct pkt_ctx* pctx,
 }
 /*----------------------------------------------------------------------------*/
 static inline struct tcp_stream *
-FindStream(mtcp_manager_t mtcp, struct pkt_ctx *pctx)
+FindStream(mtcp_manager_t mtcp, struct pkt_ctx *pctx, unsigned int *hash)
 {
 	struct tcp_stream temp_stream;
 	
@@ -188,13 +187,13 @@ FindStream(mtcp_manager_t mtcp, struct pkt_ctx *pctx)
 	temp_stream.daddr = pctx->p.iph->saddr;
 	temp_stream.dport = pctx->p.tcph->source;
 	
-	return HTSearch(mtcp->tcp_flow_table, &temp_stream, pctx->p.rss_hash);
+	return HTSearch(mtcp->tcp_flow_table, &temp_stream, hash);
 }
 /*----------------------------------------------------------------------------*/
 /* Create new flow for new packet or return NULL */
 /*----------------------------------------------------------------------------*/
 static inline struct tcp_stream *
-CreateStream(mtcp_manager_t mtcp, struct pkt_ctx *pctx)
+CreateStream(mtcp_manager_t mtcp, struct pkt_ctx *pctx, unsigned int *hash) 
 {
 	tcp_stream *cur_stream = NULL;
 	uint32_t stream_type;
@@ -231,9 +230,9 @@ CreateStream(mtcp_manager_t mtcp, struct pkt_ctx *pctx)
 			cur_stream = CreateClientTCPStream(mtcp, NULL, stream_type,
 									pctx->p.iph->saddr, pctx->p.tcph->source,
 									pctx->p.iph->daddr, pctx->p.tcph->dest,
-									pctx->p.rss_hash);
+									hash);
 #else
-			cur_stream = CreateMonitorStream(mtcp, pctx, stream_type);
+			cur_stream = CreateMonitorStream(mtcp, pctx, stream_type, hash);
 #endif
 			if (!cur_stream) {
 				TRACE_DBG("No available space in flow pool.\n");
@@ -293,15 +292,11 @@ UpdateMonitor(mtcp_manager_t mtcp, struct tcp_stream *sendside_stream,
 #ifdef RECORDPKT_PER_STREAM 
 	/* clone sendside_stream even if sender is disabled */
 	ClonePacketCtx(&sendside_stream->last_pctx.p,
-		       sendside_stream->last_pkt_data, &(pctx->p));
+		       sendside_stream->last_pkt_data, &(pctx.p));
 #endif
 
 	/* update send stream context first */
 	if (sendside_stream->status_mgmt) {
-		
-		// uint8_t *s = (uint8_t *)&pctx->p.iph->saddr;
-		// printf("%d.%d.%d.%d:%u --> \n",
-		// 		*s, *(s + 1), *(s + 2), *(s + 3), htons(pctx->p.tcph->source));
 		sendside_stream->cb_events = MOS_ON_PKT_IN;
 
 		if (is_pkt_reception)
@@ -321,8 +316,6 @@ UpdateMonitor(mtcp_manager_t mtcp, struct tcp_stream *sendside_stream,
 			} SOCKQ_FOREACH_END;
 		}
 		sendside_stream->allow_pkt_modification = false;
-		// printf("%d.%d.%d.%d:%u --> \n",
-		// 		*s, *(s + 1), *(s + 2), *(s + 3), htons(pctx->p.tcph->source));
 	}
 
 	/* Attach Server-side stream */
@@ -330,7 +323,7 @@ UpdateMonitor(mtcp_manager_t mtcp, struct tcp_stream *sendside_stream,
 		assert(sendside_stream->side == MOS_SIDE_CLI);
 		if ((recvside_stream = AttachServerTCPStream(mtcp, sendside_stream, 0,
 				pctx->p.iph->saddr, pctx->p.tcph->source,
-				pctx->p.iph->daddr, pctx->p.tcph->dest, pctx->p.rss_hash)) == NULL) {
+				pctx->p.iph->daddr, pctx->p.tcph->dest)) == NULL) {
 			DestroyTCPStream(mtcp, sendside_stream);
 			return;
 		}
@@ -352,7 +345,7 @@ UpdateMonitor(mtcp_manager_t mtcp, struct tcp_stream *sendside_stream,
 		recvside_stream->cb_events = MOS_ON_PKT_IN;
 
 		/* Predict events which may be raised prior to performing TCP processing */
-		// PreRecvTCPEventPrediction(mtcp, pctx, recvside_stream);
+		PreRecvTCPEventPrediction(mtcp, pctx, recvside_stream);
 		
 		/* retransmitted packet should avoid event simulation */
 		//if ((recvside_stream->cb_events & MOS_ON_REXMIT) == 0)
@@ -420,15 +413,12 @@ ProcessInTCPPacket(mtcp_manager_t mtcp, struct pkt_ctx *pctx)
 	struct iphdr* iph;
 	struct tcphdr* tcph;
 	struct mon_listener *walk;
+	unsigned int hash = 0;
 	
 	iph = pctx->p.iph;
 	tcph = (struct tcphdr *)((u_char *)pctx->p.iph + (pctx->p.iph->ihl << 2));
-	FillPacketContextTCPInfo(pctx, tcph);
 	
-	// uint8_t *s = (uint8_t *)&iph->saddr, *d = (uint8_t *)&iph->daddr;
-	// printf("%d.%d.%d.%d:%u --> %d.%d.%d.%d:%u\n",
-	// 		*s, *(s + 1), *(s + 2), *(s + 3), htons(tcph->source),
-	// 		*d, *(d + 1), *(d + 2), *(d + 3), htons(tcph->dest));
+	FillPacketContextTCPInfo(pctx, tcph);
 
 	/* callback for monitor raw socket */
 	TAILQ_FOREACH(walk, &mtcp->monitors, link)
@@ -455,7 +445,7 @@ ProcessInTCPPacket(mtcp_manager_t mtcp, struct pkt_ctx *pctx)
 	events |= MOS_ON_PKT_IN;
 
 	/* Check whether a packet is belong to any stream */
-	cur_stream = FindStream(mtcp, pctx);
+	cur_stream = FindStream(mtcp, pctx, &hash);
 	if (!cur_stream) {
 		/*
 		 * No need to create stream for monitor. 
@@ -467,7 +457,7 @@ ProcessInTCPPacket(mtcp_manager_t mtcp, struct pkt_ctx *pctx)
 			return TRUE;
 		}
 		/* Create new flow for new packet or return NULL */
-		cur_stream = CreateStream(mtcp, pctx);
+		cur_stream = CreateStream(mtcp, pctx, &hash);
 		if (!cur_stream)
 			events = MOS_ON_ORPHAN;
 	}

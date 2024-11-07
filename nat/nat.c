@@ -149,7 +149,8 @@ translate_addr(mctx_t mctx, int sock, int side, uint64_t events,
 					addr[MOS_SIDE_CLI].sin_port, SRC) < 0 &&
 			mtcp_setlastpkt(mctx, sock, side, 0, NULL, 0, MOS_DROP) < 0)
 			exit(EXIT_FAILURE);
-	} else /* if (side == MOS_SIDE_SVR) */ {
+	}
+	else /* if (side == MOS_SIDE_SVR) */ {
 		/* SVR (WAN) ==> CLI (LAN) : DNAT */
 		if (mtcp_getpeername(mctx, sock, (struct sockaddr *)&addr, &len,
 					MOS_SIDE_BOTH) < 0) {
@@ -205,28 +206,19 @@ main(int argc, char **argv)
 	char *fname = MOS_CONFIG_FILE;  /* path to the default mos config file */
 	struct mtcp_conf mcfg;          /* mOS configuration */
 	mctx_t mctx_list[MAX_CORES];                     /* mOS context */
-
-	/* get the total # of cpu cores */
-	g_core_limit = GetNumCPUs();       
+	int max_cpus = GetNumCPUs();    /* get the total # of cpu cores */
 
 	/* Parse command line arguments */
-	while ((opt = getopt(argc, argv, "c:f:i:")) != -1) {
+	while ((opt = getopt(argc, argv, "f:i:")) != -1) {
 		switch (opt) {
 		case 'f':
 			fname = optarg;
-			break;
-		case 'c':
-			if (atoi(optarg) > g_core_limit) {
-				printf("Available number of CPU cores is %d\n", g_core_limit);
-				return -1;
-			}
-			g_core_limit = atoi(optarg);
 			break;
 		case 'i':
 			g_NATIP = inet_addr(optarg);
 			break;
 		default:
-			printf("Usage: %s [-f mos_config_file] [-c #_of_cpu] [-i ip_address]\n", argv[0]);
+			printf("Usage: %s [-f mos_config_file] [-i ip_address]\n", argv[0]);
 			return 0;
 		}
 	}
@@ -245,7 +237,11 @@ main(int argc, char **argv)
 
 	/* set the core limit */
 	mtcp_getconf(&mcfg);
-	mcfg.num_cores = g_core_limit;
+	if (max_cpus < mcfg.num_cores) {
+		printf("Available number of CPU cores is %d\n", max_cpus);
+		return -1;
+	}
+	g_core_limit = mcfg.num_cores;
 	mtcp_setconf(&mcfg);
 
 	/* Initialize global data structure */

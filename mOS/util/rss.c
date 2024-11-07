@@ -161,10 +161,8 @@ GetRSSCPUCore(in_addr_t sip, in_addr_t dip,
 
 	uint32_t masked = GetRSSHash(sip, dip, sp, dp) & RSS_BIT_MASK;
 
-#ifndef ENABLE_DPDK
 	static const uint32_t off[4] = {3, 1, -1, -3};
 	masked += off[masked & 0x3];
-#endif
 	return (masked % num_queues);
 
 }

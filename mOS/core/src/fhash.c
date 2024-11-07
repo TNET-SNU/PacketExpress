@@ -96,8 +96,9 @@ HashFlow(const tcp_stream *flow)
 	 flow1->daddr == flow2->daddr && flow1->dport == flow2->dport)
 /*---------------------------------------------------------------------------*/
 struct hashtable * 
-CreateHashtable(void) // equality
+CreateHashtable(void)            // equality
 {
+	int i;
 	struct hashtable* ht = calloc(1, sizeof(struct hashtable));
 	if (!ht){
 		TRACE_ERROR("calloc: CreateHashtable");
@@ -105,7 +106,7 @@ CreateHashtable(void) // equality
 	}
 
 	/* init the tables */
-	for (int i = 0; i < NUM_BINS; i++)
+	for (i = 0; i < NUM_BINS; i++)
 		TAILQ_INIT(&ht->ht_table[i]);
 	return ht;
 }
@@ -116,38 +117,94 @@ DestroyHashtable(struct hashtable *ht)
 	free(ht);	
 }
 /*----------------------------------------------------------------------------*/
-inline int
-HTInsert(struct hashtable *ht, tcp_stream *item, uint32_t rss_hash)
+int 
+HTInsert(struct hashtable *ht, tcp_stream *item, unsigned int *hash)
 {
 	/* create an entry*/ 
-	assert(ht);
+	int idx;
 
-	TAILQ_INSERT_TAIL(&ht->ht_table[rss_hash], item, rcvvar->he_link);
-	item->rcvvar->rss_hash = rss_hash;
+	assert(ht);
+	assert(ht->ht_count <= 65535); // uint16_t ht_count 
+
+	if (hash)
+		idx = (int)*hash;
+	else
+		idx = HashFlow(item);
+
+	assert(idx >=0 && idx < NUM_BINS);
+
+#if STATIC_TABLE
+	int i;
+	for (i = 0; i < TCP_AR_CNT; i++) {
+		// insert into empty array slot
+		if (!ht->ht_array[idx][i]) {
+			ht->ht_array[idx][i] = item;
+			item->ht_idx = i;
+			ht->ht_count++;
+			return 0;
+		}
+	}
+	
+	TRACE_INFO("[WARNING] HTSearch() cnt: %d!!\n", TCP_AR_CNT);	
+#endif
+
+	TAILQ_INSERT_TAIL(&ht->ht_table[idx], item, rcvvar->he_link);
+	item->rcvvar->he_mybucket = &ht->ht_table[idx];
+	item->ht_idx = TCP_AR_CNT;
 	ht->ht_count++;
 	
 	return 0;
 }
 /*----------------------------------------------------------------------------*/
-inline void *
-HTRemove(struct hashtable *ht, tcp_stream *item, uint32_t rss_hash)
+void* 
+HTRemove(struct hashtable *ht, tcp_stream *item)
 {
 	hash_bucket_head *head;
+	//int idx = HashFlow(item);
 
-	head = &ht->ht_table[rss_hash];
-	TAILQ_REMOVE(head, item, rcvvar->he_link);
+#if STATIC_TABLE
+	if (item->ht_idx < TCP_AR_CNT) {
+		assert(ht_array[idx][item->ht_idx]);
+		ht->ht_array[idx][item->ht_idx] = NULL;
+	} else {
+#endif
+		//head = &ht->ht_table[idx];
+		head = item->rcvvar->he_mybucket;
+		assert(head);
+		TAILQ_REMOVE(head, item, rcvvar->he_link);	
+#if STATIC_TABLE
+	}
+#endif
 
 	ht->ht_count--;
 	return (item);
-}
+}	
 /*----------------------------------------------------------------------------*/
-inline tcp_stream *
-HTSearch(struct hashtable *ht, const tcp_stream *item, uint32_t rss_hash)
+tcp_stream* 
+HTSearch(struct hashtable *ht, const tcp_stream *item, unsigned int *hash)
 {
 	tcp_stream *walk;
 	hash_bucket_head *head;
+	int idx;
 
-	head = &ht->ht_table[rss_hash];
+#if STATIC_TABLE
+	int i;
+
+	idx = HashFlow(item);
+
+	for (i = 0; i < TCP_AR_CNT; i++) {
+		if (ht->ht_array[idx][i]) {
+			if (EQUAL_FLOW(ht->ht_array[idx][i], item)) 
+				return ht->ht_array[idx][i];
+		}
+	}
+#endif
+
+	idx = HashFlow(item);
+	*hash = idx;
+
+	head = &ht->ht_table[idx];
+
 	TAILQ_FOREACH(walk, head, rcvvar->he_link) {
 		if (EQUAL_FLOW(walk, item)) 
 			return walk;

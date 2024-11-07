@@ -69,15 +69,12 @@ typedef struct io_module_func {
 	uint8_t * (*get_wptr)(struct mtcp_thread_context *ctx, int ifidx, uint16_t len);
 	void 	  (*set_wptr)(struct mtcp_thread_context *ctx, int out_ifidx, int ifidx, int idx);
 	int32_t   (*send_pkts)(struct mtcp_thread_context *ctx, int nif);
-	uint8_t * (*get_rptr)(struct mtcp_thread_context *ctx, int ifidx, int index, uint16_t *len, uint32_t *rss_hash);
+	uint8_t * (*get_rptr)(struct mtcp_thread_context *ctx, int ifidx, int index, uint16_t *len);
 	int       (*get_nif)(struct ifreq *ifr);
 	int32_t   (*recv_pkts)(struct mtcp_thread_context *ctx, int ifidx);
-	int 	  (*stall_pkts)(struct mtcp_thread_context *ctx, int ifidx, int idx);
 	int32_t	  (*select)(struct mtcp_thread_context *ctx);
 	void	  (*destroy_handle)(struct mtcp_thread_context *ctx);
 	int32_t	  (*dev_ioctl)(struct mtcp_thread_context *ctx, int nif, int cmd, void *argp);
-	void *	  (*offload)(int nif, int cmd, void *argp);
-	int		  (*onload)(int nif, void *argp);
 } io_module_func __attribute__((aligned(__WORDSIZE)));
 /*----------------------------------------------------------------------------*/
 io_module_func *current_iomodule_func;
@@ -86,36 +83,13 @@ typedef struct {
 	uint32_t hash_value;
 } RssInfo;
 /*----------------------------------------------------------------------------*/
-#define MAX_DEVICES     16
-/* IO-MODULE string literals */
-#define DPDK_STR		"dpdk"
-#define PCAP_STR		"pcap"
-#define NETMAP_STR		"netmap"
-/* dev_ioctl related macros */
-#define PKT_TX_IP_CSUM		0x01
-#define PKT_TX_TCP_CSUM		0x02
-#define PKT_RX_RSS		0x03
-/* e-switch offload related macros */
-#define OFFLOAD_BYPASS		0x04
-#define OFFLOAD_DROP		0x05
-#define ONLOAD		0x06
-
+#define MAX_DEVICES     RTE_MAX_ETHPORTS
 #define DRV_NAME		0x08
 
 /* enable shared RX/TX buffers */
 #define SHARE_IO_BUFFER
 
-#ifdef ENABLE_DPDK
 /* registered dpdk context */
 extern io_module_func dpdk_module_func;
-#endif /* !ENABLE_DPDK */
-
-#ifdef ENABLE_PCAP
-extern io_module_func pcap_module_func;
-#endif
-
-#ifdef ENABLE_NETMAP
-extern io_module_func netmap_module_func;
-#endif
 /*----------------------------------------------------------------------------*/
 #endif /* !__IO_MODULE_H__ */

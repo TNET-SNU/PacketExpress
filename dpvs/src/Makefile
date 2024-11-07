@@ -40,15 +40,16 @@ CFLAGS += $(shell pkg-config --cflags libssl)
 LIBS += $(shell pkg-config --static --libs libssl)
 endif
 
+CFLAGS += $(shell pkg-config --cflags libdpdk)
+LIBS += $(shell pkg-config --static --libs libdpdk)
+
 include $(SRCDIR)/config.mk
-include $(SRCDIR)/dpdk.mk
 
 INCDIRS += -I $(SRCDIR)/../include
 
 # for dpvs main program.
 CFLAGS += -D __DPVS__ -DDPVS_VERSION=\"$(VERSION_STRING)\" -DDPVS_BUILD_DATE=\"$(DATE_STRING)\"
-
-CFLAGS += -Wall -Werror -Wstrict-prototypes -Wmissing-prototypes -mcmodel=medium
+CFLAGS += -Wall -Werror -Wstrict-prototypes -Wmissing-prototypes -mcmodel=medium -Wno-error=deprecated-declarations
 
 ################################################################################
 
@@ -92,8 +93,8 @@ CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
 ################################################################################
 
 # To use nicmem, make sure to use DPDK version 20.11
-CFLAGS += -D NICMEM=0
-# CFLAGS += -D NICMEM=1
+# CFLAGS += -D NICMEM=0
+CFLAGS += -D NICMEM=1
 
 ################################################################################
 
@@ -111,7 +112,6 @@ CFLAGS += -D NICMEM=0
 ifeq ($(shell test $(GCC_VERSION) -ge 70 && echo 1), 1)
 	CFLAGS += -Wno-format-truncation
 	CFLAGS += -Wno-stringop-truncation
-	CFLAGS += -Wno-address-of-packed-member
 	CFLAGS += -Wstringop-overflow=0
 endif
 

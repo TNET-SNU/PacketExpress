@@ -61,11 +61,7 @@
 #define ETH_ALEN 6
 #endif
 #define ETHERNET_HEADER_LEN		14	// sizeof(struct ethhdr)
-#ifdef ENABLE_PCAP
-#define ETHERNET_FRAME_LEN      4096
-#else
 #define ETHERNET_FRAME_LEN      1514	// max possible frame len
-#endif
 #define IP_HEADER_LEN			20	// sizeof(struct iphdr)
 #define TCP_HEADER_LEN			20	// sizeof(struct tcphdr)
 #define TOTAL_TCP_HEADER_LEN		54	// total header length

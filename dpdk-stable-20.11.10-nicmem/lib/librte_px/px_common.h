@@ -37,7 +37,7 @@ extern "C"
 #define TX_MTU LARGE_MTU
 
 #define PX_MEASURE_STATS 1
-#define PX_MEASURE_PER_QUEUE_STAT 0
+#define PX_MEASURE_PER_QUEUE_STAT 1
 #define PX_MEASURE_DIST 0
 
 #define MAX_CORE_NUM 32
@@ -87,8 +87,6 @@ extern "C"
         cmd;               \
     } while (/*CONSTCOND*/ 0);
 #endif
-/*---------------------------------------------------------------------------*/
-extern uint8_t g_rss_key[40];
 /*---------------------------------------------------------------------------*/
 struct four_tuple
 {

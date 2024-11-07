@@ -421,14 +421,6 @@ mtcp_writev(mctx_t mctx, int sock, const struct iovec *iov, int numIOV);
  */
 uint32_t
 mtcp_get_connection_cnt(mctx_t mctx);
-
-/** Search socket based on given 4-tuple
- * @param [in] mctx: mTCP context
- * @param [in] sess_addr: 4-tuple information
- * @return found socket id on success, -1 on failure
- */
-int
-mtcp_search_sockid(mctx_t mctx, session_address_t sess_addr, uint32_t rss_hash);
 	
 #ifdef __cplusplus
 };

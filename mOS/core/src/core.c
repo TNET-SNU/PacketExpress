@@ -9,7 +9,6 @@
 #include <signal.h>
 #include <assert.h>
 #include <string.h>
-#include <rte_mbuf.h>
 
 #include "cpu.h"
 #include "eth_in.h"
@@ -33,12 +32,9 @@
 #include "tcp_rb.h"
 #include "tcp_stream.h"
 #include "io_module.h"
-
-#ifdef ENABLE_DPDK
 /* for launching rte thread */
 #include <rte_launch.h>
 #include <rte_lcore.h>
-#endif /* !ENABLE_DPDK */
 #define PS_CHUNK_SIZE 64
 #define RX_THRESH (PS_CHUNK_SIZE * 0.8)
 
@@ -881,7 +877,7 @@ RunMainLoop(struct mtcp_thread_context *ctx)
 #endif
 
 	ts = ts_prev = 0;
-	while ((!ctx->done || mtcp->flow_cnt) && !ctx->exit) {		
+	while ((!ctx->done || mtcp->flow_cnt) && !ctx->exit) {
 		STAT_COUNT(mtcp->runstat.rounds);
 		recv_cnt = 0;
 		gettimeofday(&cur_ts, NULL);
@@ -901,10 +897,9 @@ RunMainLoop(struct mtcp_thread_context *ctx)
 
 			for (i = 0; i < recv_cnt; i++) {
 				uint16_t len;
-				uint32_t rss_hash;
 				uint8_t *pktbuf;
-				pktbuf = mtcp->iom->get_rptr(mtcp->ctx, rx_inf, i, &len, &rss_hash);
-				ProcessPacket(mtcp, rx_inf, i, ts, pktbuf, len, rss_hash);
+				pktbuf = mtcp->iom->get_rptr(mtcp->ctx, rx_inf, i, &len);
+				ProcessPacket(mtcp, rx_inf, i, ts, pktbuf, len);
 			}
 
 		}
@@ -1114,8 +1109,8 @@ InitializeMTCPManager(struct mtcp_thread_context* ctx)
 	}
 
 	if (!(mtcp->bufseg_pool = MPCreate(sizeof(tcpbufseg_t),
-			sizeof(tcpbufseg_t) * g_config.mos->max_concurrency / 2 *
-			((g_config.mos->rmem_size - 1) / UNITBUFSIZE + 2), 0))) {
+			sizeof(tcpbufseg_t) * g_config.mos->max_concurrency *
+			((g_config.mos->rmem_size - 1) / UNITBUFSIZE + 1), 0))) {
 		TRACE_ERROR("Failed to allocate ev_table pool\n");
 		exit(0);
 	}
@@ -1355,18 +1350,18 @@ MTCPRunThread(void *arg)
 	
 	/* signaling mTCP thread is done */
 	sem_post(&g_done_sem[mctx->cpu]);
+
+	printf("sem_post done: g_done_sem[%d]\n", mctx->cpu);
 	
 	//pthread_exit(NULL);
 	return 0;
 }
 /*----------------------------------------------------------------------------*/
-#ifdef ENABLE_DPDK
 static int MTCPDPDKRunThread(void *arg)
 {
 	MTCPRunThread(arg);
 	return 0;
 }
-#endif /* !ENABLE_DPDK */
 /*----------------------------------------------------------------------------*/
 mctx_t 
 mtcp_create_context(int cpu)
@@ -1426,30 +1421,19 @@ mtcp_create_context(int cpu)
 
 	/* use rte_eal_remote_launch() for DPDK
 	   (worker/slave threads are already initialized by rte_eal_init()) */
-#ifdef ENABLE_DPDK
 	/* Wake up mTCP threads (wake up I/O threads) */
-	if (current_iomodule_func == &dpdk_module_func) {
-		int main_core;
-		main_core = rte_get_main_lcore();
-		if (main_core == cpu) {
-			/* lcore_config[main_core].ret = 0; */
-			/* lcore_config[main_core].state = FINISHED; */
-			if (pthread_create(&g_thread[cpu], 
-					   NULL, MTCPRunThread, (void *)mctx) != 0) {
-				TRACE_ERROR("pthread_create of mtcp thread failed!\n");
-				return NULL;
-			}
-		} else
-			rte_eal_remote_launch(MTCPDPDKRunThread, mctx, cpu);
-	} else 
-#endif /* !ENABLE_DPDK */
-	{
+	int master;
+	master = rte_get_main_lcore();
+	if (master == cpu) {
+		// lcore_config[master].ret = 0;
+		// lcore_config[master].state = FINISHED;
 		if (pthread_create(&g_thread[cpu], 
 					NULL, MTCPRunThread, (void *)mctx) != 0) {
 			TRACE_ERROR("pthread_create of mtcp thread failed!\n");
 			return NULL;
 		}
-	}
+	} else
+		rte_eal_remote_launch(MTCPDPDKRunThread, mctx, cpu);
 
 	sem_wait(&g_init_sem[cpu]);
 	sem_destroy(&g_init_sem[cpu]);
@@ -1513,18 +1497,11 @@ mtcp_free_context(mctx_t mctx)
 	ctx->done = 1;
 	ctx->exit = 1;
 
-#ifdef ENABLE_DPDK
-	if (current_iomodule_func == &dpdk_module_func) {
-		int main_core = rte_get_main_lcore();
-		if (main_core == mctx->cpu)
-			pthread_join(g_thread[mctx->cpu], NULL);
-		else
-			rte_eal_wait_lcore(mctx->cpu);
-	} else 
-#endif /* !ENABLE_DPDK */
-		{
-			pthread_join(g_thread[mctx->cpu], NULL);
-		}
+	int master = rte_get_main_lcore();
+	if (master == mctx->cpu)
+		pthread_join(g_thread[mctx->cpu], NULL);
+	else
+		rte_eal_wait_lcore(mctx->cpu);
 	
 	TRACE_INFO("MTCP thread %d joined.\n", mctx->cpu);
 	
@@ -1691,6 +1668,7 @@ mtcp_setconf(const struct mtcp_conf *conf)
 	g_config.mos->tcp_timeout = conf->tcp_timeout;
 
 	TRACE_CONFIG("Configuration updated by mtcp_setconf().\n");
+	//PrintConfiguration();
 
 	return 0;
 }
@@ -1703,10 +1681,8 @@ mtcp_init(const char *config_file)
 
 	if (geteuid()) {
 		TRACE_CONFIG("[CAUTION] Run as root if mlock is necessary.\n");
-#if defined(ENABLE_DPDK) || defined(ENABLE_NETMAP)
 		TRACE_CONFIG("[CAUTION] Run the app as root!\n");
 		exit(EXIT_FAILURE);
-#endif
 	}
 
 	/* getting cpu and NIC */
@@ -1724,21 +1700,13 @@ mtcp_init(const char *config_file)
 		return -1;
 	}
 
-#if defined(ENABLE_PSIO)
-	current_iomodule_func = &ps_module_func;
-#elif defined(ENABLE_DPDK)
 	current_iomodule_func = &dpdk_module_func;
-#elif defined(ENABLE_PCAP)
-	current_iomodule_func = &pcap_module_func;
-#elif defined(ENABLE_NETMAP)
-	current_iomodule_func = &netmap_module_func;
-#endif
-
 	if (current_iomodule_func->load_module_upper_half)
 		current_iomodule_func->load_module_upper_half();
 
 	LoadConfigurationLowerHalf();
 
+	//PrintConfiguration();
 
 	for (i = 0; i < g_config.mos->netdev_table->num; i++) {
 		ap[i] = CreateAddressPool(g_config.mos->netdev_table->ent[i]->ip_addr, 1);
@@ -1749,6 +1717,9 @@ mtcp_init(const char *config_file)
 		}
         }
 	
+	//PrintInterfaceInfo();
+	//PrintRoutingTable();
+	//PrintARPTable();
 	InitARPTable();
 
 	if (signal(SIGUSR1, HandleSignal) == SIG_ERR) {
@@ -1794,31 +1765,5 @@ mtcp_destroy()
 	TRACE_INFO("All MTCP threads are joined.\n");
 
 	return 0;
-}
-/*----------------------------------------------------------------------------*/
-int
-mtcp_search_sockid(mctx_t mctx, session_address_t sess_addr, uint32_t rss_hash)
-{
-    struct mtcp_thread_context *ctx = g_pctx[mctx->cpu];
-    struct mtcp_manager *mtcp = ctx->mtcp_manager;
-    struct tcp_stream item, *stream;
-	socket_map_t walk;
-
-    item.saddr = htonl(sess_addr->client_ip);
-    item.sport = htons(sess_addr->client_port);
-    item.daddr = htonl(sess_addr->server_ip);
-    item.dport = htons(sess_addr->server_port);
-	
-    stream = HTSearch(mtcp->tcp_flow_table, &item, rss_hash);
-    if (stream == NULL) {
-        return -1;
-    }
-
-	/* Note: there might be multiple sockets, but return first one's */
-	SOCKQ_FOREACH_REVERSE(walk, &stream->msocks) {
-		return walk->id;
-	} SOCKQ_FOREACH_END;
-	
-    return -1;
 }
 /*----------------------------------------------------------------------------*/

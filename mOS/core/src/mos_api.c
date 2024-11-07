@@ -809,30 +809,8 @@ mtcp_reset_conn(mctx_t mctx, int sock)
 	
 	/* send RST packets to the both sides */
 	
-// 	SendRSTPacketStandalone(mtcp, socket->monitor_stream->stream);
-// 	SendRSTPacketStandalone(mtcp, socket->monitor_stream->stream->pair_stream);
-
-#ifdef MTCP_CB_GETCURPKT_CREATE_COPY
-	struct pkt_info p;
-	if (mtcp_getlastpkt(mctx, sock, MOS_SIDE_CLI, &p) < 0)
-		exit(EXIT_FAILURE);
-#else
-	struct pkt_ctx *pctx;
-	if (mtcp_getlastpkt(mctx, sock, MOS_SIDE_CLI, &pctx) < 0)
-		exit(EXIT_FAILURE);
-#endif
-	SendTCPPacketStandalone(mtcp,
-				pctx->p.iph->saddr, pctx->p.tcph->source,
-				pctx->p.iph->daddr, pctx->p.tcph->dest,
-				ntohl(pctx->p.tcph->seq), ntohl(pctx->p.tcph->ack_seq),
-				0, TCP_FLAG_RST | TCP_FLAG_ACK,
-				NULL, 0, 0, 0, 0, -1);
-	SendTCPPacketStandalone(mtcp,
-				pctx->p.iph->daddr, pctx->p.tcph->dest,
-				pctx->p.iph->saddr, pctx->p.tcph->source,
-				ntohl(pctx->p.tcph->ack_seq), ntohl(pctx->p.tcph->seq),
-				0, TCP_FLAG_RST | TCP_FLAG_ACK,
-				NULL, 0, 0, 0, 0, -1);
+	SendRSTPacketStandalone(mtcp, socket->monitor_stream->stream);
+	SendRSTPacketStandalone(mtcp, socket->monitor_stream->stream->pair_stream);
 	
 	return 0;
 }
@@ -1217,41 +1195,6 @@ mtcp_setlastpkt(mctx_t mctx, int sock, int side, off_t offset,
 	return 0;
 }
 /*----------------------------------------------------------------------------*/
-/**
- * THIS IS A DEPRECETED FUNCTION...
- */
-int
-mtcp_cb_dropcurpkt(mctx_t mctx)
-{
-	mtcp_manager_t mtcp;
-	
-	/* checking if mtcp is valid */
-	mtcp = GetMTCPManager(mctx);
-	if (!mtcp) {
-		TRACE_ERROR("Invalid mtcp!\n");
-		errno = EACCES;
-		return -1;
-	}
-	
-	/* check if the calling thread is in MOS context */
-	if (mtcp->ctx->thread != pthread_self()) {
-		TRACE_ERROR("Invalid thread id!\n");
-		errno = EPERM;
-		return -1;
-	}
-	
-	/* see if cur_pkt_ctx is valid */
-	if (mtcp->pctx == NULL) {
-		TRACE_ERROR("pctx is NULL!\n");
-		errno = ENODATA;
-		return -1;
-	}
-	
-	mtcp->pctx->forward = 0;
-	
-	return 0;
-}
-/*----------------------------------------------------------------------------*/
 int
 mtcp_set_debug_string(mtcp_manager_t mtcp, const char *fmt, ...)
 {
@@ -1298,11 +1241,5 @@ mtcp_get_debug_string(mctx_t mctx, char *buf, int len)
 #else
 	return -1;
 #endif /* ENABLE_DEBUG_EVENT */
-}
-/*----------------------------------------------------------------------------*/
-int
-mtcp_addrtosock(mctx_t mctx, session_address_t sess_addr, uint32_t rss_hash)
-{
-	return mtcp_search_sockid(mctx, sess_addr, rss_hash);
 }
 /*----------------------------------------------------------------------------*/
