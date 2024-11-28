@@ -7,7 +7,7 @@
 #include "timer.h"
 #include "config.h"
 
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 void
 FreeMonListener(mtcp_manager_t mtcp, socket_map_t socket)
 {
@@ -37,7 +37,7 @@ FreeMonListener(mtcp_manager_t mtcp, socket_map_t socket)
 	
 	memset(monitor, 0, sizeof(struct mon_listener));
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline void
 FreeMonStream(mtcp_manager_t mtcp, socket_map_t socket)
 {
@@ -63,7 +63,7 @@ FreeMonStream(mtcp_manager_t mtcp, socket_map_t socket)
 
 	mstream->peek_offset[0] = mstream->peek_offset[1] = 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /**
  * XXX - TODO: This is an ugly function.. I will improve it on 2nd iteration
  */
@@ -128,7 +128,7 @@ AllocateSocket(mctx_t mctx, int socktype)
 	TRACE_ERROR("The concurrent sockets are at maximum.\n");
 	return NULL;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 void 
 FreeSocket(mctx_t mctx, int sockid, int socktype)
 {
@@ -163,7 +163,7 @@ FreeSocket(mctx_t mctx, int sockid, int socktype)
 	socket->epoll = MOS_EPOLLNONE;
 	socket->events = 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 socket_map_t 
 GetSocket(mctx_t mctx, int sockid)
 {
@@ -174,4 +174,4 @@ GetSocket(mctx_t mctx, int sockid)
 
 	return &g_mtcp[mctx->cpu]->smap[sockid];
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/

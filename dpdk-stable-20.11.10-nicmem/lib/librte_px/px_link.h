@@ -1,5 +1,6 @@
 #ifndef PX_LINK_H_
 #define PX_LINK_H_
+
 #include "px_common.h"
 
 #ifdef __cplusplus
@@ -12,7 +13,7 @@ extern "C"
 #define DATA_OFF_IDX 8
 #define EXT_IDX 0
 
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 struct px_link_ext
 {
 	/* link to next item */
@@ -25,7 +26,7 @@ struct px_link_ext
 	uint16_t o_data_off;
 	uint16_t unused;
 };
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline struct rte_mbuf *
 get_link(struct rte_mbuf *pkt)
 {
@@ -34,13 +35,13 @@ get_link(struct rte_mbuf *pkt)
 
     return (struct rte_mbuf *)addr;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline void
 clear_link(struct rte_mbuf *pkt)
 {
     pkt->dynfield1[LINK_IDX] = pkt->dynfield1[LINK_IDX + 1] = 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /*
  * Link two packets without updating checksums.
  * Does not remove any headers.
@@ -62,7 +63,7 @@ link_packet(struct rte_mbuf *start,
     /* clear link of cur pkt */
     clear_link(cur);
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /* setup nb_segs and pkt_len of start item */
 static inline void
 setup_start_item(struct rte_mbuf *pkt)
@@ -83,7 +84,7 @@ setup_start_item(struct rte_mbuf *pkt)
     /* clear link */
     clear_link(pkt);
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline int
 reflect_encap_and_mac(struct rte_mbuf *cur,
                       struct rte_mbuf *start,
@@ -114,16 +115,16 @@ reflect_encap_and_mac(struct rte_mbuf *cur,
 
     return 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 void reflect_4tuple(struct rte_mbuf *cur,
                     struct rte_mbuf *start);
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 uint16_t
 px_unlink(struct rte_mbuf **pkts,
           uint16_t nb_pkts,
           void (*cb)(struct rte_mbuf *,
                      struct rte_mbuf *));
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 
 #ifdef __cplusplus
 }

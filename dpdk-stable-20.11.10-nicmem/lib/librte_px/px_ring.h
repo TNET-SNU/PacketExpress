@@ -1,5 +1,6 @@
 #ifndef PX_RING_H_
 #define PX_RING_H_
+
 #include "px_common.h"
 
 #ifdef __cplusplus
@@ -7,7 +8,7 @@ extern "C"
 {
 #endif
 
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 struct px_ring
 {
 	uint16_t head;
@@ -16,13 +17,13 @@ struct px_ring
 	uint16_t occupied;
 	struct rte_mbuf **queue;
 };
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 
 int px_ring_init(struct px_ring *ring, uint16_t size);
 
 void px_ring_deinit(struct px_ring *ring);
 
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /* enqueue only moves tail */
 static inline uint16_t
 px_ring_enqueue(struct px_ring *ring,
@@ -90,7 +91,7 @@ px_ring_enqueue(struct px_ring *ring,
 
     return n;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /* dequeue only moves head */
 static inline uint16_t
 px_ring_dequeue(struct px_ring *ring,
@@ -158,7 +159,7 @@ px_ring_dequeue(struct px_ring *ring,
 
     return n;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 
 #ifdef __cplusplus
 }

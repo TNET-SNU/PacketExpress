@@ -386,12 +386,3 @@ GTPUGate = 0 #ports[parser.core_ifname].bpf_gate()
 downlink_filter = {"priority": -GTPUGate, "filter": check_ip +
                check_spgwu_ip + check_gtpu_port, "gate": GTPUGate}
 coreFastBPF.add(filters=[downlink_filter])
-
-# ====================================================
-#       Route Control
-# ====================================================
-# Finally send SIGHUP to route_control daemon on reload
-# TODO: behavior is unspecified if route_control.py pid is not found
-# route_control_pid = getpythonpid('route_control.py')
-# if route_control_pid:
-#     os.kill(route_control_pid, signal.SIGHUP)

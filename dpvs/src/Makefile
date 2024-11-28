@@ -116,7 +116,7 @@ ifeq ($(shell test $(GCC_VERSION) -ge 70 && echo 1), 1)
 endif
 
 ifneq ($(CONFIG_DEBUG), y)
-	CFLAGS += -O3
+	CFLAGS += -g -O3
 else
 	CFLAGS += -g -O0 -D DEBUG
 	CFLAGS += -rdynamic

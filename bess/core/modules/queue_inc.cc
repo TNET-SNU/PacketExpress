@@ -32,7 +32,7 @@
 
 #include "../port.h"
 #include "../utils/format.h"
-/*---------------------------------------------------------------------------*/
+
 const Commands QueueInc::cmds = {{"set_burst", "QueueIncCommandSetBurstArg",
                                   MODULE_CMD_FUNC(&QueueInc::CommandSetBurst),
                                   Command::THREAD_SAFE}};

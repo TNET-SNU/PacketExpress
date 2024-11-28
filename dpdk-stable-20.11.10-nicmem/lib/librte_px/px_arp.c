@@ -1,5 +1,5 @@
 #include "px_arp.h"
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline int
 ip_str_to_bin(const char *ip_str,
               uint32_t *ip)
@@ -14,7 +14,7 @@ ip_str_to_bin(const char *ip_str,
 
     return 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline int
 mac_str_to_bin(const char *mac_str,
                struct rte_ether_addr *mac)
@@ -34,7 +34,7 @@ mac_str_to_bin(const char *mac_str,
 
     return 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 struct px_arp_ctx *
 initialize_arp_table(struct px_arp_entry *arp_string_table,
                      int table_size)
@@ -76,7 +76,7 @@ initialize_arp_table(struct px_arp_entry *arp_string_table,
 
     return actx;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 void
 free_arp_table(struct px_arp_ctx *actx)
 {
@@ -92,7 +92,7 @@ free_arp_table(struct px_arp_ctx *actx)
     }
     free(actx);
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 struct rte_ether_addr *
 find_mac_in_arp(struct px_arp_ctx *actx,
                 uint32_t ip_dst)

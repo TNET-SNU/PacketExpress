@@ -13,7 +13,7 @@
 #include "ip_out.h"
 #include "timer.h"
 #include "tcp_rb.h"
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 char *state_str[] = {
 	"TCP_ST_CLOSED", 
 	"TCP_ST_LISTEN", 
@@ -28,7 +28,7 @@ char *state_str[] = {
 	"TCP_ST_TIME_WAIT",
 	"TCP_ST_CLOSED_RSVD"
 };
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 char *close_reason_str[] = {
 	"NOT_CLOSED", 
 	"CLOSE", 
@@ -40,7 +40,7 @@ char *close_reason_str[] = {
 	"DENIED", 
 	"TIMEDOUT"
 };
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static __thread unsigned long next = 1;
 /* Function retrieved from POSIX.1-2001 standard */
 /* RAND_MAX assumed to be 32767 */
@@ -49,12 +49,12 @@ posix_seq_rand(void) {
 	next = next * 1103515245 + 12345;
 	return ((unsigned)(next/65536) % 32768);
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 void
 posix_seq_srand(unsigned seed) {
 	next = seed % 32768;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /**
  * FYI: This is NOT a read-only return!
  */
@@ -108,7 +108,7 @@ GetFragInfo(socket_map_t sock, int side, void *optval, socklen_t *len)
 	*len = 0;
 	return -1;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /**
  * Comments later...
  */
@@ -158,7 +158,7 @@ GetBufInfo(socket_map_t sock, int side, void *optval, socklen_t *len)
 	*len = 0;
 	return -1;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 int
 DisableBuf(socket_map_t sock, int side)
 {
@@ -195,7 +195,7 @@ DisableBuf(socket_map_t sock, int side)
 	
 	return rc;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 int
 GetLastTimestamp(struct tcp_stream *stream, uint32_t *usecs, socklen_t *len)
 {
@@ -215,7 +215,7 @@ GetLastTimestamp(struct tcp_stream *stream, uint32_t *usecs, socklen_t *len)
 	
 	return 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 inline int
 GetTCPState(struct tcp_stream *stream, int side,
 			void *optval, socklen_t *optlen)
@@ -226,13 +226,13 @@ GetTCPState(struct tcp_stream *stream, int side,
 						   TCP_ST_CLOSED : stream->state);
 	return 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 inline char *
 TCPStateToString(const tcp_stream *stream)
 {
 	return (stream) ? state_str[stream->state] : NULL;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 inline void 
 RaiseReadEvent(mtcp_manager_t mtcp, tcp_stream *stream)
 {
@@ -280,7 +280,7 @@ RaiseReadEvent(mtcp_manager_t mtcp, tcp_stream *stream)
 		TRACE_EPOLL("Stream %d: Raising read without a socket!\n", stream->id);
 	}
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 inline void 
 RaiseWriteEvent(mtcp_manager_t mtcp, tcp_stream *stream)
 {
@@ -293,7 +293,7 @@ RaiseWriteEvent(mtcp_manager_t mtcp, tcp_stream *stream)
 		TRACE_EPOLL("Stream %d: Raising write without a socket!\n", stream->id);
 	}
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 inline void 
 RaiseCloseEvent(mtcp_manager_t mtcp, tcp_stream *stream)
 {
@@ -309,7 +309,7 @@ RaiseCloseEvent(mtcp_manager_t mtcp, tcp_stream *stream)
 		TRACE_EPOLL("Stream %d: Raising close without a socket!\n", stream->id);
 	}
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 inline int 
 RaiseErrorEvent(mtcp_manager_t mtcp, tcp_stream *stream)
 {
@@ -422,7 +422,7 @@ DestroyMonitorStreamSocket(mtcp_manager_t mtcp, socket_map_t msock)
 	
 	return rc;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 tcp_stream *
 CreateTCPStream(mtcp_manager_t mtcp, socket_map_t socket, int type, 
 		uint32_t saddr, uint16_t sport, uint32_t daddr, uint16_t dport,
@@ -685,7 +685,7 @@ AttachServerTCPStream(mtcp_manager_t mtcp, tcp_stream *cs, int type,
 
 	return ss;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static void
 DestroySingleTCPStream(mtcp_manager_t mtcp, tcp_stream *stream)
 {
@@ -883,7 +883,7 @@ DestroySingleTCPStream(mtcp_manager_t mtcp, tcp_stream *stream)
 #endif /* NETSTAT */
 
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 void 
 DestroyTCPStream(mtcp_manager_t mtcp, tcp_stream *stream)
 {
@@ -894,7 +894,7 @@ DestroyTCPStream(mtcp_manager_t mtcp, tcp_stream *stream)
 	if (pair_stream)
 		DestroySingleTCPStream(mtcp, pair_stream);
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 void 
 DumpStream(mtcp_manager_t mtcp, tcp_stream *stream)
 {
@@ -995,4 +995,4 @@ DumpStream(mtcp_manager_t mtcp, tcp_stream *stream)
 			rcvvar->srtt, rcvvar->mdev, rcvvar->mdev_max, 
 			rcvvar->rttvar, rcvvar->rtt_seq);
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/

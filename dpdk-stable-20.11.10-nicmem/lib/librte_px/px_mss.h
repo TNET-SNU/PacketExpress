@@ -1,12 +1,13 @@
 #ifndef PX_MSS_H_
 #define PX_MSS_H_
+
 #include "px_common.h"
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /* for TCP option parsing */
 #define TCPOPT_EOL 0
 #define TCPOPT_NOP 1
@@ -40,12 +41,12 @@ extern "C"
 #define FLOW_KEY_SIZE 12
 #define MSS_THREAD_PERIOD 10
 #define MSS_TIMEOUT 300
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /* for counting bloom filter */
 #define MSS_POOL_CACHE_SIZE 32
 #define LOG_BLOOM_FILTER_SIZE 13
 #define BLOOM_FILTER_SIZE (1 << LOG_BLOOM_FILTER_SIZE)
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /* Structure to encapsulate mempool and hash table */
 struct px_mss_ctx
 {
@@ -60,7 +61,7 @@ struct flow_mss_entry
     uint16_t mss;
     time_t last_update;
 };
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline uint16_t
 xor_hash(uint32_t *data)
 {
@@ -68,7 +69,7 @@ xor_hash(uint32_t *data)
 
     return (uint16_t)(temp ^ (data[2] >> 2));
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline int
 bloom_check(uint8_t *filter,
             uint32_t rss,
@@ -91,7 +92,7 @@ bloom_check(uint8_t *filter,
     /* may exist */
     return 1;
 } 
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline uint16_t *
 get_tcp_mss(struct rte_mbuf *pkt)
 {
@@ -142,21 +143,29 @@ get_tcp_mss(struct rte_mbuf *pkt)
     /* no MSS field found */
     return NULL;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline void
 update_mss(uint16_t *mss_ptr)
 {
     // printf("%d -> %lu\n", ntohs(*mss_ptr), DEFAULT_MSS);
 
-    /* use below on semantic test */
-    // *mss_ptr = htons(UINT16_MAX -
-    //                  sizeof(struct rte_ipv4_hdr) -
-    //                  sizeof(struct rte_tcp_hdr)); // use when semantics test
+    if (ntohs(*mss_ptr) >= LARGE_MSS)
+    {
+        /* no need to update */
+        return;
+    }
 
+#if SEMANTIC_TEST
+    /* use below on semantic test */
+    *mss_ptr = htons(UINT16_MAX -
+                     sizeof(struct rte_ipv4_hdr) -
+                     sizeof(struct rte_tcp_hdr)); // use when semantic test
+#else
     /* use below on performance test */
     *mss_ptr = htons(DEFAULT_MSS);
+#endif
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline void
 flush_timeout(struct px_mss_ctx *ctx)
 {
@@ -179,7 +188,7 @@ flush_timeout(struct px_mss_ctx *ctx)
         }
     }
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline int
 search_mss_entry(struct px_mss_ctx *ctx,
                  uint32_t rss,
@@ -208,28 +217,28 @@ search_mss_entry(struct px_mss_ctx *ctx,
 
     return 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 uint8_t *bloom_init(void);
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 void bloom_destroy(uint8_t *filter);
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 void bloom_insert(uint8_t *filter, uint32_t rss, struct four_tuple *key);
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 void bloom_delete(uint8_t *filter, uint32_t rss, struct four_tuple *key);
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 struct px_mss_ctx *init_mss_ctx(uint16_t core_id, uint32_t num_entry);
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 int destroy_mss_ctx(struct px_mss_ctx *ctx);
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 int insert_mss_entry(struct px_mss_ctx *ctx,
                      uint32_t rss,
                      struct four_tuple *key,
                      uint16_t mss);
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 int evict_mss_entry(struct px_mss_ctx *ctx,
                     uint32_t rss,
                     struct four_tuple *key);
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 }
 #endif

@@ -1,5 +1,6 @@
 #ifndef PX_DELAY_H_
 #define PX_DELAY_H_
+
 #include "px_common.h"
 
 #ifdef __cplusplus
@@ -7,7 +8,7 @@ extern "C"
 {
 #endif
 
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /* ensure that end and start are not NULL before call this function */
 static inline unsigned int
 get_nsec_diff(struct timespec *end,
@@ -16,7 +17,7 @@ get_nsec_diff(struct timespec *end,
     return (end->tv_sec - start->tv_sec) * E9 +
            (end->tv_nsec - start->tv_nsec);
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /* ensure that item and timestamp are not NULL before call this function */
 static inline void
 update_timestamp(struct timespec *orig_timestamp,
@@ -44,7 +45,7 @@ update_timestamp(struct timespec *orig_timestamp,
 
     return;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 
 #ifdef __cplusplus
 }

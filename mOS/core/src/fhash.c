@@ -90,11 +90,11 @@ HashFlow(const tcp_stream *flow)
 	return SuperFastHash((const char *)&flow->saddr, 12) & (NUM_BINS - 1);
 #endif
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 #define EQUAL_FLOW(flow1, flow2) \
 	(flow1->saddr == flow2->saddr && flow1->sport == flow2->sport && \
 	 flow1->daddr == flow2->daddr && flow1->dport == flow2->dport)
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 struct hashtable * 
 CreateHashtable(void)            // equality
 {

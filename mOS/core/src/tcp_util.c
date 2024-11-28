@@ -10,7 +10,7 @@
 #define MAX(a, b) ((a)>(b)?(a):(b))
 #define MIN(a, b) ((a)<(b)?(a):(b))
 
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 void 
 ParseTCPOptions(tcp_stream *cur_stream, 
 		uint32_t cur_ts, uint8_t *tcpopt, int len)
@@ -57,7 +57,7 @@ ParseTCPOptions(tcp_stream *cur_stream,
 		}
 	}
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 inline int  
 ParseTCPTimestamp(tcp_stream *cur_stream, 
 		struct tcp_timestamp *ts, uint8_t *tcpopt, int len)
@@ -153,7 +153,7 @@ ParseSACKOption(tcp_stream *cur_stream,
 	}
 }
 #endif /* TCP_OPT_SACK_ENABLED */
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 uint16_t
 TCPCalcChecksum(uint16_t *buf, uint16_t len, uint32_t saddr, uint32_t daddr)
 {
@@ -188,7 +188,7 @@ TCPCalcChecksum(uint16_t *buf, uint16_t len, uint32_t saddr, uint32_t daddr)
 	
 	return (uint16_t)sum;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 void 
 PrintTCPOptions(uint8_t *tcpopt, int len)
 {

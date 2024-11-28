@@ -15,7 +15,7 @@ static uint8_t g_rss_key[40] =
 //      0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
 //      0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
 //      0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A};
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /* Check if TCP option fields equal. */
 static inline uint32_t
 compare_option(struct rte_mbuf *pkt1,
@@ -35,7 +35,7 @@ compare_option(struct rte_mbuf *pkt1,
 
     return 1;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /* Check if two TCP/IPv4 packets are neighbors. */
 /*
  * 0: not related
@@ -84,7 +84,7 @@ compare_seq(struct rte_mbuf *pkt1,
 
     return 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /* Check if two TCP/IPv4 packets are neighbors. */
 static inline int
 check_seq_backup(struct rte_mbuf *pkt1,
@@ -127,7 +127,7 @@ check_seq_backup(struct rte_mbuf *pkt1,
     /* same data len, or former is longer, remove the latter */
     return 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /* Check if TCP option fields equal and seq fields are continuous. */
 static inline uint32_t
 compare_option_seq(struct rte_mbuf *pkt1,
@@ -140,7 +140,7 @@ compare_option_seq(struct rte_mbuf *pkt1,
 
     return compare_seq(pkt1, pkt2);
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /*
  * Merge two TCP/IPv4 packets without updating checksums.
  * If cmp is larger than 0, append the new packet to the
@@ -206,7 +206,7 @@ merge_tcp(struct px_item *cur_item,
 
     return 1;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /*
  * Merge two UDP/IPv4 packets.
  * Remove L2/L3/L4 headers of following packets.
@@ -286,7 +286,7 @@ merge_udp(struct px_item *cur_item,
 
     return 1;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline int
 merge_udp2(struct px_item *cur_item,
            struct rte_mbuf *firstseg,
@@ -337,7 +337,7 @@ merge_udp2(struct px_item *cur_item,
 
     return 1;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline int
 merge_udp3(struct px_item *cur_item,
            struct rte_mbuf *firstseg,
@@ -389,7 +389,7 @@ merge_udp3(struct px_item *cur_item,
 
     return 1;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /*
  * Merge two UDP/IPv4 packets.
  * Remove first decap_len bytes
@@ -434,7 +434,7 @@ concat_packet(struct px_item *cur_item,
 
     return 1;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /*
  * Add PX header between IP header and UDP header of first segment
  *       ETH|IP|UDP|Payload|UDP|Payload|...|UDP|Payload -->
@@ -460,7 +460,7 @@ embed_px_hdr(struct rte_mbuf *pkt)
     inner_seglen = (uint16_t *)get_payload(pkt);
     *inner_seglen = htons(orig_seglen);
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /*
  * Add PX header between IP header and UDP header of first segment
  *       ETH|IP|UDP|Payload|UDP|Payload|...|UDP|Payload -->
@@ -495,7 +495,7 @@ embed_px_hdr2(struct rte_mbuf *pkt)
     pxhlen = (uint16_t *)get_payload(pkt);
     *pxhlen = htons(new_pxhlen);
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /*
  * Add PX trailer at the end of the last segment
  *       ETH|IP|UDP|Payload|UDP|Payload|...|UDP|Payload -->
@@ -516,7 +516,7 @@ embed_px_trailer(struct rte_mbuf *pkt)
     /* add 2B to write original segment length */
     rte_pktmbuf_append(pkt, sizeof(uint16_t));
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /*
  * if packets are merged or concatenated,
  * update total_length in ip header
@@ -528,14 +528,14 @@ update_iplen(struct rte_mbuf *pkt)
     uint16_t *iplen = get_ip_len(pkt);
     *iplen = htons(pkt->pkt_len - pkt->l2_len);
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline void
 update_ipid(struct rte_mbuf *pkt, uint16_t new_id)
 {
     uint16_t *ip_id = get_ip_id(pkt);
     *ip_id = htons(new_id);
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline void
 update_udplen(struct rte_mbuf *pkt)
 {
@@ -543,7 +543,7 @@ update_udplen(struct rte_mbuf *pkt)
     udplen = get_udp_len(pkt);
     *udplen = htons(pkt->pkt_len - pkt->l2_len - pkt->l3_len);
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline void
 update_udp(struct rte_mbuf *pkt)
 {
@@ -564,7 +564,7 @@ update_udp(struct rte_mbuf *pkt)
     /* mark as PX */
     mark_px(pkt);
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /*
  * if a TCP packet is seperated, update seq of second TCP packet
  */
@@ -575,14 +575,14 @@ update_seq(struct rte_mbuf *pkt,
     uint32_t *seq = get_tcp_seq(pkt);
     *seq = htonl(ntohl(*seq) + diff);
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline void
 unset_tcppsh(struct rte_mbuf *pkt)
 {
     uint8_t *flags = get_tcp_flags(pkt);
     *flags = *flags & ~RTE_TCP_PSH_FLAG;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline void
 update_tcp(struct rte_mbuf *pkt,
            uint16_t tso_segsz)
@@ -600,7 +600,7 @@ update_tcp(struct rte_mbuf *pkt,
     /* update header */
     update_iplen(pkt);
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /* fill mbuf fields for IP packet */
 static inline void
 setup_ip(struct rte_mbuf *pkt,
@@ -619,7 +619,7 @@ setup_ip(struct rte_mbuf *pkt,
                      RTE_MBUF_F_TX_IP_CKSUM;
 #endif
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /* Fill mbuf fields of a TCP packet. */
 static inline void
 setup_tcp(struct rte_mbuf *pkt,
@@ -632,7 +632,7 @@ setup_tcp(struct rte_mbuf *pkt,
     pkt->ol_flags |= RTE_MBUF_F_TX_TCP_CKSUM;
 #endif
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /* fill mbuf fields for UDP packet */
 static inline void
 setup_udp(struct rte_mbuf *pkt)
@@ -644,7 +644,7 @@ setup_udp(struct rte_mbuf *pkt)
     pkt->ol_flags |= RTE_MBUF_F_TX_UDP_CKSUM;
 #endif
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /* fill mbuf fields for SCTP packet */
 static inline void
 setup_sctp(struct rte_mbuf *pkt)
@@ -656,13 +656,7 @@ setup_sctp(struct rte_mbuf *pkt)
     pkt->ol_flags |= RTE_MBUF_F_TX_SCTP_CKSUM;
 #endif
 }
-/*---------------------------------------------------------------------------*/
-static inline uint32_t
-get_rss_hash(struct rte_mbuf *pkt)
-{
-    return pkt->hash.rss >> 5;
-}
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline uint32_t
 get_crc_hash(struct rte_mbuf *pkt,
              struct px_rule *rule)
@@ -700,7 +694,7 @@ get_crc_hash(struct rte_mbuf *pkt,
 
     return init_val;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline int
 has_same_key(struct rte_mbuf *pkt,
              struct px_flow *flow,
@@ -742,7 +736,7 @@ has_same_key(struct rte_mbuf *pkt,
     return 1;
 #endif
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline void
 copy_key(struct rte_mbuf *pkt,
          struct px_flow *flow,
@@ -774,7 +768,7 @@ copy_key(struct rte_mbuf *pkt,
     }
 #endif
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /* store the flow into the array */
 static inline int
 insert_flow(struct px_ctx *pctx,
@@ -814,7 +808,7 @@ insert_flow(struct px_ctx *pctx,
 
     return 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /* store the packet into the new item */
 /* insert_flow should be called before insert_item */
 static inline int
@@ -855,7 +849,7 @@ insert_item(struct px_ctx *pctx,
 
     return 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /* store the packet into the new item */
 /* insert_flow should be called before insert_item */
 static inline int
@@ -887,7 +881,7 @@ insert_stall(struct px_ctx *pctx,
 
     return 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline struct rte_mbuf *
 separate_edge_seg(struct px_ctx *pctx,
                   struct rte_mbuf *pkt,
@@ -1032,7 +1026,7 @@ err:
 
     return NULL;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline void
 handle_incomplete(struct px_ctx *pctx,
                   struct rte_mbuf *firstseg,
@@ -1092,7 +1086,7 @@ Enqueue:
         rte_pktmbuf_free(firstseg);
     }
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /*
  * Try assemble UDP packets to one of existing flows and items.
  * returns the number of reduced packets after assemble.
@@ -1158,12 +1152,12 @@ assemble_udp(struct px_ctx *pctx,
         update_timestamp(&cur_item->timestamp, timestamp);
     }
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /*
  * Try assemble TCP packet to one of existing flows and items
  * returns the number of reduced packets after assemble
  */
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline void
 assemble_tcp(struct px_ctx *pctx,
              struct rte_mbuf *firstseg,
@@ -1305,7 +1299,7 @@ assemble_tcp(struct px_ctx *pctx,
     /* merged again; remove current item because it is merged to prior item */
     prev_item->next_item_idx = cur_item->next_item_idx;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline int
 parse_for_udp_gro(struct rte_mbuf *pkt)
 {
@@ -1319,7 +1313,7 @@ parse_for_udp_gro(struct rte_mbuf *pkt)
 
     return 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline int
 parse_for_tcp_gro(struct rte_mbuf *pkt,
                   uint8_t *tcp_flags)
@@ -1360,13 +1354,13 @@ parse_for_tcp_gro(struct rte_mbuf *pkt,
 
     return 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /*
  * Parse this packet and fill mbuf fields
  * Returns 0 for good format for GRO.
  * Returns -1, if this packet is (unlikely) not supported format.
  */
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline int
 parse_packet(struct rte_mbuf *pkt,
              uint8_t *tcp_flags)
@@ -1444,7 +1438,7 @@ parse_packet(struct rte_mbuf *pkt,
 
     return ret;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /* Update mbuf fields of packets in a batch */
 void px_parse_batch(struct rte_mbuf **pkts,
                     uint16_t nb_pkts,
@@ -1479,7 +1473,7 @@ void px_parse_batch(struct rte_mbuf **pkts,
         }
     }
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 void px_setup_tso_burst(struct rte_mbuf **pkts,
                         uint16_t nb_pkts)
 {
@@ -1511,7 +1505,7 @@ void px_setup_tso_burst(struct rte_mbuf **pkts,
         }
     }
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline uint16_t
 px_uso_burst(struct px_ctx *pctx,
              struct rte_mbuf **pkts,
@@ -1637,7 +1631,7 @@ px_uso_burst(struct px_ctx *pctx,
 
     return idx;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline uint16_t
 link_and_flush(struct px_ctx *pctx,
                struct rte_mbuf **out,
@@ -1816,7 +1810,7 @@ link_and_flush(struct px_ctx *pctx,
 
     return idx;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline uint16_t
 concat_link_and_flush(struct px_ctx *pctx,
                       struct rte_mbuf **out,
@@ -1882,7 +1876,7 @@ concat_link_and_flush(struct px_ctx *pctx,
 
     return idx;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline uint16_t
 px_core(struct px_ctx *pctx,
         struct rte_mbuf **pkts,
@@ -2009,7 +2003,7 @@ px_core(struct px_ctx *pctx,
 
     return cnt;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 void px_deinit(uint16_t port_id,
                uint16_t queue_id)
 {
@@ -2097,7 +2091,7 @@ void px_deinit(uint16_t port_id,
         rte_exit(EXIT_FAILURE, "Error joining stat thread\n");
     }
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 int px_init(uint16_t port_id,
             uint16_t queue_id,
             int burst,
@@ -2339,7 +2333,7 @@ px_eth_conf(uint16_t port_id,
 
     return *conf;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 int px_eth_dev_configure(uint16_t port_id,
                          uint16_t num_rxq,
                          uint16_t num_txq,
@@ -2359,8 +2353,8 @@ int px_eth_dev_configure(uint16_t port_id,
 
     /* check port_id first */
     ret = rte_eth_dev_configure(port_id,
-                                num_rxq * num_rxq_incr,
-                                num_txq,
+                                num_rxq * num_rxq_incr + hp_num_rxq,
+                                num_txq + hp_num_txq,
                                 eth_conf);
 
     if (ret)
@@ -2368,7 +2362,7 @@ int px_eth_dev_configure(uint16_t port_id,
         return ret;
     }
     /* configure px_flow */
-    px_flow_configure(port_id, num_rxq, num_rxq_incr);
+    px_latent_rxq_configure(port_id, num_rxq, num_rxq_incr);
 
     /* make a clone pool for segmentation */
     socket_id = rte_eth_dev_socket_id(port_id);
@@ -2428,7 +2422,7 @@ int px_eth_dev_configure(uint16_t port_id,
 
     return ret;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 int px_eth_rx_queue_setup(uint16_t port_id,
                           uint16_t rx_queue_id,
                           uint16_t nb_rx_desc,
@@ -2438,6 +2432,7 @@ int px_eth_rx_queue_setup(uint16_t port_id,
 {
     struct rte_eth_dev_info dev_info;
     uint16_t num_rxq = g_px_dev[port_id].num_rxq;
+    uint16_t num_txq = g_px_dev[port_id].num_txq;
     uint16_t num_rxq_incr = g_px_dev[port_id].num_rxq_incr;
     uint16_t inner_qid;
     uint16_t inner_nb_rx_desc;
@@ -2474,20 +2469,6 @@ int px_eth_rx_queue_setup(uint16_t port_id,
 
     g_px_dev[port_id].nb_rx_desc[rx_queue_id] = nb_rx_desc;
 
-    /* setup hairpin */
-    if (g_px_dev[port_id].hpm.hp_num_rxq)
-    {
-        ret = px_hairpin_setup(&g_px_dev[port_id].hpm,
-                               g_px_dev[port_id].num_rxq,
-                               g_px_dev[port_id].num_txq,
-                               nb_rx_desc / 2,
-                               nb_rx_desc);
-        if (ret)
-        {
-            return ret;
-        }
-    }
-
     inner_nb_rx_desc = nb_rx_desc / num_rxq_incr;
     inner_nb_rx_desc = (inner_nb_rx_desc < 64) ? 64 : (inner_nb_rx_desc);
 
@@ -2513,9 +2494,23 @@ int px_eth_rx_queue_setup(uint16_t port_id,
         }
     }
 
+    /* setup hairpin */
+    if (g_px_dev[port_id].hpm.hp_num_rxq)
+    {
+        ret = px_hairpin_setup(&g_px_dev[port_id].hpm,
+                               num_rxq * num_rxq_incr,
+                               num_txq,
+                               nb_rx_desc / 2,
+                               nb_rx_desc);
+        if (ret)
+        {
+            return ret;
+        }
+    }
+
     return 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 int px_eth_tx_queue_setup(uint16_t port_id,
                           uint16_t tx_queue_id,
                           uint16_t nb_tx_desc,
@@ -2537,7 +2532,7 @@ int px_eth_tx_queue_setup(uint16_t port_id,
 
     return 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline uint16_t
 rx_and_px_gro(uint16_t port_id,
               uint16_t queue_id,
@@ -2601,7 +2596,7 @@ rx_and_px_gro(uint16_t port_id,
 
 return total;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline uint16_t
 rx_and_px_gro_delayed(uint16_t port_id,
                       uint16_t queue_id,
@@ -2655,7 +2650,7 @@ rx_and_px_gro_delayed(uint16_t port_id,
 
     return total_mq;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 uint16_t
 px_eth_rx_burst(uint16_t port_id,
                 uint16_t queue_id,
@@ -2689,7 +2684,7 @@ px_eth_rx_burst(uint16_t port_id,
 
     return read_px_rx_ring + read_orig_rx_ring;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 uint16_t
 px_eth_tx_burst(uint16_t port_id,
                 uint16_t queue_id,
@@ -2725,7 +2720,7 @@ px_eth_tx_burst(uint16_t port_id,
 
     return sent_orig_tx_ring;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 void px_pktmbuf_free(struct rte_mbuf *pkt)
 {
     struct rte_mbuf *cur, *next;
@@ -2752,14 +2747,14 @@ void px_pktmbuf_free(struct rte_mbuf *pkt)
         rte_pktmbuf_free(cur);
     }
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 void px_pktmbuf_free_bulk(struct rte_mbuf **pkts,
                           uint16_t nb_pkts)
 {
     nb_pkts = px_unlink(pkts, nb_pkts, NULL);
     rte_pktmbuf_free_bulk(pkts, nb_pkts);
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 int px_eth_stats_get(uint16_t port_id,
                      struct rte_eth_stats *stats)
 {
@@ -2811,7 +2806,7 @@ int px_eth_stats_get(uint16_t port_id,
 
     return 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 int px_add_rule(uint16_t port_id,
                 uint16_t queue_id,
                 struct px_pattern *patterns,
@@ -2872,7 +2867,7 @@ int px_add_rule(uint16_t port_id,
     /* return rule id as a handle */
     return id;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 void px_del_rule(uint16_t port_id,
                  uint16_t queue_id,
                  int px_id)

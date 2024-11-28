@@ -1,5 +1,6 @@
 #ifndef PX_RULE_H_
 #define PX_RULE_H_
+
 #include "px_common.h"
 
 #ifdef __cplusplus
@@ -18,7 +19,7 @@ extern "C"
 #define GTP_HDR_ZEROS "\x00\x00\x00\x00\x00\x00\x00\x00"
 #define GTP_PSC_HDR_ZEROS "\x00\x00\x00"
 #define PX_ACTION_TYPE_CONCAT (RTE_FLOW_ACTION_TYPE_END - 1)
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 struct px_pattern
 {
 	int type; /* packet express pattern type */
@@ -97,7 +98,7 @@ struct px_rule_set
 	uint16_t rule_num;
 };
 
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline int
 rule_insert(struct px_rule_set *rule_set,
                   struct px_rule *rule)
@@ -114,7 +115,7 @@ rule_insert(struct px_rule_set *rule_set,
 
     return 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline void
 rule_remove(struct px_rule_set *rule_set,
                   struct px_rule *rule)
@@ -128,7 +129,7 @@ rule_remove(struct px_rule_set *rule_set,
     TAILQ_REMOVE(&rule_set->rules, rule, link);
     rule_set->rule_num--;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline struct px_rule *
 rule_search(struct px_rule_set *rule_set,
             int px_id)
@@ -144,7 +145,7 @@ rule_search(struct px_rule_set *rule_set,
 
     return NULL;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 int
 use_rss_hash(struct px_pattern *patterns,
              int nb_patterns);
@@ -178,7 +179,7 @@ int
 decode_action_rule(struct decoded_action *rule,
                    struct px_action *actions,
                    uint16_t nb_actions);
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 
 #ifdef __cplusplus
 }

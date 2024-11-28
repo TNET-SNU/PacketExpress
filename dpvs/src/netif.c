@@ -2150,6 +2150,9 @@ static inline void netif_tx_burst(lcoreid_t cid, portid_t pid, queueid_t qindex)
                 kni_ingress(mbuf_copied, dev);
         }
     }
+#if USE_LINK
+    px_unlink(txq->mbufs, txq->len, NULL);
+#endif
 #if USE_CGRO || USE_LRO || USE_DGRO
     px_setup_tso_burst(txq->mbufs, txq->len);
 #endif

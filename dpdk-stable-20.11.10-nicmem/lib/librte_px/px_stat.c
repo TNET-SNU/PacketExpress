@@ -1,9 +1,9 @@
 #include "px_stat.h"
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static pthread_t g_stat_thread = 0;
 static struct px_stat g_px_stat[RTE_MAX_ETHPORTS][PX_MAX_QUEUES_PER_PORT] = {0};
 static volatile int g_shutdown = 1;
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 void px_update_stats(uint16_t port_id,
                      uint16_t queue_id,
                      struct rte_mbuf **pkts,
@@ -65,7 +65,7 @@ void px_update_stats(uint16_t port_id,
     stat->data_pkt_cnt_in_batch += data_pkt_cnt;
     stat->batch_cnt++;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 void px_print_stats(void)
 {
     struct px_stat *iter, total = {0};
@@ -138,7 +138,7 @@ void px_print_stats(void)
     }
 #endif
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 void *
 px_stat_cb(void *args)
 {
@@ -172,7 +172,7 @@ px_stat_cb(void *args)
 
     return NULL;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 int px_start_print_thread(unsigned int stat_interval)
 {
     int *args;
@@ -202,7 +202,7 @@ int px_start_print_thread(unsigned int stat_interval)
 
     return 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 int px_stop_print_thread(void)
 {
     if (!g_shutdown)
@@ -217,7 +217,7 @@ int px_stop_print_thread(void)
 
     return 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 // int px_report_timestamp(struct rte_mbuf *pkt, struct timespec *timestamp)
 // {
 //     pkt->dynfield1[]

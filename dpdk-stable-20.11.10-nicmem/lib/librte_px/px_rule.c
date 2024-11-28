@@ -1,5 +1,5 @@
 #include "px_rule.h"
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 int use_rss_hash(struct px_pattern *patterns,
                  int nb_patterns)
 {
@@ -94,7 +94,7 @@ int use_rss_hash(struct px_pattern *patterns,
 
     return 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 int pattern_to_hdr_size(struct px_pattern *pattern)
 {
     int type = pattern->type;
@@ -138,7 +138,7 @@ int pattern_to_hdr_size(struct px_pattern *pattern)
 
     return -1;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 int patterns_to_mask_offset(struct px_pattern *patterns,
                             int nb_patterns)
 {
@@ -247,7 +247,7 @@ int patterns_to_mask_offset(struct px_pattern *patterns,
 
     return -1;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 int patterns_to_types(struct px_pattern *patterns,
                       int nb_patterns,
                       struct px_pattern_types *types)
@@ -327,7 +327,7 @@ int patterns_to_types(struct px_pattern *patterns,
 
     return 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 int patterns_l3_type(struct px_pattern *patterns,
                      int nb_patterns)
 {
@@ -354,7 +354,7 @@ int patterns_l3_type(struct px_pattern *patterns,
 
     return RTE_FLOW_ITEM_TYPE_VOID;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 struct px_mask_vec *
 patterns_to_vec(struct px_pattern *patterns,
                 uint16_t nb_patterns,
@@ -456,7 +456,7 @@ Exit:
 
     return vec;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 int decode_pattern_rule(struct decoded_pattern *rule,
                         struct px_pattern *patterns,
                         uint16_t nb_patterns)
@@ -476,7 +476,7 @@ int decode_pattern_rule(struct decoded_pattern *rule,
 
     return 0;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 int decode_action_rule(struct decoded_action *rule,
                        struct px_action *actions,
                        uint16_t nb_actions)

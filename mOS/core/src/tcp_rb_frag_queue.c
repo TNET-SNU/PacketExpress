@@ -29,7 +29,7 @@
 typedef uint32_t index_type;
 typedef int32_t signed_index_type;
 #endif
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 struct rb_frag_queue
 {
 	index_type _capacity;
@@ -44,19 +44,19 @@ NextIndex(rb_frag_queue_t rb_fragq, index_type i)
 {
 	return (i != rb_fragq->_capacity ? i + 1: 0);
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline index_type 
 PrevIndex(rb_frag_queue_t rb_fragq, index_type i)
 {
 	return (i != 0 ? i - 1: rb_fragq->_capacity);
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline void 
 RBFragMemoryBarrier(struct fragment_ctx * volatile frag, volatile index_type index)
 {
 	__asm__ volatile("" : : "m" (frag), "m" (index));
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 rb_frag_queue_t 
 CreateRBFragQueue(int capacity)
 {
@@ -78,7 +78,7 @@ CreateRBFragQueue(int capacity)
 
 	return rb_fragq;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 void 
 DestroyRBFragQueue(rb_frag_queue_t rb_fragq)
 {
@@ -92,7 +92,7 @@ DestroyRBFragQueue(rb_frag_queue_t rb_fragq)
 
 	free(rb_fragq);
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 int 
 RBFragEnqueue(rb_frag_queue_t rb_fragq, struct fragment_ctx *frag)
 {
@@ -110,7 +110,7 @@ RBFragEnqueue(rb_frag_queue_t rb_fragq, struct fragment_ctx *frag)
 	TRACE_ERROR("Exceed capacity of frag queue!\n");
 	return -1;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 struct fragment_ctx *
 RBFragDequeue(rb_frag_queue_t rb_fragq)
 {
@@ -128,4 +128,4 @@ RBFragDequeue(rb_frag_queue_t rb_fragq)
 
 	return NULL;
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/

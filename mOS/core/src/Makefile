@@ -50,7 +50,7 @@ endif
 PKGCONF = pkg-config
 DPDK_CFLAGS = $(shell $(PKGCONF) --cflags libdpdk)
 DPDK_LDFLAGS += $(shell $(PKGCONF) --libs libdpdk)
-INC += $(DPDK_CFLAGS) -DENABLE_DPDK
+INC += $(DPDK_CFLAGS)
 LDFLAGS += $(DPDK_LDFLAGS)
 LIBS += -export-dynamic
 
@@ -108,8 +108,8 @@ CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
 ################################################################################
 
 # To use nicmem, make sure to use DPDK version 20.11
-# CFLAGS += -D NICMEM=0
-CFLAGS += -D NICMEM=1
+CFLAGS += -D NICMEM=0
+# CFLAGS += -D NICMEM=1
 
 ################################################################################
 

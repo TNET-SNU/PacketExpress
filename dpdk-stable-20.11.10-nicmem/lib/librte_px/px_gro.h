@@ -4,6 +4,7 @@
 #include "px_common.h"
 #include "px_link.h"
 #include "px_rule.h"
+#include "px_latent.h"
 #include "px_ring.h"
 #include "px_stat.h"
 #include "px_mss.h"
@@ -27,7 +28,7 @@ extern "C"
 #define IP_VERSION_IHL 0x45
 #define NB_CLONE_MBUF ((1 << 15) - 1)
 
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 #define old 0
 #if old
 /* Header fields representing a TCP/IPv4 flow */
@@ -166,7 +167,7 @@ struct px_ctx
 
 	int do_link;
 };
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 
 struct rte_eth_conf
 px_eth_conf(uint16_t port_id,
@@ -264,7 +265,7 @@ unmark_decaped(struct rte_mbuf *pkt)
 {
 	pkt->ol_flags &= ~(IND_ATTACHED_MBUF << 1);
 }
-/*---------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 
 #ifdef __cplusplus
 }

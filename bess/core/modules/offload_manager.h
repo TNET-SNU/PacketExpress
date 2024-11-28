@@ -30,19 +30,6 @@ private:
   int src_port_id = -1;
   int dst_port_id = -1;
   int proto_id = -1;
-
-  int action_id = -1;
-  int tout_sip_id = -1;
-  int tout_dip_id = -1;
-  // int tout_uport_id = -1; // fixed as RTE_GTPU_UDP_PORT
-  int teid_id = -1;
-  int qfi_id = -1;
-  int qer_id_id = -1;
-  int ctr_id_id = -1;
-
-  int port_id_id = -1;
-
-  struct hp_ctx *hctx_;
 };
 /*----------------------------------------------------------------------------------*/
 #endif // BESS_MODULES_OFFLOAD_MANAGER_H_

@@ -157,15 +157,15 @@ CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=
 ################################################################################
 
 # To use nicmem, make sure to use DPDK version 20.11
-# CXXFLAGS += -D NICMEM=0
-CXXFLAGS += -D NICMEM=1
+CXXFLAGS += -D NICMEM=0
+# CXXFLAGS += -D NICMEM=1
 
 ################################################################################
 
 # Choose one of below
 
 # To use hairpin offload, make sure to use DPDK version 22.11
-# CXXFLAGS += -D HAIRPIN_OFFLOAD=1 -D NUM_HAIRPIN_Q=1
+CXXFLAGS += -D HAIRPIN_OFFLOAD=1 -D NUM_HAIRPIN_Q=1
 # (not supported yet) if want to use rte_flow_async API, use below
 # CXXFLAGS += -D RTE_FLOW_ASYNC_API=1 -D NUM_HAIRPIN_Q=1
 
@@ -232,6 +232,8 @@ else ifdef DEBUG
 else
   CXXFLAGS += -O3 -DNDEBUG
 endif
+
+# CXXFLAGS += -O0
 
 # Unless we explicitly specify a default goal, the first target in the
 # included .mk file below will become the default goal by surprise.
