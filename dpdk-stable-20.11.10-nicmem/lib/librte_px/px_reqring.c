@@ -105,9 +105,14 @@ uint16_t ht_hash(struct ri_node *node)
 /*----------------------------------------------------------------------------*/
 int ht_is_same_pattern(struct ri_node *node1, struct ri_node *node2)
 {
+    if (*get_ip_protoid(node1->pkt) != *get_ip_protoid(node2->pkt))
+    {
+        return 0;
+    }
+
     return !memcmp(&node1->key,
                    &node2->key,
-                   sizeof(struct auto_pattern));
+                   sizeof(struct four_tuple));
 }
 /*----------------------------------------------------------------------------*/
 int ht_is_same_action(struct ri_node *node1, struct ri_node *node2)
@@ -231,6 +236,9 @@ int req_ring_put(int core_id, int queue_id, struct request *req)
     {
         rr->tail -= rr->size;
     }
+    // printf("req_ring_put, core_id: %d, queue_id: %d\n"
+    //        "rr: %p, head: %d, tail: %d\n",
+    //        core_id, queue_id, rr, rr->head, rr->tail);
 
     return 0;
 }
@@ -240,6 +248,13 @@ req_ring_get(int core_id, int queue_id)
 {
     struct rule_manager *rm = &g_rule_manager[core_id];
     struct req_ring *rr = &rm->request_ring[queue_id];
+
+    // if (queue_id == 1)
+    // {
+    //     printf("req_ring_get, core_id: %d, queue_id: %d\n"
+    //            "rr: %p, head: %d, tail: %d\n",
+    //            core_id, queue_id, rr, rr->head, rr->tail);
+    // }
 
     /* check ring has new request */
     if (rr->head == rr->tail)

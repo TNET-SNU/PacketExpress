@@ -8,12 +8,6 @@
 /* for endian functions */
 #include <arpa/inet.h>
 /*----------------------------------------------------------------------------*/
-int 
-GetNumCPUs() 
-{
-	return sysconf(_SC_NPROCESSORS_ONLN);
-}
-/*----------------------------------------------------------------------------*/
 CommandResponse OffloadManager::Init(const bess::pb::EmptyArg &) {
 
   /* set metadata offsets required in this module */
@@ -28,10 +22,10 @@ CommandResponse OffloadManager::Init(const bess::pb::EmptyArg &) {
   DLOG(INFO) << "src_port_id: " << src_port_id << std::endl;
   dst_port_id = AddMetadataAttr("dst_port", sizeof(uint16_t), AccessMode::kRead);
   DLOG(INFO) << "dst_port_id: " << dst_port_id << std::endl;
-  proto_id = AddMetadataAttr("ip_proto", sizeof(uint8_t), AccessMode::kRead);
-  DLOG(INFO) << "proto_id: " << proto_id << std::endl;
 
-  if (hp_context_init(GetNumCPUs() - 1, PER_CORE_HOST_CACHE_SIZE, 10) < 0)
+  if (hp_context_init(get_num_cpus() - 1,
+                      PER_CORE_HOST_CACHE_SIZE,
+                      PER_PORT_NIC_CACHE_SIZE) < 0)
     return CommandFailure(ENOMEM, "offload_context_init() failed, errno=%d", errno);
 
   return CommandSuccess();
@@ -42,30 +36,30 @@ void OffloadManager::DeInit() {
 }
 /*----------------------------------------------------------------------------*/
 void OffloadManager::ProcessBatch(Context *ctx, bess::PacketBatch *batch) {
-  int core_id = ctx->wid;
-  bess::Packet *p;
-  uint8_t proto;
-
   for (int i = 0; i < batch->cnt(); i++) {
-    p = batch->pkts()[i];
-    proto = get_attr<uint8_t>(this, proto_id, p);
-    
-    /* we only handle TCP/UDP packets */
-    if ((proto != IPPROTO_TCP) && (proto != IPPROTO_UDP))
-      continue;
+    bess::Packet *p = batch->pkts()[i];
 
     struct ri_node node;
-    node.key = (struct auto_pattern) {
-      .src_ip = ntohl(get_attr<uint32_t>(this, src_ip_id, p)),
-      .dst_ip = ntohl(get_attr<uint32_t>(this, dst_ip_id, p)),
-      .src_port = ntohs(get_attr<uint16_t>(this, src_port_id, p)),
-      .dst_port = ntohs(get_attr<uint16_t>(this, dst_port_id, p)),
-      .proto = proto
+    node.key = (struct four_tuple) {
+      .src_ip = get_attr<uint32_t>(this, src_ip_id, p),
+      .dst_ip = get_attr<uint32_t>(this, dst_ip_id, p),
+      .src_port = get_attr<uint16_t>(this, src_port_id, p),
+      .dst_port = get_attr<uint16_t>(this, dst_port_id, p)
     };
     node.pkt = reinterpret_cast<rte_mbuf *>(p);
 
+    hexdump("backup 4 tuple",
+            (uint8_t *)get_4tuple_from_headroom(reinterpret_cast<rte_mbuf *>(p)),
+            sizeof(struct four_tuple));
+
     /* now create new rule */
-    if (hp_create_rule(core_id, &node) < 0)
+    if ((node.key.src_port + node.key.dst_port) % 5 < 5) // offload 100% of flows
+    // if ((node.key.src_port + node.key.dst_port) % 5 < 4) // offload 80% of flows
+    // if ((node.key.src_port + node.key.dst_port) % 5 < 3) // offload 60% of flows
+    // if ((node.key.src_port + node.key.dst_port) % 5 < 2) // offload 40% of flows
+    // if ((node.key.src_port + node.key.dst_port) % 5 < 1) // offload 20% of flows
+    // if ((node.key.src_port + node.key.dst_port) % 5 < 0) // offload 0% of flows
+    if (hp_create_rule(ctx->wid, &node) < 0)
       break;
   }
 

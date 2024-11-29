@@ -123,6 +123,12 @@ busy_wait_for(unsigned int nsecs)
     } while (time < nsecs); // Loop until it arrives.
 }
 /*----------------------------------------------------------------------------*/
+static inline int
+get_num_cpus(void)
+{
+	return sysconf(_SC_NPROCESSORS_ONLN);
+}
+/*----------------------------------------------------------------------------*/
 static inline struct rte_mbuf *
 get_firstseg_clone(struct rte_mbuf *pkt)
 {

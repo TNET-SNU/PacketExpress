@@ -1,6 +1,6 @@
 #include "px_flow.h"
 /* fast-path to hp manager */
-struct hp_manager *g_hpm[RTE_MAX_ETHPORTS] = {NULL};
+struct px_hairpin_ctx *g_hp_ctx[RTE_MAX_ETHPORTS] = {NULL};
 /*----------------------------------------------------------------------------*/
 /* ToDo: Make an API for receiving destination MAC information */
 static struct px_arp_entry g_arp_table[] = {
@@ -14,18 +14,18 @@ static struct px_arp_entry g_arp_table[] = {
     {"10.4.95.2", "58:a2:e1:a7:aa:86"}  // stream8
 };
 /*----------------------------------------------------------------------------*/
-int hpm_init(uint16_t port_id, struct hp_manager *hpm)
+int hp_ctx_init(uint16_t port_id, struct px_hairpin_ctx *hp_ctx)
 {
     /* make a fast path to hp manager */
-    g_hpm[port_id] = hpm;
+    g_hp_ctx[port_id] = hp_ctx;
 
     /* initialize ARP table */
-    if (!hpm->actx)
+    if (!hp_ctx->actx)
     {
-        hpm->actx =
+        hp_ctx->actx =
             initialize_arp_table(g_arp_table,
                                  sizeof(g_arp_table) / sizeof(g_arp_table[0]));
-        if (!hpm->actx)
+        if (!hp_ctx->actx)
         {
             return -1;
         }
@@ -35,9 +35,19 @@ int hpm_init(uint16_t port_id, struct hp_manager *hpm)
 }
 /*----------------------------------------------------------------------------*/
 struct rte_flow *
-px_create_flow_auto(uint16_t port_id, struct auto_pattern *key)
+px_create_flow_static(uint16_t port_id,
+                      const struct rte_flow_attr *attr,
+                      const struct rte_flow_item pattern[],
+                      const struct rte_flow_action actions[],
+                      struct rte_flow_error *error)
 {
-    struct hp_manager *hpm = g_hpm[port_id];
+    return rte_flow_create(port_id, attr, pattern, actions, error);
+}
+/*----------------------------------------------------------------------------*/
+struct rte_flow *
+px_create_flow_auto(uint16_t port_id, struct four_tuple *key, struct rte_mbuf *pkt)
+{
+    struct px_hairpin_ctx *hp_ctx = g_hp_ctx[port_id];
     struct rte_flow *flow = NULL;
     struct rte_flow_error error;
     /* Holds the flow attributes. */
@@ -71,7 +81,7 @@ px_create_flow_auto(uint16_t port_id, struct auto_pattern *key)
     patterns[1].mask = &ipv4_mask;
 
     /* below is used for prevent offloading to measure dynamic rule insertion throughput */
-    // struct auto_pattern temp_key = *key;
+    // struct four_tuple temp_key = *key;
     // temp_key.src_ip = ntohl(get_current_cached_size(port_id) + 1);
     // temp_key.dst_ip = ntohl(get_current_cached_size(port_id) + 1);
     // key = &temp_key;
@@ -85,11 +95,11 @@ px_create_flow_auto(uint16_t port_id, struct auto_pattern *key)
     {
         ipv4_mask.hdr.dst_addr = UINT32_MAX;
     }
-    ipv4_spec.hdr.src_addr = RTE_BE32(key->src_ip);
-    ipv4_spec.hdr.dst_addr = RTE_BE32(key->dst_ip);
+    ipv4_spec.hdr.src_addr = key->src_ip;
+    ipv4_spec.hdr.dst_addr = key->dst_ip;
 
     /* TCP pattern */
-    if (key->proto == IPPROTO_TCP)
+    if (*get_ip_protoid(pkt) == IPPROTO_TCP)
     {
         if (key->src_port)
         {
@@ -99,15 +109,15 @@ px_create_flow_auto(uint16_t port_id, struct auto_pattern *key)
         {
             tcp_mask.hdr.dst_port = UINT16_MAX;
         }
-        tcp_spec.hdr.src_port = RTE_BE16(key->src_port);
-        tcp_spec.hdr.dst_port = RTE_BE16(key->dst_port);
+        tcp_spec.hdr.src_port = key->src_port;
+        tcp_spec.hdr.dst_port = key->dst_port;
         patterns[2].type = RTE_FLOW_ITEM_TYPE_TCP;
         patterns[2].spec = &tcp_spec;
         patterns[2].last = NULL;
         patterns[2].mask = &tcp_mask;
     }
     /* UDP pattern */
-    else if (key->proto == IPPROTO_UDP)
+    else if (*get_ip_protoid(pkt) == IPPROTO_UDP)
     {
         if (key->src_port)
         {
@@ -117,8 +127,8 @@ px_create_flow_auto(uint16_t port_id, struct auto_pattern *key)
         {
             udp_mask.hdr.dst_port = UINT16_MAX;
         }
-        udp_spec.hdr.src_port = RTE_BE16(key->src_port);
-        udp_spec.hdr.dst_port = RTE_BE16(key->dst_port);
+        udp_spec.hdr.src_port = key->src_port;
+        udp_spec.hdr.dst_port = key->dst_port;
         patterns[2].type = RTE_FLOW_ITEM_TYPE_UDP;
         patterns[2].spec = &udp_spec;
         patterns[2].last = NULL;
@@ -132,7 +142,7 @@ px_create_flow_auto(uint16_t port_id, struct auto_pattern *key)
     modify_src_mac.operation = (enum rte_flow_modify_op)RTE_FLOW_MODIFY_SET;
     modify_src_mac.dst.field = RTE_FLOW_FIELD_MAC_SRC;
     modify_src_mac.src.field = RTE_FLOW_FIELD_POINTER;
-    modify_src_mac.src.pvalue = &hpm->mac;
+    modify_src_mac.src.pvalue = &hp_ctx->mac;
     modify_src_mac.width = RTE_ETHER_ADDR_LEN * 8;
 
     /* make dst MAC action */
@@ -140,7 +150,7 @@ px_create_flow_auto(uint16_t port_id, struct auto_pattern *key)
     modify_dst_mac.operation = (enum rte_flow_modify_op)RTE_FLOW_MODIFY_SET;
     modify_dst_mac.dst.field = RTE_FLOW_FIELD_MAC_DST;
     modify_dst_mac.src.field = RTE_FLOW_FIELD_POINTER;
-    modify_dst_mac.src.pvalue = find_mac_in_arp(hpm->actx, key->dst_ip)->addr_bytes;
+    modify_dst_mac.src.pvalue = find_mac_in_arp(hp_ctx->actx, key->dst_ip)->addr_bytes;
     modify_dst_mac.width = RTE_ETHER_ADDR_LEN * 8;
 
     /* make hairpin RSS action */
@@ -148,10 +158,10 @@ px_create_flow_auto(uint16_t port_id, struct auto_pattern *key)
     rss_hairpin.func = RTE_ETH_HASH_FUNCTION_DEFAULT;
     rss_hairpin.level = 0;
     rss_hairpin.types = RTE_ETH_RSS_TCP | RTE_ETH_RSS_UDP | RTE_ETH_RSS_IP;
-    rss_hairpin.key_len = hpm->hp_rss_key_len;
-    rss_hairpin.queue_num = hpm->hp_num_rxq;
-    rss_hairpin.key = hpm->hp_rss_key;
-    rss_hairpin.queue = hpm->hp_rss_queues;
+    rss_hairpin.key_len = hp_ctx->hp_rss_key_len;
+    rss_hairpin.queue_num = hp_ctx->hp_num_rxq;
+    rss_hairpin.key = hp_ctx->hp_rss_key;
+    rss_hairpin.queue = hp_ctx->hp_rss_queues;
 
     struct rte_flow_action actions[] = {
         /* modify src MAC */
@@ -164,35 +174,43 @@ px_create_flow_auto(uint16_t port_id, struct auto_pattern *key)
             .type = RTE_FLOW_ACTION_TYPE_MODIFY_FIELD,
             .conf = &modify_dst_mac},
         {.type = RTE_FLOW_ACTION_TYPE_COUNT,
-         .conf = &hpm->count},
+         .conf = &hp_ctx->count},
         /* deliver to hairpin queue RSS */
         {
             .type = RTE_FLOW_ACTION_TYPE_RSS,
-            .conf = &hpm->rss_hairpin,
+            .conf = &hp_ctx->rss_hairpin,
         },
         {.type = RTE_FLOW_ACTION_TYPE_END}};
 #else
     /* make dst SRC action */
     struct rte_flow_action_set_mac modify_src_mac;
     memcpy(modify_src_mac.mac_addr,
-           hpm->mac.addr_bytes,
+           hp_ctx->mac.addr_bytes,
            sizeof(struct rte_ether_addr));
 
     /* make dst MAC action */
+#define MACSWAP 0
+#if MACSWAP
     struct rte_flow_action_set_mac modify_dst_mac;
     memcpy(modify_dst_mac.mac_addr,
-           find_mac_in_arp(hpm->actx, key->dst_ip)->addr_bytes,
+           rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *)->s_addr.addr_bytes,
            sizeof(struct rte_ether_addr));
+#else
+    struct rte_flow_action_set_mac modify_dst_mac;
+    memcpy(modify_dst_mac.mac_addr,
+           find_mac_in_arp(hp_ctx->actx, key->dst_ip)->addr_bytes,
+           sizeof(struct rte_ether_addr));
+#endif
 
     /* make hairpin RSS action */
     struct rte_flow_action_rss rss_hairpin;
     rss_hairpin.func = RTE_ETH_HASH_FUNCTION_DEFAULT;
     rss_hairpin.level = 0;
     rss_hairpin.types = ETH_RSS_TCP | ETH_RSS_UDP | ETH_RSS_IP;
-    rss_hairpin.key_len = hpm->hp_rss_key_len;
-    rss_hairpin.queue_num = hpm->hp_num_rxq;
-    rss_hairpin.key = hpm->hp_rss_key;
-    rss_hairpin.queue = hpm->hp_rss_queues;
+    rss_hairpin.key_len = hp_ctx->hp_rss_key_len;
+    rss_hairpin.queue_num = hp_ctx->hp_num_rxq;
+    rss_hairpin.key = hp_ctx->hp_rss_key;
+    rss_hairpin.queue = hp_ctx->hp_rss_queues;
 
     /* make actions */
     struct rte_flow_action actions[] = {
@@ -206,7 +224,7 @@ px_create_flow_auto(uint16_t port_id, struct auto_pattern *key)
             .type = RTE_FLOW_ACTION_TYPE_SET_MAC_DST,
             .conf = &modify_dst_mac},
         {.type = RTE_FLOW_ACTION_TYPE_COUNT,
-         .conf = &hpm->count},
+         .conf = &hp_ctx->count},
         /* deliver to hairpin queue RSS */
         {
             .type = RTE_FLOW_ACTION_TYPE_RSS,
@@ -276,8 +294,9 @@ int px_query_flow(uint16_t port_id,
 
             return -1;
         });
-    // printf("hits: %lu bytes: %lu\nreset: %d, hits_set: %d, bytes_set: %d\n",
-    //         query_result->hits, query_result->bytes,
+    // printf("hits: %lu bytes: %lu\n",
+    //         query_result->hits, query_result->bytes);
+    // printf("reset: %d, hits_set: %d, bytes_set: %d\n",
     //         query_result->reset, query_result->hits_set, query_result->bytes_set);
 
     return 0;

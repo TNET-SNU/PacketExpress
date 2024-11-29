@@ -148,15 +148,13 @@ static inline void
 update_mss(uint16_t *mss_ptr)
 {
     // printf("%d -> %lu\n", ntohs(*mss_ptr), DEFAULT_MSS);
-
+#if SEMANTIC_TEST
+    /* use below on semantic test */
     if (ntohs(*mss_ptr) >= LARGE_MSS)
     {
         /* no need to update */
         return;
     }
-
-#if SEMANTIC_TEST
-    /* use below on semantic test */
     *mss_ptr = htons(UINT16_MAX -
                      sizeof(struct rte_ipv4_hdr) -
                      sizeof(struct rte_tcp_hdr)); // use when semantic test

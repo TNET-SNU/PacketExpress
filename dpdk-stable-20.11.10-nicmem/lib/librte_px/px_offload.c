@@ -3,6 +3,7 @@
 /* below are handles for offload thread */
 static pthread_t g_offload_thread[RTE_MAX_ETHPORTS];
 static int g_thread_core_id = -1;
+static volatile int g_shutdown = 0;
 /*----------------------------------------------------------------------------*/
 int hp_create_rule(int core_id, struct ri_node *node)
 {
@@ -10,6 +11,16 @@ int hp_create_rule(int core_id, struct ri_node *node)
     struct ri_node *target, *new;
     struct request req;
     struct rte_mbuf *clone;
+
+    if ((node->key.src_port + node->key.dst_port) % 5 >= 5) // offload 100% of flows
+    // if ((node->key.src_port + node->key.dst_port) % 5 >= 4) // offload 80% of flows
+    // if ((node->key.src_port + node->key.dst_port) % 5 >= 3) // offload 60% of flows
+    // if ((node->key.src_port + node->key.dst_port) % 5 >= 2) // offload 40% of flows
+    // if ((node->key.src_port + node->key.dst_port) % 5 >= 1) // offload 20% of flows
+    // if ((node->key.src_port + node->key.dst_port) % 5 >= 0) // offload 0% of flows
+    {
+        return -1;
+    }
 
     /* try search on hash table or insert */
     target = ht_search(core_id, node);
@@ -219,7 +230,7 @@ px_flow_slave_main(void *arg)
         exit(EXIT_FAILURE);
     }
 
-    while (1)
+    while (!g_shutdown)
     {
         /* poll request queue for each worker core */
         for (core_id = 0; core_id < core_num; core_id++)
@@ -234,7 +245,11 @@ px_flow_slave_main(void *arg)
                 /* new request is on ring */
                 node = req->node;
                 /* make sure this thread is responsible for this request */
-                assert(port_id == node->pkt->port);
+                if (port_id != node->pkt->port)
+                {
+                    printf("port_id: %d, node->pkt->port: %d\n", port_id, node->pkt->port);
+                }
+                // assert(port_id == node->pkt->port);
                 switch (req->cmd)
                 {
                 case NOOP:
@@ -246,7 +261,7 @@ px_flow_slave_main(void *arg)
                     if (!node->flow)
                     {
                         /* create offload flow rule */
-                        node->flow = px_create_flow_auto(port_id, &node->key);
+                        node->flow = px_create_flow_auto(port_id, &node->key, node->pkt);
                         if (!node->flow)
                         {
                             /* do not consume the ring */
@@ -283,7 +298,7 @@ px_flow_slave_main(void *arg)
                         incr_temp_evicted_size(port_id);
                     }
                     /* create offload flow rule */
-                    node->flow = px_create_flow_auto(port_id, &node->key);
+                    node->flow = px_create_flow_auto(port_id, &node->key, node->pkt);
                     if (!node->flow)
                     {
                         /* do not consume the ring */
@@ -333,7 +348,7 @@ px_flow_slave_main(void *arg)
     return NULL;
 }
 /*----------------------------------------------------------------------------*/
-int px_hairpin_configure(struct hp_manager *hpm,
+int px_hairpin_configure(struct px_hairpin_ctx *hp_ctx,
                          uint16_t port_id,
                          uint16_t num_rxq,
                          uint16_t num_rxq_incr,
@@ -343,33 +358,33 @@ int px_hairpin_configure(struct hp_manager *hpm,
 {
     int ret;
 
-    ret = rte_eth_macaddr_get(port_id, &hpm->mac);
+    ret = rte_eth_macaddr_get(port_id, &hp_ctx->mac);
     if (ret)
     {
         return ret;
     }
-    hpm->port_id = port_id;
+    hp_ctx->port_id = port_id;
 #if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0)
-    hpm->num_template_table = 0;
+    hp_ctx->num_template_table = 0;
 #endif
-    hpm->hp_num_rxq = hp_num_rxq;
-    hpm->hp_num_txq = hp_num_txq;
+    hp_ctx->hp_num_rxq = hp_num_rxq;
+    hp_ctx->hp_num_txq = hp_num_txq;
     for (int i = 0; i < hp_num_rxq; i++)
     {
-        hpm->hp_rss_queues[i] = num_rxq * num_rxq_incr + i;
+        hp_ctx->hp_rss_queues[i] = num_rxq * num_rxq_incr + i;
     }
 
     /* use the same rss key as DMA RSS queus */
-    hpm->hp_rss_key = eth_conf->rx_adv_conf.rss_conf.rss_key;
-    hpm->hp_rss_key_len = eth_conf->rx_adv_conf.rss_conf.rss_key_len;
+    hp_ctx->hp_rss_key = eth_conf->rx_adv_conf.rss_conf.rss_key;
+    hp_ctx->hp_rss_key_len = eth_conf->rx_adv_conf.rss_conf.rss_key_len;
 
     /* make a fast path to hp manager */
-    hpm_init(port_id, hpm);
+    hp_ctx_init(port_id, hp_ctx);
 
     return 0;
 }
 /*----------------------------------------------------------------------------*/
-int px_hairpin_setup(struct hp_manager *hpm,
+int px_hairpin_setup(struct px_hairpin_ctx *hp_ctx,
                      uint16_t num_rxq,
                      uint16_t num_txq,
                      uint16_t nb_rx_desc,
@@ -377,7 +392,7 @@ int px_hairpin_setup(struct hp_manager *hpm,
 {
     struct rte_eth_hairpin_cap cap;
     struct rte_eth_hairpin_conf hairpin_conf;
-    uint16_t port_id = hpm->port_id;
+    uint16_t port_id = hp_ctx->port_id;
 
     if (rte_eth_dev_hairpin_capability_get(port_id, &cap) < 0)
     {
@@ -422,7 +437,7 @@ int px_hairpin_setup(struct hp_manager *hpm,
     hairpin_conf.use_locked_device_memory = 0;
     hairpin_conf.use_rte_memory = 0;
 #endif
-    for (int i = 0; i < hpm->hp_num_rxq; i++)
+    for (int i = 0; i < hp_ctx->hp_num_rxq; i++)
     {
         hairpin_conf.peers[0].port = port_id; /* one port hairpin, peer is self. */
         hairpin_conf.peers[0].queue = num_txq + i;
@@ -439,7 +454,7 @@ int px_hairpin_setup(struct hp_manager *hpm,
     hairpin_conf.use_locked_device_memory = 0;
     hairpin_conf.use_rte_memory = 1;
 #endif
-    for (int i = 0; i < hpm->hp_num_txq; i++)
+    for (int i = 0; i < hp_ctx->hp_num_txq; i++)
     {
         hairpin_conf.peers[0].port = port_id; /* one port hairpin, peer is self. */
         hairpin_conf.peers[0].queue = num_rxq + i;
@@ -451,9 +466,9 @@ int px_hairpin_setup(struct hp_manager *hpm,
             return -1;
         }
     }
-    hpm->num_rules = 20000;
-    hpm->num_rule_queue = 1;
-    hpm->rule_queue_size = 100;
+    hp_ctx->num_rules = 20000;
+    hp_ctx->num_rule_queue = 1;
+    hp_ctx->rule_queue_size = 100;
 
     return 0;
 }
@@ -469,20 +484,21 @@ int hp_context_init(int thread_core_id,
 
     if (g_thread_core_id != -1)
     {
-        printf("hp_context_init() is called more than once!\n");
-        return -1;
+        return 0;
     }
 
     g_thread_core_id = thread_core_id;
 
     /* create px_flow threads */
+    g_shutdown = 0;
     for (port_id = 0; port_id < port_num; port_id++)
     {
         arg[port_id] = port_id;
         if (pthread_create(&g_offload_thread[port_id], NULL,
                            px_flow_slave_main, &arg[port_id]) == -1)
         {
-            return -1;
+            perror("pthread_create() failed!");
+            exit(EXIT_FAILURE);
         }
 
         /* LRU queue for each port */
@@ -523,13 +539,15 @@ void hp_context_destroy(void)
     uint16_t port_num = rte_eth_dev_count_avail();
     int core_num = rte_lcore_count();
 
+    if (g_thread_core_id == -1)
+    {
+        return;
+    }
+
+    /* join px_flow threads */
+    g_shutdown = 1;
     for (port_id = 0; port_id < port_num; port_id++)
     {
-        if (pthread_cancel(g_offload_thread[port_id]) < 0)
-        {
-            perror("pthread_cancel() failed!");
-            exit(EXIT_FAILURE);
-        }
         if (pthread_join(g_offload_thread[port_id], NULL) < 0)
         {
             perror("pthread_join() failed!");
@@ -547,4 +565,6 @@ void hp_context_destroy(void)
             req_ring_destroy(core_id, port_id);
         }
     }
+
+    g_thread_core_id = -1;
 }

@@ -1407,6 +1407,7 @@ parse_packet(struct rte_mbuf *pkt,
     /* parse L4 */
     if (is_tcp(pkt))
     {
+        put_4tuple_to_headroom(pkt);
         ret = parse_for_tcp_gro(pkt, tcp_flags);
 
         /* use below when stop TCP GRO */
@@ -1414,6 +1415,7 @@ parse_packet(struct rte_mbuf *pkt,
     }
     else if (is_udp(pkt))
     {
+        put_4tuple_to_headroom(pkt);
         *tcp_flags = 0;
         ret = parse_for_udp_gro(pkt);
 
@@ -2090,6 +2092,11 @@ void px_deinit(uint16_t port_id,
     {
         rte_exit(EXIT_FAILURE, "Error joining stat thread\n");
     }
+
+    if (g_px_dev[port_id].hp_ctx.hp_num_rxq)
+    {
+        hp_context_destroy();
+    }
 }
 /*----------------------------------------------------------------------------*/
 int px_init(uint16_t port_id,
@@ -2218,6 +2225,18 @@ int px_init(uint16_t port_id,
     if (px_start_print_thread(stat_interval) < 0)
     {
         rte_exit(EXIT_FAILURE, "Error creating stat thread\n");
+    }
+
+    /* initiate hairpin context */
+    if (g_px_dev[port_id].hp_ctx.hp_num_rxq)
+    {
+        if (hp_context_init(get_num_cpus() - 1,
+                            PER_CORE_HOST_CACHE_SIZE,
+                            PER_PORT_NIC_CACHE_SIZE) < 0)
+        {
+            fprintf(stderr, "hp_context_init() failed\n");
+            return -1;
+        }
     }
 
     return 0;
@@ -2407,7 +2426,7 @@ int px_eth_dev_configure(uint16_t port_id,
     /* setup hairpin if necessary */
     if (hp_num_rxq && hp_num_txq)
     {
-        ret = px_hairpin_configure(&g_px_dev[port_id].hpm,
+        ret = px_hairpin_configure(&g_px_dev[port_id].hp_ctx,
                                    port_id,
                                    num_rxq,
                                    num_rxq_incr,
@@ -2495,12 +2514,13 @@ int px_eth_rx_queue_setup(uint16_t port_id,
     }
 
     /* setup hairpin */
-    if (g_px_dev[port_id].hpm.hp_num_rxq)
+    if (g_px_dev[port_id].hp_ctx.hp_num_rxq)
     {
-        ret = px_hairpin_setup(&g_px_dev[port_id].hpm,
+        ret = px_hairpin_setup(&g_px_dev[port_id].hp_ctx,
                                num_rxq * num_rxq_incr,
                                num_txq,
-                               nb_rx_desc / 2,
+                               nb_rx_desc,
+                            //    nb_rx_desc / 2,
                                nb_rx_desc);
         if (ret)
         {

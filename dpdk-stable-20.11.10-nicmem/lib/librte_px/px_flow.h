@@ -13,6 +13,7 @@ extern "C"
 
 #define MAX_PATTERNS_NUM 8
 #define MAX_ACTIONS_NUM 8
+#define MAX_TEMPLATE_TABLE_NUM 16
 
 enum cache_cmd
 {
@@ -27,16 +28,6 @@ enum cache_cmd
     STATIC_REPORT,
     STATIC_UPDATE,
     STATIC_DELETE,
-};
-
-struct auto_pattern
-{
-    /* 5-tuple */
-    uint32_t src_ip; // it is also used to check key is empty
-    uint32_t dst_ip;
-    uint16_t src_port;
-    uint16_t dst_port;
-    uint8_t proto;
 };
 
 struct count
@@ -58,7 +49,7 @@ struct static_rule
 /* structure rule info */
 struct ri_node
 {
-    struct auto_pattern key;
+    struct four_tuple key;
     struct rte_mbuf *pkt;
 
     /* for query */
@@ -72,7 +63,7 @@ struct ri_node
     struct ri_node *next;
 };
 /*----------------------------------------------------------------------------*/
-struct hp_manager
+struct px_hairpin_ctx
 {
     uint16_t port_id;
     struct rte_ether_addr mac;
@@ -103,12 +94,19 @@ struct hp_manager
     struct rte_flow_action_rss rss_hairpin;
 };
 /*----------------------------------------------------------------------------*/
-int hpm_init(uint16_t port_id, struct hp_manager *hpm);
+int hp_ctx_init(uint16_t port_id, struct px_hairpin_ctx *hp_ctx);
 /*----------------------------------------------------------------------------*/
 struct rte_flow *
-px_create_flow(uint16_t port_id, struct auto_pattern *key);
+px_create_flow_static(uint16_t port_id,
+                      const struct rte_flow_attr *attr,
+                      const struct rte_flow_item pattern[],
+                      const struct rte_flow_action actions[],
+                      struct rte_flow_error *error);
+/*----------------------------------------------------------------------------*/
 struct rte_flow *
-px_create_flow_auto(uint16_t port_id, struct auto_pattern *key);
+px_create_flow_auto(uint16_t port_id,
+                    struct four_tuple *key,
+                    struct rte_mbuf *pkt);
 /*----------------------------------------------------------------------------*/
 int px_destroy_flow(uint16_t port_id, struct rte_flow *flow);
 /*----------------------------------------------------------------------------*/

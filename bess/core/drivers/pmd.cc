@@ -800,6 +800,18 @@ int PMDPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
 #if !USE_CGRO && (USE_LRO || USE_DGRO)
   px_setup_tso_burst(reinterpret_cast<rte_mbuf **>(pkts), cnt);
 #endif
+  for (int i = 0; i < cnt; i++) {
+    bess::Packet *pkt = pkts[i];
+    struct ri_node node;
+    struct four_tuple *key = get_4tuple_from_headroom(reinterpret_cast<rte_mbuf *>(pkt));
+    if (!key)
+      continue;
+    node.key = *key;
+    node.pkt = reinterpret_cast<rte_mbuf *>(pkt);
+    if (hp_create_rule(rte_lcore_id(), &node) < 0)
+      continue;
+  }
+
   int sent = rte_eth_tx_burst(dpdk_port_id_, qid,
                               reinterpret_cast<rte_mbuf **>(pkts), cnt);
   auto &stats = queue_stats[PACKET_DIR_OUT][qid];

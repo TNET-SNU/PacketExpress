@@ -10,7 +10,7 @@ ip_str_to_bin(const char *ip_str,
         printf("Invalid IP format: %s\n", ip_str);
         return -1;
     }
-    *ip = ntohl(addr.s_addr);
+    *ip = addr.s_addr;
 
     return 0;
 }

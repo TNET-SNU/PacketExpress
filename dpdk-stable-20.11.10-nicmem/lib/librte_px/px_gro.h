@@ -12,6 +12,7 @@
 #include "px_delay.h"
 #include "px_flow.h"
 #include "px_offload.h"
+#include "px_4tuple.h"
 #include "rte_gro.h"
 
 #ifdef __cplusplus
@@ -103,7 +104,7 @@ struct px_dev
 	struct px_nicmem_ctx nm_ctx;
 
 	/* per-port hairpin manager */
-	struct hp_manager hpm;
+	struct px_hairpin_ctx hp_ctx;
 
 	uint16_t nb_rx_desc[PX_MAX_QUEUES_PER_PORT];
 	uint16_t nb_tx_desc[PX_MAX_QUEUES_PER_PORT];
