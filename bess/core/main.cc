@@ -84,7 +84,7 @@ int main(int argc, char *argv[]) {
   }
   
   printf("\nDPDK_VERSION: %d.%d.%d.%d\n", RTE_VER_YEAR, RTE_VER_MONTH, RTE_VER_MINOR, RTE_VER_RELEASE);
-#if HAIRPIN_OFFLOAD
+#if NUM_HAIRPIN_Q
 #if RTE_FLOW_ASYNC_API
   printf("Asynchronous hairpin offload is enabled\n");
 #else

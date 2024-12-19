@@ -19,9 +19,16 @@ public:
   }
 
   CommandResponse Init(const bess::pb::EmptyArg &);
+  void DeInit();
   void ProcessBatch(Context *ctx, bess::PacketBatch *batch) override;
   // returns the number of active UE sessions
   std::string GetDesc() const override;
+
+private:
+  int src_ip_id = -1;
+  int dst_ip_id = -1;
+  int src_port_id = -1;
+  int dst_port_id = -1;
 };
 /*----------------------------------------------------------------------------------*/
 #endif // BESS_MODULES_OFFLOAD_MANAGER_H_

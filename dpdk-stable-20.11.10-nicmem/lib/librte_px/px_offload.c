@@ -3,6 +3,7 @@
 /* below are handles for offload thread */
 static pthread_t g_offload_thread[RTE_MAX_ETHPORTS];
 static int g_thread_core_id = -1;
+static int g_num_cores = 0;
 static volatile int g_shutdown = 0;
 /*----------------------------------------------------------------------------*/
 int hp_create_rule(int core_id, struct ri_node *node)
@@ -11,16 +12,6 @@ int hp_create_rule(int core_id, struct ri_node *node)
     struct ri_node *target, *new;
     struct request req;
     struct rte_mbuf *clone;
-
-    if ((node->key.src_port + node->key.dst_port) % 5 >= 5) // offload 100% of flows
-    // if ((node->key.src_port + node->key.dst_port) % 5 >= 4) // offload 80% of flows
-    // if ((node->key.src_port + node->key.dst_port) % 5 >= 3) // offload 60% of flows
-    // if ((node->key.src_port + node->key.dst_port) % 5 >= 2) // offload 40% of flows
-    // if ((node->key.src_port + node->key.dst_port) % 5 >= 1) // offload 20% of flows
-    // if ((node->key.src_port + node->key.dst_port) % 5 >= 0) // offload 0% of flows
-    {
-        return -1;
-    }
 
     /* try search on hash table or insert */
     target = ht_search(core_id, node);
@@ -201,8 +192,7 @@ hp_host_hash_stat(void)
 {
     int core_id;
     size_t total_hash_occupied = 0;
-    int core_num = rte_lcore_count();
-    for (core_id = 0; core_id < core_num; core_id++)
+    for (core_id = 0; core_id < g_num_cores; core_id++)
     {
         total_hash_occupied += get_host_cached_size(core_id);
     }
@@ -214,7 +204,6 @@ static void *
 px_flow_slave_main(void *arg)
 {
     int port_id = *(int *)arg, core_id;
-    int core_num = rte_lcore_count();
     struct request *req;
     struct ri_node *node;
     cpu_set_t set;
@@ -233,7 +222,7 @@ px_flow_slave_main(void *arg)
     while (!g_shutdown)
     {
         /* poll request queue for each worker core */
-        for (core_id = 0; core_id < core_num; core_id++)
+        for (core_id = 0; core_id < g_num_cores; core_id++)
         {
             while ((req = req_ring_get(core_id, port_id)))
             {
@@ -480,7 +469,7 @@ int hp_context_init(int thread_core_id,
     int port_id, core_id;
     static int arg[RTE_MAX_ETHPORTS];
     uint16_t port_num = rte_eth_dev_count_avail();
-    int core_num = rte_lcore_count();
+    g_num_cores = 16;
 
     if (g_thread_core_id != -1)
     {
@@ -505,7 +494,7 @@ int hp_context_init(int thread_core_id,
         lru_queue_init(port_id, per_port_nic_cache_size);
     }
 
-    for (core_id = 0; core_id < core_num; core_id++)
+    for (core_id = 0; core_id < g_num_cores; core_id++)
     {
         /* initialize node pool for each core */
         if (node_pool_create(core_id, per_core_host_cache_size) < 0)
@@ -537,7 +526,6 @@ void hp_context_destroy(void)
     /* destroy offload threads */
     int port_id, core_id;
     uint16_t port_num = rte_eth_dev_count_avail();
-    int core_num = rte_lcore_count();
 
     if (g_thread_core_id == -1)
     {
@@ -556,7 +544,7 @@ void hp_context_destroy(void)
     }
 
     /* destroy hash table and request ring */
-    for (core_id = 0; core_id < core_num; core_id++)
+    for (core_id = 0; core_id < g_num_cores; core_id++)
     {
         ht_destroy(core_id);
         node_pool_destroy(core_id);

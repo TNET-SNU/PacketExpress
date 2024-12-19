@@ -592,13 +592,8 @@ dpdk_load_module_lower_half(void)
 #else
 									   0,
 #endif
-#if HAIRPIN_OFFLOAD
 									   NUM_HAIRPIN_Q,
 									   NUM_HAIRPIN_Q,
-#else
-									   0,
-									   0,
-#endif
 									   &port_conf);
 #else
 			ret = rte_eth_dev_configure(portid,

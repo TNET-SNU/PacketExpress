@@ -22,60 +22,6 @@ void bloom_destroy(uint8_t *filter)
     rte_free(filter);
 }
 /*----------------------------------------------------------------------------*/
-void bloom_insert(uint8_t *filter, uint32_t rss, struct four_tuple *key)
-{
-    uint16_t rss_l, rss_h, rss_x;
-    rss_l = rss;
-    if (filter[rss_l] == UINT8_MAX)
-    {
-        fprintf(stderr, "bloom_insert: overflow, rss_l: %d\n", rss_l);
-        return;
-    }
-    filter[rss_l]++;
-    // rss_h = rss >> 16;
-    rss_h = xor_hash((uint32_t *)key);
-    if (filter[rss_h] == UINT8_MAX)
-    {
-        fprintf(stderr, "bloom_insert: overflow, rss_h: %d\n", rss_h);
-        return;
-    }
-    filter[rss_h]++;
-    rss_x = rss_l ^ rss_h;
-    if (filter[rss_x] == UINT8_MAX)
-    {
-        fprintf(stderr, "bloom_insert: overflow, rss_x: %d\n", rss_x);
-        return;
-    }
-    filter[rss_x]++;
-}
-/*----------------------------------------------------------------------------*/
-void bloom_delete(uint8_t *filter, uint32_t rss, struct four_tuple *key)
-{
-    uint16_t rss_l, rss_h, rss_x;
-    rss_l = rss;
-    if (!filter[rss_l])
-    {
-        fprintf(stderr, "bloom_delete: no data, rss_l: %d\n", rss_l);
-        return;
-    }
-    filter[rss_l]--;
-    // rss_h = rss >> 16;
-    rss_h = xor_hash((uint32_t *)key);
-    if (!filter[rss_h])
-    {
-        fprintf(stderr, "bloom_delete: no data, rss_h: %d\n", rss_h);
-        return;
-    }
-    filter[rss_h]--;
-    rss_x = rss_l ^ rss_h;
-    if (!filter[rss_x])
-    {
-        fprintf(stderr, "bloom_delete: no data, rss_x: %d\n", rss_x);
-        return;
-    }
-    filter[rss_x]--;
-}
-/*----------------------------------------------------------------------------*/
 static void *
 periodic_cleanup(void *arg)
 {

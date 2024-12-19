@@ -4034,13 +4034,8 @@ int netif_port_start(struct netif_port *port)
 #else
                                0,
 #endif
-#if HAIRPIN_OFFLOAD
                                NUM_HAIRPIN_Q,
                                NUM_HAIRPIN_Q,
-#else
-                               0,
-                               0,
-#endif
                                &port->dev_conf);
 #else
     ret = rte_eth_dev_configure(port->id,

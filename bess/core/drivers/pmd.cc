@@ -389,7 +389,7 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
   if (arg.loopback()) {
     eth_conf.lpbk_mode = 1;
   }
-#if USE_CGRO || NICMEM
+#if (USE_CGRO || NICMEM || NUM_HAIRPIN_Q)
   ret = px_eth_dev_configure(ret_port_id,
                              num_rxq,
                              num_txq,
@@ -404,13 +404,8 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
 #else
                              0,
 #endif
-#if HAIRPIN_OFFLOAD
                              NUM_HAIRPIN_Q,
                              NUM_HAIRPIN_Q,
-#else
-                             0,
-                             0,
-#endif
                              &eth_conf);
 #else
   ret = rte_eth_dev_configure(ret_port_id,
@@ -454,7 +449,7 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
   }
 
   for (int i = 0; i < num_rxq; i++) {
-#if USE_CGRO || NICMEM
+#if (USE_CGRO || NICMEM || NUM_HAIRPIN_Q)
     ret = px_eth_rx_queue_setup(ret_port_id, i,
                                 queue_size[PACKET_DIR_INC],
                                 sid, &eth_rxconf,
@@ -610,6 +605,11 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
     if (px_add_rule(dpdk_port_id_, qid, patterns, 2, actions, 2) < 0)
       return CommandFailure(ENOMEM, "Pattern insertion failed");
   }
+#elif NUM_HAIRPIN_Q
+  if (hp_context_init(get_num_cpus() - 1, PER_CORE_HOST_CACHE_SIZE, PER_PORT_NIC_CACHE_SIZE) < 0)
+  {
+    return CommandFailure(ENOMEM, "hp_context_init failed");
+  }
 #endif
   if (rte_eth_dev_set_mtu(ret_port_id, 9978) < 0)
       return CommandFailure(ENOMEM, "rte_eth_dev_set_mtu failed");
@@ -668,6 +668,8 @@ void PMDPort::DeInit() {
 #if USE_CGRO
   for (int qid = 0; qid < num_queues[PACKET_DIR_INC]; qid++)
     px_deinit(dpdk_port_id_, qid);
+#else
+  hp_context_destroy();
 #endif
   rte_eth_dev_stop(dpdk_port_id_);
 
@@ -778,7 +780,7 @@ int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   uint16_t recv = px_eth_rx_burst(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), cnt);
 #else
   uint16_t recv = rte_eth_rx_burst(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), cnt);
-#if (USE_LRO || USE_DGRO)
+#if (USE_LRO || USE_DGRO || NUM_HAIRPIN_Q)
   px_parse_batch(reinterpret_cast<rte_mbuf **>(pkts), recv, !JUMBO_FRAME);
 #endif
 #if USE_DGRO
@@ -800,6 +802,7 @@ int PMDPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
 #if !USE_CGRO && (USE_LRO || USE_DGRO)
   px_setup_tso_burst(reinterpret_cast<rte_mbuf **>(pkts), cnt);
 #endif
+#if NUM_HAIRPIN_Q
   for (int i = 0; i < cnt; i++) {
     bess::Packet *pkt = pkts[i];
     struct ri_node node;
@@ -808,9 +811,16 @@ int PMDPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
       continue;
     node.key = *key;
     node.pkt = reinterpret_cast<rte_mbuf *>(pkt);
+    // if ((node.key.src_port + node.key.dst_port) % 5 < 5) // offload 100% of flows
+    // if ((node.key.src_port + node.key.dst_port) % 5 < 4) // offload 80% of flows
+    // if ((node.key.src_port + node.key.dst_port) % 5 < 3) // offload 60% of flows
+    // if ((node.key.src_port + node.key.dst_port) % 5 < 2) // offload 40% of flows
+    // if ((node.key.src_port + node.key.dst_port) % 5 < 1) // offload 20% of flows
+    if ((node.key.src_port + node.key.dst_port) % 5 < 0) // offload 0% of flows
     if (hp_create_rule(rte_lcore_id(), &node) < 0)
       continue;
   }
+#endif
 
   int sent = rte_eth_tx_burst(dpdk_port_id_, qid,
                               reinterpret_cast<rte_mbuf **>(pkts), cnt);

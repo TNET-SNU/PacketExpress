@@ -1691,8 +1691,12 @@ link_and_flush(struct px_ctx *pctx,
                 }
                 else
                 {
+#if SEMANTIC_TEST
+                    tso_segsz = (DEFAULT_MTU - cur_pkt->l3_len - cur_pkt->l4_len);
+#else
                     tso_segsz = (DEFAULT_MTU - cur_pkt->l3_len - cur_pkt->l4_len) *
                                 (TX_MTU / DEFAULT_MTU);
+#endif
                 }
                 if (g_px_dev[pctx->port_id].timeout_ns)
                 {
@@ -2381,7 +2385,10 @@ int px_eth_dev_configure(uint16_t port_id,
         return ret;
     }
     /* configure px_flow */
-    px_latent_rxq_configure(port_id, num_rxq, num_rxq_incr);
+    if (num_rxq_incr)
+    {
+        px_latent_rxq_configure(port_id, num_rxq, num_rxq_incr);
+    }
 
     /* make a clone pool for segmentation */
     socket_id = rte_eth_dev_socket_id(port_id);
@@ -2519,9 +2526,10 @@ int px_eth_rx_queue_setup(uint16_t port_id,
         ret = px_hairpin_setup(&g_px_dev[port_id].hp_ctx,
                                num_rxq * num_rxq_incr,
                                num_txq,
-                               nb_rx_desc,
-                            //    nb_rx_desc / 2,
-                               nb_rx_desc);
+                            //    nb_rx_desc,
+                            // //    nb_rx_desc / 2,
+                            //    nb_rx_desc);
+                               0, 0);
         if (ret)
         {
             return ret;
@@ -2692,7 +2700,7 @@ px_eth_rx_burst(uint16_t port_id,
         nb_pkts -= read_px_rx_ring;
     }
 
-    /* stage 2: receive if batch is not full */
+    /* stage 2: RX and GRO if batch has more rooms */
     if (nb_pkts)
     {
         read_orig_rx_ring = rx_and_px_gro(port_id, queue_id, rx_pkts, nb_pkts);
@@ -2705,41 +2713,46 @@ px_eth_rx_burst(uint16_t port_id,
     return read_px_rx_ring + read_orig_rx_ring;
 }
 /*----------------------------------------------------------------------------*/
-uint16_t
-px_eth_tx_burst(uint16_t port_id,
-                uint16_t queue_id,
-                struct rte_mbuf **tx_pkts,
-                uint16_t nb_pkts)
-{
-    struct px_ctx *pctx = &g_pctx[port_id][queue_id];
-    struct px_ring *tx_ring = &pctx->tx_ring;
-    struct px_rule *rule = TAILQ_FIRST(&pctx->rule_set.rules);
-    struct rte_mbuf *new_batch[512];
-    uint16_t sent_px_tx_ring = 0;
-    uint16_t sent_orig_tx_ring = 0;
+// uint16_t
+// px_eth_tx_burst(uint16_t port_id,
+//                 uint16_t queue_id,
+//                 struct rte_mbuf **tx_pkts,
+//                 uint16_t nb_pkts)
+// {
+//     struct px_ctx *pctx = &g_pctx[port_id][queue_id];
+//     struct px_ring *tx_ring = &pctx->tx_ring;
+//     struct px_rule *rule = TAILQ_FIRST(&pctx->rule_set.rules);
+//     struct rte_mbuf *new_batch[512];
+//     uint16_t sent_px_tx_ring = 0;
+//     uint16_t sent_orig_tx_ring = 0;
 
-    // px_ring_dequeue(tx_ring, tx_pkts, nb_pkts);
+//     /* stage 1: transmit packets in TX ring */
+//     if (tx_ring->)
 
-    // // /* stage 1: send packets in TX ring first */
-    // sent_px_tx_ring = px_ring_dequeue(tx_ring, )
+//     /* stage 2: GSO and TX */
 
-    // /* if linking is on, do unlink before TX */
-    // if (rule->dec_act.do_link)
-    // {
-    //     nb_pkts = px_unlink(tx_pkts, nb_pkts, NULL);
-    // }
+//     px_ring_dequeue(tx_ring, tx_pkts, nb_pkts);
 
-    /* ToDo: merge below two batch functions into one */
-    px_setup_tso_burst(tx_pkts, nb_pkts);
+//     /* stage 1: send packets in TX ring first */
+//     sent_px_tx_ring = px_ring_dequeue(tx_ring, );
 
-    nb_pkts = px_uso_burst(pctx, tx_pkts, nb_pkts, new_batch);
+//     /* if linking is on, do unlink before TX */
+//     if (rule->dec_act.do_link)
+//     {
+//         nb_pkts = px_unlink(tx_pkts, nb_pkts, NULL);
+//     }
 
-    sent_orig_tx_ring = rte_eth_tx_burst(port_id, queue_id, new_batch, nb_pkts);
+//     /* ToDo: merge below two batch functions into one */
+//     px_setup_tso_burst(tx_pkts, nb_pkts);
 
-    // sent_orig_tx_ring = rte_eth_tx_burst(port_id, queue_id, tx_pkts, nb_pkts);
+//     nb_pkts = px_uso_burst(pctx, tx_pkts, nb_pkts, new_batch);
 
-    return sent_orig_tx_ring;
-}
+//     sent_orig_tx_ring = rte_eth_tx_burst(port_id, queue_id, new_batch, nb_pkts);
+
+//     // sent_orig_tx_ring = rte_eth_tx_burst(port_id, queue_id, tx_pkts, nb_pkts);
+
+//     return sent_orig_tx_ring;
+// }
 /*----------------------------------------------------------------------------*/
 void px_pktmbuf_free(struct rte_mbuf *pkt)
 {

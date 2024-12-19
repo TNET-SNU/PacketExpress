@@ -63,11 +63,27 @@ struct flow_mss_entry
 };
 /*----------------------------------------------------------------------------*/
 static inline uint16_t
-xor_hash(uint32_t *data)
+xor_hash0(uint32_t rss, uint32_t *data)
 {
+#ifdef SYMMETRIC_RSS
+    return rss;
+#else
+    (void)rss;
+    uint32_t temp = data[0] ^ data[1] ^ data[2];
+    return temp ^ (temp >> 16);
+#endif
+}
+/*----------------------------------------------------------------------------*/
+static inline uint16_t
+xor_hash1(uint32_t rss, uint32_t *data)
+{
+#if 0
+    return rss >> 16;
+#else
+    (void)rss;
     uint32_t temp = (data[0] ^ (data[1] << 3)) ^ data[2];
-
-    return (uint16_t)(temp ^ (data[2] >> 2));
+    return temp ^ (data[2] >> 2);
+#endif
 }
 /*----------------------------------------------------------------------------*/
 static inline int
@@ -75,15 +91,15 @@ bloom_check(uint8_t *filter,
             uint32_t rss,
             struct four_tuple *key)
 {
-    if (!filter[(uint16_t)rss])
+    uint16_t hash0 = xor_hash0(rss, (uint32_t *)key);
+    if (!filter[hash0])
     {
         /* no data */
         return 0;
     }
-    // uint16_t tmp = rss >> 16;
-    uint16_t tmp = xor_hash((uint32_t *)key);
-    if (!filter[tmp] ||
-        !filter[(uint16_t)rss ^ tmp])
+    uint16_t hash1 = xor_hash1(rss, (uint32_t *)key);
+    if (!filter[hash1] ||
+        !filter[hash0 ^ hash1])
     {
         /* no data */
         return 0;
@@ -91,7 +107,63 @@ bloom_check(uint8_t *filter,
 
     /* may exist */
     return 1;
-} 
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+bloom_insert(uint8_t *filter,
+             uint32_t rss,
+             struct four_tuple *key)
+{
+    uint16_t hash0 = xor_hash0(rss, (uint32_t *)key);
+    if (filter[hash0] == UINT8_MAX)
+    {
+        fprintf(stderr, "bloom_insert: overflow, hash0: %d\n", hash0);
+        return;
+    }
+    filter[hash0]++;
+    uint16_t hash1 = xor_hash1(rss, (uint32_t *)key);
+    if (filter[hash1] == UINT8_MAX)
+    {
+        fprintf(stderr, "bloom_insert: overflow, hash1: %d\n", hash1);
+        return;
+    }
+    filter[hash1]++;
+    uint16_t hash2 = hash0 ^ hash1;
+    if (filter[hash2] == UINT8_MAX)
+    {
+        fprintf(stderr, "bloom_insert: overflow, hash2: %d\n", hash2);
+        return;
+    }
+    filter[hash2]++;
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+bloom_delete(uint8_t *filter,
+             uint32_t rss,
+             struct four_tuple *key)
+{
+    uint16_t hash0 = xor_hash0(rss, (uint32_t *)key);
+    if (!filter[hash0])
+    {
+        fprintf(stderr, "bloom_delete: no data, hash0: %d\n", hash0);
+        return;
+    }
+    filter[hash0]--;
+    uint16_t hash1 = xor_hash1(rss, (uint32_t *)key);
+    if (!filter[hash1])
+    {
+        fprintf(stderr, "bloom_delete: no data, hash1: %d\n", hash1);
+        return;
+    }
+    filter[hash1]--;
+    uint16_t hash2 = hash0 ^ hash1;
+    if (!filter[hash2])
+    {
+        fprintf(stderr, "bloom_delete: no data, hash2: %d\n", hash2);
+        return;
+    }
+    filter[hash2]--;
+}
 /*----------------------------------------------------------------------------*/
 static inline uint16_t *
 get_tcp_mss(struct rte_mbuf *pkt)
@@ -147,14 +219,14 @@ get_tcp_mss(struct rte_mbuf *pkt)
 static inline void
 update_mss(uint16_t *mss_ptr)
 {
-    // printf("%d -> %lu\n", ntohs(*mss_ptr), DEFAULT_MSS);
+    printf("%d -> ", ntohs(*mss_ptr));
 #if SEMANTIC_TEST
     /* use below on semantic test */
-    if (ntohs(*mss_ptr) >= LARGE_MSS)
-    {
-        /* no need to update */
-        return;
-    }
+    // if (ntohs(*mss_ptr) >= LARGE_MSS)
+    // {
+    //     /* no need to update */
+    //     return;
+    // }
     *mss_ptr = htons(UINT16_MAX -
                      sizeof(struct rte_ipv4_hdr) -
                      sizeof(struct rte_tcp_hdr)); // use when semantic test
@@ -162,7 +234,8 @@ update_mss(uint16_t *mss_ptr)
     /* use below on performance test */
     *mss_ptr = htons(DEFAULT_MSS);
 #endif
-}
+    printf("%d\n", ntohs(*mss_ptr));
+} 
 /*----------------------------------------------------------------------------*/
 static inline void
 flush_timeout(struct px_mss_ctx *ctx)
@@ -219,10 +292,6 @@ search_mss_entry(struct px_mss_ctx *ctx,
 uint8_t *bloom_init(void);
 /*----------------------------------------------------------------------------*/
 void bloom_destroy(uint8_t *filter);
-/*----------------------------------------------------------------------------*/
-void bloom_insert(uint8_t *filter, uint32_t rss, struct four_tuple *key);
-/*----------------------------------------------------------------------------*/
-void bloom_delete(uint8_t *filter, uint32_t rss, struct four_tuple *key);
 /*----------------------------------------------------------------------------*/
 struct px_mss_ctx *init_mss_ctx(uint16_t core_id, uint32_t num_entry);
 /*----------------------------------------------------------------------------*/
