@@ -168,6 +168,12 @@ get_rss_hash(struct rte_mbuf *pkt)
     return pkt->hash.rss >> 5;
 }
 /*----------------------------------------------------------------------------*/
+static inline struct rte_ether_addr *
+get_macs(struct rte_mbuf *pkt)
+{
+    return rte_pktmbuf_mtod(pkt, struct rte_ether_addr *);
+}
+/*----------------------------------------------------------------------------*/
 static inline uint16_t *
 get_eth_type(struct rte_mbuf *pkt)
 {

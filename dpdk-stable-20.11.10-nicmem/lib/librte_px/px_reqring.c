@@ -117,9 +117,21 @@ int ht_is_same_pattern(struct ri_node *node1, struct ri_node *node2)
 /*----------------------------------------------------------------------------*/
 int ht_is_same_action(struct ri_node *node1, struct ri_node *node2)
 {
-    return !memcmp(get_four_tuple(node1->pkt),
-                   get_four_tuple(node2->pkt),
-                   sizeof(struct four_tuple));
+    if (memcmp(get_four_tuple(node1->pkt),
+               get_four_tuple(node2->pkt),
+               sizeof(struct four_tuple)))
+    {
+        return 0;
+    }
+
+    if (memcmp(get_macs(node1->pkt),
+               get_macs(node2->pkt),
+               2 * sizeof(struct rte_ether_addr)))
+    {
+        return 0;
+    }
+
+    return 1;
 }
 /*----------------------------------------------------------------------------*/
 static inline struct ht_element *

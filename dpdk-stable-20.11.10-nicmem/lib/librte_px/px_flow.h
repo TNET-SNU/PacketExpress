@@ -68,21 +68,8 @@ struct px_hairpin_ctx
     uint16_t port_id;
     struct rte_ether_addr mac;
 
-    /* ARP table context */
-    struct px_arp_ctx *actx;
-
-    /* below are for hairpin management */
-    uint8_t *hp_rss_key;
-    int hp_rss_key_len;
-    uint16_t hp_rss_queues[16];
-    uint16_t hp_num_rxq;
-    uint16_t hp_num_txq;
-
     /* below are for e-switch offloading using rte_flow */
-    uint32_t num_rules;
-    int num_rule_queue;
-    int rule_queue_size;
-#if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0)
+#if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0) && RTE_FLOW_ASYNC_API
     int table_id;
     int num_template_table;
     struct rte_flow *offload_flow_main[1 << 16];
@@ -90,8 +77,13 @@ struct px_hairpin_ctx
     struct rte_flow_template_table *template_table_offload[MAX_TEMPLATE_TABLE_NUM];
 #endif
     /* below are action rules which are shared by many flows */
-    struct rte_flow_action_count count;
+    struct rte_flow_action_count count_hairpin;
     struct rte_flow_action_rss rss_hairpin;
+
+    /* below are for hairpin management */
+    uint16_t hp_num_rxq;
+    uint16_t hp_num_txq;
+    uint16_t hp_rss_queues[16];
 };
 /*----------------------------------------------------------------------------*/
 int hp_ctx_init(uint16_t port_id, struct px_hairpin_ctx *hp_ctx);

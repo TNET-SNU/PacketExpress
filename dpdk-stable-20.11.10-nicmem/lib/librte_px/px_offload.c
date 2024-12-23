@@ -364,8 +364,16 @@ int px_hairpin_configure(struct px_hairpin_ctx *hp_ctx,
     }
 
     /* use the same rss key as DMA RSS queus */
-    hp_ctx->hp_rss_key = eth_conf->rx_adv_conf.rss_conf.rss_key;
-    hp_ctx->hp_rss_key_len = eth_conf->rx_adv_conf.rss_conf.rss_key_len;
+    hp_ctx->rss_hairpin.func = RTE_ETH_HASH_FUNCTION_DEFAULT;
+    hp_ctx->rss_hairpin.level = 0;
+    hp_ctx->rss_hairpin.types = ETH_RSS_TCP | ETH_RSS_UDP | ETH_RSS_IP;
+    hp_ctx->rss_hairpin.key_len = eth_conf->rx_adv_conf.rss_conf.rss_key_len;
+    hp_ctx->rss_hairpin.queue_num = hp_ctx->hp_num_rxq;
+    hp_ctx->rss_hairpin.key = eth_conf->rx_adv_conf.rss_conf.rss_key;
+    hp_ctx->rss_hairpin.queue = hp_ctx->hp_rss_queues;
+
+    hp_ctx->count_hairpin.shared = 0;
+    hp_ctx->count_hairpin.id = 0;
 
     /* make a fast path to hp manager */
     hp_ctx_init(port_id, hp_ctx);
@@ -380,7 +388,7 @@ int px_hairpin_setup(struct px_hairpin_ctx *hp_ctx,
                      uint16_t nb_tx_desc)
 {
     struct rte_eth_hairpin_cap cap;
-    struct rte_eth_hairpin_conf hairpin_conf;
+    struct rte_eth_hairpin_conf hairpin_conf[2];
     uint16_t port_id = hp_ctx->port_id;
 
     if (rte_eth_dev_hairpin_capability_get(port_id, &cap) < 0)
@@ -404,17 +412,17 @@ int px_hairpin_setup(struct px_hairpin_ctx *hp_ctx,
 #else
     printf("\nmax_nb_desc: %d\n"
            "max_nb_queues: %d\n"
-           "max_rx_2_tx: %d\n"
-           "max_tx_2_rx: %d\n",
+           "[RX] max_rx_2_tx: %d\n"
+           "[TX] max_tx_2_rx: %d\n",
            cap.max_nb_desc,
            cap.max_nb_queues,
            cap.max_rx_2_tx,
            cap.max_tx_2_rx);
 #endif
 
-    hairpin_conf.peer_count = 1;
-    hairpin_conf.tx_explicit = 0;
-    hairpin_conf.manual_bind = 0;
+    hairpin_conf[0].peer_count = 1;
+    hairpin_conf[0].tx_explicit = 0;
+    hairpin_conf[0].manual_bind = 0;
     /*
      * when set below, check
      * HAIRPIN_DATA_BUFFER_LOCK=1
@@ -422,14 +430,14 @@ int px_hairpin_setup(struct px_hairpin_ctx *hp_ctx,
      * using mlxconfig
      */
 #if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0)
-    // hairpin_conf.use_locked_device_memory = 1;
-    hairpin_conf.use_locked_device_memory = 0;
-    hairpin_conf.use_rte_memory = 0;
+    hairpin_conf[0].use_locked_device_memory = 1; // 0
+    hairpin_conf[0].use_rte_memory = 0;
 #endif
     for (int i = 0; i < hp_ctx->hp_num_rxq; i++)
     {
-        hairpin_conf.peers[0].port = port_id; /* one port hairpin, peer is self. */
-        hairpin_conf.peers[0].queue = num_txq + i;
+        /* one port hairpin, peer is self. */
+        hairpin_conf[0].peers[0].port = port_id;
+        hairpin_conf[0].peers[0].queue = num_txq + i;
         if (rte_eth_rx_hairpin_queue_setup(port_id, num_rxq + i,
                                            nb_rx_desc,
                                            &hairpin_conf))
@@ -439,14 +447,18 @@ int px_hairpin_setup(struct px_hairpin_ctx *hp_ctx,
         }
     }
 
+    hairpin_conf[1].peer_count = 1;
+    hairpin_conf[1].tx_explicit = 0;
+    hairpin_conf[1].manual_bind = 0;
 #if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0)
-    hairpin_conf.use_locked_device_memory = 0;
-    hairpin_conf.use_rte_memory = 1;
+    hairpin_conf[1].use_locked_device_memory = 0;
+    hairpin_conf[1].use_rte_memory = 1;
 #endif
     for (int i = 0; i < hp_ctx->hp_num_txq; i++)
     {
-        hairpin_conf.peers[0].port = port_id; /* one port hairpin, peer is self. */
-        hairpin_conf.peers[0].queue = num_rxq + i;
+        /* one port hairpin, peer is self. */
+        hairpin_conf[1].peers[0].port = port_id;
+        hairpin_conf[1].peers[0].queue = num_rxq + i;
         if (rte_eth_tx_hairpin_queue_setup(port_id, num_txq + i,
                                            nb_tx_desc,
                                            &hairpin_conf))
@@ -455,9 +467,6 @@ int px_hairpin_setup(struct px_hairpin_ctx *hp_ctx,
             return -1;
         }
     }
-    hp_ctx->num_rules = 20000;
-    hp_ctx->num_rule_queue = 1;
-    hp_ctx->rule_queue_size = 100;
 
     return 0;
 }

@@ -2,34 +2,10 @@
 /* fast-path to hp manager */
 struct px_hairpin_ctx *g_hp_ctx[RTE_MAX_ETHPORTS] = {NULL};
 /*----------------------------------------------------------------------------*/
-/* ToDo: Make an API for receiving destination MAC information */
-static struct px_arp_entry g_arp_table[] = {
-    {"10.1.90.2", "58:a2:e1:a7:a9:ee"}, // stream1
-    {"10.1.95.2", "a0:88:c2:d6:9d:d2"}, // stream2
-    {"10.2.90.2", "a0:88:c2:d6:9e:32"}, // stream3
-    {"10.2.95.2", "58:a2:e1:a7:a8:b6"}, // stream4
-    {"10.3.90.2", "58:a2:e1:a7:a9:fe"}, // stream5
-    {"10.3.95.2", "58:a2:e1:a7:aa:7e"}, // stream6
-    {"10.4.90.2", "58:a2:e1:a7:a9:7e"}, // stream7
-    {"10.4.95.2", "58:a2:e1:a7:aa:86"}  // stream8
-};
-/*----------------------------------------------------------------------------*/
 int hp_ctx_init(uint16_t port_id, struct px_hairpin_ctx *hp_ctx)
 {
     /* make a fast path to hp manager */
     g_hp_ctx[port_id] = hp_ctx;
-
-    /* initialize ARP table */
-    if (!hp_ctx->actx)
-    {
-        hp_ctx->actx =
-            initialize_arp_table(g_arp_table,
-                                 sizeof(g_arp_table) / sizeof(g_arp_table[0]));
-        if (!hp_ctx->actx)
-        {
-            return -1;
-        }
-    }
 
     return 0;
 }
@@ -62,8 +38,10 @@ px_create_flow_auto(uint16_t port_id, struct four_tuple *key, struct rte_mbuf *p
         .transfer = 0};
 
     /* make pattern */
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
     struct rte_flow_item_eth eth_spec = {0};
     struct rte_flow_item_eth eth_mask = {0};
+#endif
     struct rte_flow_item_ipv4 ipv4_spec = {0};
     struct rte_flow_item_ipv4 ipv4_mask = {0};
     struct rte_flow_item_tcp tcp_spec = {0};
@@ -71,10 +49,14 @@ px_create_flow_auto(uint16_t port_id, struct four_tuple *key, struct rte_mbuf *p
     struct rte_flow_item_udp udp_spec = {0};
     struct rte_flow_item_udp udp_mask = {0};
     struct rte_flow_item patterns[4];
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
     patterns[0].type = RTE_FLOW_ITEM_TYPE_ETH;
     patterns[0].spec = &eth_spec;
     patterns[0].last = NULL;
     patterns[0].mask = &eth_mask;
+#else
+    patterns[0].type = RTE_FLOW_ITEM_TYPE_VOID;
+#endif
     patterns[1].type = RTE_FLOW_ITEM_TYPE_IPV4;
     patterns[1].spec = &ipv4_spec;
     patterns[1].last = NULL;
@@ -99,137 +81,101 @@ px_create_flow_auto(uint16_t port_id, struct four_tuple *key, struct rte_mbuf *p
     ipv4_spec.hdr.dst_addr = key->dst_ip;
 
     /* TCP pattern */
-    if (*get_ip_protoid(pkt) == IPPROTO_TCP)
+    if (key->src_port)
     {
-        if (key->src_port)
-        {
-            tcp_mask.hdr.src_port = UINT16_MAX;
-        }
-        if (key->dst_port)
-        {
-            tcp_mask.hdr.dst_port = UINT16_MAX;
-        }
-        tcp_spec.hdr.src_port = key->src_port;
-        tcp_spec.hdr.dst_port = key->dst_port;
-        patterns[2].type = RTE_FLOW_ITEM_TYPE_TCP;
-        patterns[2].spec = &tcp_spec;
-        patterns[2].last = NULL;
-        patterns[2].mask = &tcp_mask;
+        tcp_mask.hdr.src_port = UINT16_MAX;
     }
-    /* UDP pattern */
-    else if (*get_ip_protoid(pkt) == IPPROTO_UDP)
+    if (key->dst_port)
     {
-        if (key->src_port)
-        {
-            udp_mask.hdr.src_port = UINT16_MAX;
-        }
-        if (key->dst_port)
-        {
-            udp_mask.hdr.dst_port = UINT16_MAX;
-        }
-        udp_spec.hdr.src_port = key->src_port;
-        udp_spec.hdr.dst_port = key->dst_port;
-        patterns[2].type = RTE_FLOW_ITEM_TYPE_UDP;
-        patterns[2].spec = &udp_spec;
-        patterns[2].last = NULL;
-        patterns[2].mask = &udp_mask;
+        tcp_mask.hdr.dst_port = UINT16_MAX;
     }
+    tcp_spec.hdr.src_port = key->src_port;
+    tcp_spec.hdr.dst_port = key->dst_port;
+    patterns[2].type = (*get_ip_protoid(pkt) == IPPROTO_TCP)
+                           ? RTE_FLOW_ITEM_TYPE_TCP
+                           : RTE_FLOW_ITEM_TYPE_UDP;
+    patterns[2].spec = &tcp_spec;
+    patterns[2].last = NULL;
+    patterns[2].mask = &tcp_mask;
     patterns[3].type = RTE_FLOW_ITEM_TYPE_END;
 
 #if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0)
-    /* make dst SRC action */
-    struct rte_flow_action_modify_field modify_src_mac;
-    modify_src_mac.operation = (enum rte_flow_modify_op)RTE_FLOW_MODIFY_SET;
-    modify_src_mac.dst.field = RTE_FLOW_FIELD_MAC_SRC;
-    modify_src_mac.src.field = RTE_FLOW_FIELD_POINTER;
-    modify_src_mac.src.pvalue = &hp_ctx->mac;
-    modify_src_mac.width = RTE_ETHER_ADDR_LEN * 8;
+    /* make dst and src MAC action */
+    struct rte_flow_action_modify_field modify_mac;
+    modify_mac.operation = (enum rte_flow_modify_op)RTE_FLOW_MODIFY_SET;
+    modify_mac.dst.field = RTE_FLOW_FIELD_MAC_DST;
+    modify_mac.src.field = RTE_FLOW_FIELD_POINTER;
+    modify_mac.src.pvalue = get_macs(pkt);
+    modify_mac.width = sizeof(struct rte_ether_addr) * 8 * 2;
 
-    /* make dst MAC action */
-    struct rte_flow_action_modify_field modify_dst_mac;
-    modify_dst_mac.operation = (enum rte_flow_modify_op)RTE_FLOW_MODIFY_SET;
-    modify_dst_mac.dst.field = RTE_FLOW_FIELD_MAC_DST;
-    modify_dst_mac.src.field = RTE_FLOW_FIELD_POINTER;
-    modify_dst_mac.src.pvalue = find_mac_in_arp(hp_ctx->actx, key->dst_ip)->addr_bytes;
-    modify_dst_mac.width = RTE_ETHER_ADDR_LEN * 8;
-
-    /* make hairpin RSS action */
-    struct rte_flow_action_rss rss_hairpin;
-    rss_hairpin.func = RTE_ETH_HASH_FUNCTION_DEFAULT;
-    rss_hairpin.level = 0;
-    rss_hairpin.types = RTE_ETH_RSS_TCP | RTE_ETH_RSS_UDP | RTE_ETH_RSS_IP;
-    rss_hairpin.key_len = hp_ctx->hp_rss_key_len;
-    rss_hairpin.queue_num = hp_ctx->hp_num_rxq;
-    rss_hairpin.key = hp_ctx->hp_rss_key;
-    rss_hairpin.queue = hp_ctx->hp_rss_queues;
+    /* make 4-tuple action */
+    struct rte_flow_action_modify_field modify_four_tuple;
+    modify_four_tuple.operation = (enum rte_flow_modify_op)RTE_FLOW_MODIFY_SET;
+    modify_four_tuple.dst.field = RTE_FLOW_FIELD_IPV4_SRC;
+    modify_four_tuple.src.field = RTE_FLOW_FIELD_POINTER;
+    modify_four_tuple.src.pvalue = get_four_tuple(pkt) + 1;
+    modify_four_tuple.width = sizeof(struct four_tuple) * 8;
 
     struct rte_flow_action actions[] = {
-        /* modify src MAC */
-        {
-            .type = RTE_FLOW_ACTION_TYPE_MODIFY_FIELD,
-            .conf = &modify_src_mac},
-        /* modify dst MAC */
-        /* ToDo: make below refer to ARP table */
-        {
-            .type = RTE_FLOW_ACTION_TYPE_MODIFY_FIELD,
-            .conf = &modify_dst_mac},
+        /* modify MACs */
+        {.type = RTE_FLOW_ACTION_TYPE_MODIFY_FIELD,
+         .conf = &modify_mac},
+        /* modify 4-tuple */
+        {.type = RTE_FLOW_ACTION_TYPE_MODIFY_FIELD,
+         .conf = &modify_four_tuple},
+        /* couter action */
         {.type = RTE_FLOW_ACTION_TYPE_COUNT,
-         .conf = &hp_ctx->count},
+         .conf = &hp_ctx->count_hairpin},
         /* deliver to hairpin queue RSS */
-        {
-            .type = RTE_FLOW_ACTION_TYPE_RSS,
-            .conf = &hp_ctx->rss_hairpin,
-        },
+        {.type = RTE_FLOW_ACTION_TYPE_RSS,
+         .conf = &hp_ctx->rss_hairpin},
         {.type = RTE_FLOW_ACTION_TYPE_END}};
 #else
-    /* make dst SRC action */
-    struct rte_flow_action_set_mac modify_src_mac;
+    /* make dst and src MAC action */
+    struct rte_flow_action_set_mac modify_src_mac, modify_dst_mac;
+    memcpy(modify_dst_mac.mac_addr,
+           get_macs(pkt),
+           sizeof(struct rte_ether_addr));
     memcpy(modify_src_mac.mac_addr,
-           hp_ctx->mac.addr_bytes,
+           get_macs(pkt) + 1,
            sizeof(struct rte_ether_addr));
 
-    /* make dst MAC action */
-#define MACSWAP 0
-#if MACSWAP
-    struct rte_flow_action_set_mac modify_dst_mac;
-    memcpy(modify_dst_mac.mac_addr,
-           rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *)->s_addr.addr_bytes,
-           sizeof(struct rte_ether_addr));
-#else
-    struct rte_flow_action_set_mac modify_dst_mac;
-    memcpy(modify_dst_mac.mac_addr,
-           find_mac_in_arp(hp_ctx->actx, key->dst_ip)->addr_bytes,
-           sizeof(struct rte_ether_addr));
-#endif
+    /* make src and dst IP action */
+    struct rte_flow_action_set_ipv4 modify_src_ip, modify_dst_ip;
+    modify_src_ip.ipv4_addr = get_four_tuple(pkt)->src_ip;
+    modify_dst_ip.ipv4_addr = get_four_tuple(pkt)->dst_ip;
 
-    /* make hairpin RSS action */
-    struct rte_flow_action_rss rss_hairpin;
-    rss_hairpin.func = RTE_ETH_HASH_FUNCTION_DEFAULT;
-    rss_hairpin.level = 0;
-    rss_hairpin.types = ETH_RSS_TCP | ETH_RSS_UDP | ETH_RSS_IP;
-    rss_hairpin.key_len = hp_ctx->hp_rss_key_len;
-    rss_hairpin.queue_num = hp_ctx->hp_num_rxq;
-    rss_hairpin.key = hp_ctx->hp_rss_key;
-    rss_hairpin.queue = hp_ctx->hp_rss_queues;
+    /* make src and dst port action */
+    struct rte_flow_action_set_tp modify_src_port, modify_dst_port;
+    modify_src_port.port = get_four_tuple(pkt)->src_port;
+    modify_dst_port.port = get_four_tuple(pkt)->dst_port;
 
     /* make actions */
     struct rte_flow_action actions[] = {
         /* modify src MAC */
-        {
-            .type = RTE_FLOW_ACTION_TYPE_SET_MAC_SRC,
-            .conf = &modify_src_mac},
+        {.type = RTE_FLOW_ACTION_TYPE_SET_MAC_SRC,
+         .conf = &modify_src_mac},
         /* modify dst MAC */
-        /* ToDo: make below refer to ARP table */
-        {
-            .type = RTE_FLOW_ACTION_TYPE_SET_MAC_DST,
-            .conf = &modify_dst_mac},
+        {.type = RTE_FLOW_ACTION_TYPE_SET_MAC_DST,
+         .conf = &modify_dst_mac},
+        /* modify src IP */
+        {.type = RTE_FLOW_ACTION_TYPE_SET_IPV4_SRC,
+         .conf = &modify_src_ip},
+        /* modify dst IP */
+        {.type = RTE_FLOW_ACTION_TYPE_SET_IPV4_DST,
+         .conf = &modify_dst_ip},
+        /* modify src port */
+        {.type = RTE_FLOW_ACTION_TYPE_SET_TP_SRC,
+         .conf = &modify_src_port},
+        /* modify dst port */
+        {.type = RTE_FLOW_ACTION_TYPE_SET_TP_DST,
+         .conf = &modify_dst_port},
+        /* counter action */
         {.type = RTE_FLOW_ACTION_TYPE_COUNT,
-         .conf = &hp_ctx->count},
+         .conf = &hp_ctx->count_hairpin},
         /* deliver to hairpin queue RSS */
-        {
-            .type = RTE_FLOW_ACTION_TYPE_RSS,
-            .conf = &rss_hairpin,
-        },
+        {.type = RTE_FLOW_ACTION_TYPE_RSS,
+         .conf = &hp_ctx->rss_hairpin},
         {.type = RTE_FLOW_ACTION_TYPE_END}};
 #endif
 
