@@ -18,16 +18,22 @@ ifaces=("eth0"
 		"eth3")
 
 # Static IP addresses of gateway interface(s) in cidr format
-ipaddrs=(10.1.90.1/16
-		 10.2.90.1/16
-		 10.3.90.1/16
-		 10.4.90.1/16) # eth0, 1, 2, 3
+ipaddrs=(10.1.90.1/16 # eth0
+		 10.2.90.1/16 # eth1
+		 10.3.90.1/16 # eth2
+		 10.4.90.1/16) # eth3
 
 # MAC addresses of gateway interface(s)
-macaddrs=(58:a2:e1:a7:a8:46
-		  58:a2:e1:a7:a9:be
-		  58:a2:e1:a7:a8:c6
-		  a0:88:c2:d7:81:0e) # eth0, 1, 2, 3
+macaddrs=(58:a2:e1:a7:a8:46 # eth0
+		  58:a2:e1:a7:a9:be # eth1
+		  58:a2:e1:a7:a8:c6 # eth2
+		  a0:88:c2:d7:81:0e) # eth3
+
+# for multi-hop, use below on rapids0
+# macaddrs=(58:a2:e1:a7:7c:c6 # eth0
+# 		  58:a2:e1:a7:7c:d6 # eth1
+# 		  58:a2:e1:a7:7c:be # eth2
+# 		  58:a2:e1:a7:a9:8e) # eth3
 
 # Static IP addresses of the neighbors of gateway interface(s)
 nhipaddrs=(10.1.90.2 10.1.95.2 # stream1 stream2
@@ -40,6 +46,12 @@ nhmacaddrs=(58:a2:e1:a7:a9:ee a0:88:c2:d6:9d:d2 # stream1 stream2
 			a0:88:c2:d6:9e:32 58:a2:e1:a7:a8:b6 # stream3 stream4
 			58:a2:e1:a7:a9:fe 58:a2:e1:a7:aa:7e # stream5 stream6
 			58:a2:e1:a7:a9:7e 58:a2:e1:a7:aa:86) # stream7 stream8
+
+# for multi-hop, forward to rapids0
+# nhmacaddrs=(58:a2:e1:a7:7c:c6 58:a2:e1:a7:7c:c6 # stream1 stream2
+# 			58:a2:e1:a7:7c:d6 58:a2:e1:a7:7c:d6 # stream3 stream4
+# 			58:a2:e1:a7:7c:be 58:a2:e1:a7:7c:be # stream5 stream6
+# 			58:a2:e1:a7:a9:8e 58:a2:e1:a7:a9:8e) # stream7 stream8
 
 # IPv4 route table entries in cidr format per port
 routes=("10.1.90.0/24" "10.1.95.0/24" 
