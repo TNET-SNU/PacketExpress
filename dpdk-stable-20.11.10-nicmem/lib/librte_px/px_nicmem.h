@@ -19,10 +19,22 @@ struct px_nicmem_ctx
     struct rte_eth_rxseg_split rx_seg[2];
 };
 /*----------------------------------------------------------------------------*/
-static inline int
+static inline uint64_t
 is_nicmem(struct rte_mbuf *pkt)
 {
     return pkt->ol_flags & EXT_ATTACHED_MBUF;
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+mark_nicmem(struct rte_mbuf *pkt)
+{
+    pkt->ol_flags |= EXT_ATTACHED_MBUF;
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+unmark_nicmem(struct rte_mbuf *pkt)
+{
+    pkt->ol_flags &= ~EXT_ATTACHED_MBUF;
 }
 /*----------------------------------------------------------------------------*/
 int px_nicmem_configure(struct px_nicmem_ctx *nm_ctx,

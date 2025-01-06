@@ -919,21 +919,10 @@ separate_edge_seg(struct px_ctx *pctx,
     edge->next = NULL;
 
     /* make edge_tail segment */
-    if (is_nicmem(edge))
+    edge_tail = rte_pktmbuf_clone(edge, clone_pool);
+    if (!edge_tail)
     {
-        edge_tail = rte_pktmbuf_clone(edge, clone_pool);
-        if (!edge_tail)
-        {
-            goto err;
-        }
-    }
-    else
-    {
-        edge_tail = rte_pktmbuf_clone(edge, clone_pool);
-        if (!edge_tail)
-        {
-            goto err;
-        }
+        goto err;
     }
     edge_tail->data_off += edge->data_len;
     edge_tail->data_len = trim_size;
@@ -953,6 +942,7 @@ separate_edge_seg(struct px_ctx *pctx,
             {
                 goto err;
             }
+            /* rollback headers */
             edge_head->data_off -= hdr_size;
             seq_diff = prev->data_len + edge->data_len;
         }
@@ -2020,14 +2010,14 @@ px_core(struct px_ctx *pctx,
                     reverse_rss = rte_softrss((uint32_t *)&reverse_key_le,
                                               sizeof(struct four_tuple) >> 2,
                                               g_rss_key);
-                    if (tcp_flags & RTE_TCP_ACK_FLAG)
-                    {
-                        printf("[SYNACK] rss: %u, reverse_rss: %u\n", pkt->hash.rss, reverse_rss);
-                    }
-                    else
-                    {
-                        printf("[SYN] rss: %u, reverse_rss: %u\n", pkt->hash.rss, reverse_rss);
-                    }
+                    // if (tcp_flags & RTE_TCP_ACK_FLAG)
+                    // {
+                    //     printf("[SYNACK] rss: %u, reverse_rss: %u\n", pkt->hash.rss, reverse_rss);
+                    // }
+                    // else
+                    // {
+                    //     printf("[SYN] rss: %u, reverse_rss: %u\n", pkt->hash.rss, reverse_rss);
+                    // }
 
                     /* ToDo: we should consider ReTa */
 
@@ -2036,6 +2026,7 @@ px_core(struct px_ctx *pctx,
                                  g_px_dev[pkt->port].num_rxq_incr);
                     outer_qid = inner_qid / g_px_dev[pkt->port].num_rxq_incr;
                     new_pctx = &g_pctx[pkt->port][outer_qid];
+
                     /* insert MSS to hashtable */
                     insert_mss_entry(new_pctx->mss_ctx,
                                      reverse_rss,
@@ -2069,14 +2060,7 @@ px_core(struct px_ctx *pctx,
                     reverse_rss = rte_softrss((uint32_t *)&reverse_key_le,
                                               sizeof(struct four_tuple) >> 2,
                                               g_rss_key);
-                    if (tcp_flags & RTE_TCP_RST_FLAG)
-                    {
-                        printf("[RST] rss: %u, reverse_rss: %u\n", pkt->hash.rss, reverse_rss);
-                    }
-                    else
-                    {
-                        printf("[FIN] rss: %u, reverse_rss: %u\n", pkt->hash.rss, reverse_rss);
-                    }
+                    // printf("[FIN/RST] rss: %u, reverse_rss: %u\n", pkt->hash.rss, reverse_rss);
 
                     /* ToDo: we should consider ReTa */
 
@@ -2085,6 +2069,7 @@ px_core(struct px_ctx *pctx,
                                  g_px_dev[pkt->port].num_rxq_incr);
                     outer_qid = inner_qid / g_px_dev[pkt->port].num_rxq_incr;
                     new_pctx = &g_pctx[pkt->port][outer_qid];
+
                     /* evict MSSes from hashtable */
                     evict_mss_entry(new_pctx->mss_ctx,
                                     reverse_rss,

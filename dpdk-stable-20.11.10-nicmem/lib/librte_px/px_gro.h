@@ -175,7 +175,6 @@ struct px_ctx
 	int do_link;
 };
 /*----------------------------------------------------------------------------*/
-
 struct rte_eth_conf
 px_eth_conf(uint16_t port_id,
             struct rte_eth_conf *conf,
@@ -184,28 +183,28 @@ px_eth_conf(uint16_t port_id,
             int lro_size,
             int is_gro,
             int is_nicmem);
-
+/*----------------------------------------------------------------------------*/
 int px_init(uint16_t port_id,
 			uint16_t queue_id,
 			int burst,
 			unsigned int stat_interval,
 			int mss_table_size,
 			int do_link);
-
+/*----------------------------------------------------------------------------*/
 void px_deinit(uint16_t port_id,
 			   uint16_t queue_id);
-
+/*----------------------------------------------------------------------------*/
 int px_add_rule(uint16_t port_id,
 				uint16_t queue_id,
 				struct px_pattern *patterns,
 				int nb_patterns,
 				struct px_action *actions,
 				int nb_actions);
-
+/*----------------------------------------------------------------------------*/
 void px_del_rule(uint16_t port_id,
 				 uint16_t queue_id,
 				 int px_id);
-
+/*----------------------------------------------------------------------------*/
 int px_eth_dev_configure(uint16_t port_id,
 						 uint16_t num_rxq,
 						 uint16_t num_txq,
@@ -215,62 +214,62 @@ int px_eth_dev_configure(uint16_t port_id,
                          uint16_t hp_num_rxq,
                          uint16_t hp_num_txq,
 						 struct rte_eth_conf *eth_conf);
-
+/*----------------------------------------------------------------------------*/
 int px_eth_rx_queue_setup(uint16_t port_id,
 						  uint16_t rx_queue_id,
 						  uint16_t nb_rx_desc,
 						  unsigned int socket_id,
 						  struct rte_eth_rxconf *rx_conf,
 						  struct rte_mempool *mp);
-
+/*----------------------------------------------------------------------------*/
 int px_eth_tx_queue_setup(uint16_t port_id,
 						  uint16_t tx_queue_id,
 						  uint16_t nb_tx_desc,
 						  unsigned int socket_id,
 						  struct rte_eth_txconf *tx_conf);
-
+/*----------------------------------------------------------------------------*/
 uint16_t px_eth_rx_burst(uint16_t port_id,
 						 uint16_t queue_id,
 						 struct rte_mbuf **rx_pkts,
 						 uint16_t nb_pkts);
-
+/*----------------------------------------------------------------------------*/
 uint16_t px_eth_tx_burst(uint16_t port_id,
 						 uint16_t queue_id,
 						 struct rte_mbuf **tx_pkts,
 						 uint16_t nb_pkts);
-
+/*----------------------------------------------------------------------------*/
 int px_eth_stats_get(uint16_t port_id,
 					 struct rte_eth_stats *stats);
-
+/*----------------------------------------------------------------------------*/
 void px_pktmbuf_free(struct rte_mbuf *pkt);
-
+/*----------------------------------------------------------------------------*/
 void px_pktmbuf_free_bulk(struct rte_mbuf **pkts,
 						  uint16_t nb_pkts);
-
+/*----------------------------------------------------------------------------*/
 /* below are for testing baselines (e.g., DPDK GRO) */
 void px_parse_batch(uint16_t port_id,
 					uint16_t queue_id,
                     struct rte_mbuf **pkts,
                     uint16_t nb_pkts,
                     int trans_mtu);
-
+/*----------------------------------------------------------------------------*/
 void px_setup_tso_burst(uint16_t port_id,
 						uint16_t queue_id,
 						struct rte_mbuf **pkts,
 						uint16_t nb_pkts);
-
+/*----------------------------------------------------------------------------*/
 static inline int
 is_decaped(struct rte_mbuf *pkt)
 {
 	return (pkt->ol_flags & (IND_ATTACHED_MBUF << 1)) > 0ULL;
 }
-
+/*----------------------------------------------------------------------------*/
 static inline void
 mark_decaped(struct rte_mbuf *pkt)
 {
 	pkt->ol_flags |= (IND_ATTACHED_MBUF << 1);
 }
-
+/*----------------------------------------------------------------------------*/
 static inline void
 unmark_decaped(struct rte_mbuf *pkt)
 {
