@@ -39,6 +39,11 @@ static uint8_t rss_key[40] = {0xD8, 0x2A, 0x6C, 0x5A, 0xDD, 0x3B, 0x9D, 0x1E,
                               0x44, 0x31, 0x7E, 0xA2, 0x07, 0xA5, 0x0A, 0x99,
                               0x49, 0xC6, 0xA4, 0xFE, 0x0C, 0x4F, 0x59, 0x02,
                               0xD4, 0x44, 0xE2, 0x4A, 0xDB, 0xE1, 0x05, 0x82};
+// static uint8_t rss_key[40] = {0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+//                               0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+//                               0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+//                               0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+//                               0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A};
 
 void PMDPort::InitDriver() {
   dpdk_port_t num_dpdk_ports = rte_eth_dev_count_avail();
@@ -781,7 +786,7 @@ int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
 #else
   uint16_t recv = rte_eth_rx_burst(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), cnt);
 #if (USE_LRO || USE_DGRO || NUM_HAIRPIN_Q)
-  px_parse_batch(reinterpret_cast<rte_mbuf **>(pkts), recv, !JUMBO_FRAME);
+  px_parse_batch(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), recv, !JUMBO_FRAME);
 #endif
 #if USE_DGRO
   struct rte_gro_param gro_param = {
@@ -800,7 +805,7 @@ int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
 
 int PMDPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
 #if !USE_CGRO && (USE_LRO || USE_DGRO)
-  px_setup_tso_burst(reinterpret_cast<rte_mbuf **>(pkts), cnt);
+  px_setup_tso_burst(dpdk_port_id_, qid, <rte_mbuf **>(pkts), cnt);
 #endif
 #if NUM_HAIRPIN_Q
   for (int i = 0; i < cnt; i++) {
@@ -811,12 +816,12 @@ int PMDPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
       continue;
     node.key = *key;
     node.pkt = reinterpret_cast<rte_mbuf *>(pkt);
-    // if ((node.key.src_port + node.key.dst_port) % 5 < 5) // offload 100% of flows
+    if ((node.key.src_port + node.key.dst_port) % 5 < 5) // offload 100% of flows
     // if ((node.key.src_port + node.key.dst_port) % 5 < 4) // offload 80% of flows
     // if ((node.key.src_port + node.key.dst_port) % 5 < 3) // offload 60% of flows
     // if ((node.key.src_port + node.key.dst_port) % 5 < 2) // offload 40% of flows
     // if ((node.key.src_port + node.key.dst_port) % 5 < 1) // offload 20% of flows
-    if ((node.key.src_port + node.key.dst_port) % 5 < 0) // offload 0% of flows
+    // if ((node.key.src_port + node.key.dst_port) % 5 < 0) // offload 0% of flows
     if (hp_create_rule(rte_lcore_id(), &node) < 0)
       continue;
   }

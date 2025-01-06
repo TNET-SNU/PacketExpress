@@ -311,12 +311,12 @@ class Port {
   // static const size_t kDefaultOutQueueSize = 16384;
   // static const size_t kDefaultIncQueueSize = 8192;
   // static const size_t kDefaultOutQueueSize = 8192;
-  static const size_t kDefaultIncQueueSize = 4096;
-  static const size_t kDefaultOutQueueSize = 4096;
+  // static const size_t kDefaultIncQueueSize = 4096;
+  // static const size_t kDefaultOutQueueSize = 4096;
   // static const size_t kDefaultIncQueueSize = 2048;
   // static const size_t kDefaultOutQueueSize = 2048;
-  // static const size_t kDefaultIncQueueSize = 1024;
-  // static const size_t kDefaultOutQueueSize = 1024;
+  static const size_t kDefaultIncQueueSize = 1024;
+  static const size_t kDefaultOutQueueSize = 1024;
   // static const size_t kDefaultIncQueueSize = 512;
   // static const size_t kDefaultOutQueueSize = 512;
   // static const size_t kDefaultIncQueueSize = 256;

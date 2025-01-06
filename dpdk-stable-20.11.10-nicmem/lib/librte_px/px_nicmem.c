@@ -24,7 +24,7 @@ int px_nicmem_configure(struct px_nicmem_ctx *nm_ctx,
         return 0;
     }
 
-    printf("[port %d] Try device memory allocation for payload segmemt\n", port_id);
+    fprintf(stderr, "[port %d] Try device memory allocation for payload segmemt\n", port_id);
 
     /* check if we have dev info */
     if (!dev_info->device)
@@ -41,17 +41,17 @@ int px_nicmem_configure(struct px_nicmem_ctx *nm_ctx,
                          nm_ctx->lro_size;
 
     // MEM_NIC_PINNED
-    printf("Alloc nic pinned mem on port %d\n", port_id);
+    fprintf(stderr, "Alloc nic pinned mem on port %d\n", port_id);
     ret = rte_dev_alloc_dm(dev_info->device,
                            &ext_mem[0].buf_ptr,
                            &ext_mem[0].buf_len);
     if (ret || !ext_mem[0].buf_len)
     {
-        printf("Failed to allocate NIC memory %p %ld on port %d\n",
+        fprintf(stderr, "Failed to allocate NIC memory %p %ld on port %d\n",
                ext_mem[0].buf_ptr, ext_mem[0].buf_len, port_id);
         return ret;
     }
-    printf("[+] Allocated device memory: %p %lu on port %d\n",
+    fprintf(stderr, "[+] Allocated device memory: %p %lu on port %d\n",
            ext_mem[0].buf_ptr, ext_mem[0].buf_len, port_id);
 
     // if (port_id == 0)
@@ -62,11 +62,11 @@ int px_nicmem_configure(struct px_nicmem_ctx *nm_ctx,
     //                               ext_mem[0].buf_iova, 4096);
     //     if (ret)
     //     {
-    //         printf("Failed to register NIC memory %p %ld on port %d\n",
+    //         fprintf(stderr, "Failed to register NIC memory %p %ld on port %d\n",
     //                ext_mem[0].buf_ptr, ext_mem[0].buf_len, port_id);
     //         return ret;
     //     }
-    //     printf("[+] Registering extmem\n");
+    //     fprintf(stderr, "[+] Registering extmem\n");
     // }
 
     ret = rte_dev_get_dma_map(dev_info->device,
@@ -75,11 +75,11 @@ int px_nicmem_configure(struct px_nicmem_ctx *nm_ctx,
                               ext_mem[0].buf_len);
     if (ret)
     {
-        printf("Failed to get NIC DMA map %p %ld on port %d\n",
+        fprintf(stderr, "Failed to get NIC DMA map %p %ld on port %d\n",
                ext_mem[0].buf_ptr, ext_mem[0].buf_len, port_id);
         return ret;
     }
-    printf("[+] Got DMA map: %p %lu on port %d\n",
+    fprintf(stderr, "[+] Got DMA map: %p %lu on port %d\n",
            ext_mem[0].buf_ptr, ext_mem[0].buf_len, port_id);
 
     /*
@@ -90,13 +90,13 @@ int px_nicmem_configure(struct px_nicmem_ctx *nm_ctx,
     totsz = ext_mem[0].buf_len / ext_mem[0].elt_size;
     while (totsz < num_nicmem)
     {
-        // printf("totsz: %d, num_nicmem: %u\n", totsz, num_nicmem);
+        // fprintf(stderr, "totsz: %d, num_nicmem: %u\n", totsz, num_nicmem);
         ext_mem[++ext_mem_num] = ext_mem[0];
         totsz += (ext_mem[0].buf_len / ext_mem[0].elt_size);
     }
     ext_mem_num++;
-    printf("%p %lu\n", ext_mem[1].buf_ptr, ext_mem[1].buf_len);
-    printf("num of external memory: %d\n", ext_mem_num);
+    fprintf(stderr, "%p %lu\n", ext_mem[1].buf_ptr, ext_mem[1].buf_len);
+    fprintf(stderr, "num of external memory: %d\n", ext_mem_num);
 
     /* create mbuf pool for external memory */
     sprintf(name, "ext-mempool-%d-%d", sid, port_id);
@@ -110,7 +110,7 @@ int px_nicmem_configure(struct px_nicmem_ctx *nm_ctx,
                                        ext_mem_num);
     if (!g_ext_pool[sid][port_id])
     {
-        printf("Failed to create external mbuf pool on port %d on socket %d\n",
+        fprintf(stderr, "Failed to create external mbuf pool on port %d on socket %d\n",
                port_id, sid);
         return -1;
     }
@@ -122,7 +122,7 @@ int px_nicmem_setup(struct px_nicmem_ctx *nm_ctx,
                     struct rte_eth_rxconf *rx_conf,
                     struct rte_mempool *mp)
 {
-    printf("[%d][%d]: lro_size: %u\n",
+    fprintf(stderr, "[%d][%d]: lro_size: %u\n",
            nm_ctx->socket_id, nm_ctx->port_id, nm_ctx->lro_size);
 
     if (nm_ctx->num_nicmem)

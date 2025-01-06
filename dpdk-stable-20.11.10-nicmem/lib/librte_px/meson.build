@@ -13,8 +13,7 @@ sources = files(
         'px_flow.c',
         'px_cache.c',
         'px_reqring.c',
-        'px_offload.c',
-        'px_arp.c'
+        'px_offload.c'
 )
 headers = files(
         'px_common.h',
@@ -31,7 +30,6 @@ headers = files(
         'px_cache.h',
         'px_reqring.h',
         'px_offload.h',
-        'px_4tuple.h',
-        'px_arp.h'
+        'px_4tuple.h'
 )
 deps += ['ethdev', 'hash', 'gro']

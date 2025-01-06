@@ -14,6 +14,7 @@
 #include "px_offload.h"
 #include "px_4tuple.h"
 #include "rte_gro.h"
+#include "rte_thash.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -108,6 +109,11 @@ struct px_dev
 
 	uint16_t nb_rx_desc[PX_MAX_QUEUES_PER_PORT];
 	uint16_t nb_tx_desc[PX_MAX_QUEUES_PER_PORT];
+
+	struct rte_eth_dev_info dev_info;
+	
+	/* for Redirection Table (ReTa) */
+    struct rte_eth_rss_reta_entry64 px_reta_conf[PX_RETA_GROUP_NUM];
 };
 
 /*
@@ -242,11 +248,15 @@ void px_pktmbuf_free_bulk(struct rte_mbuf **pkts,
 						  uint16_t nb_pkts);
 
 /* below are for testing baselines (e.g., DPDK GRO) */
-void px_parse_batch(struct rte_mbuf **pkts,
-					uint16_t nb_pkts,
-					int trans_mtu);
+void px_parse_batch(uint16_t port_id,
+					uint16_t queue_id,
+                    struct rte_mbuf **pkts,
+                    uint16_t nb_pkts,
+                    int trans_mtu);
 
-void px_setup_tso_burst(struct rte_mbuf **pkts,
+void px_setup_tso_burst(uint16_t port_id,
+						uint16_t queue_id,
+						struct rte_mbuf **pkts,
 						uint16_t nb_pkts);
 
 static inline int

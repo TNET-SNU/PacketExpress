@@ -29,13 +29,13 @@ extern "C"
 {
 #endif
 
-#define SEMANTIC_TEST 0
+#define SEMANTIC_TEST 1
 #define MAX_NAME_SIZE 32
-#define DEFAULT_MTU RTE_ETHER_MTU
-#define LARGE_MTU 9000
+#define FALLBACK_eMTU 1240
+#define DEFAULT_eMTU RTE_ETHER_MTU
+#define DEFAULT_iMTU 9000
 /* use below when jumboMTU is not set on endpoints' interfaces */
-// #define TX_MTU DEFAULT_MTU
-#define TX_MTU LARGE_MTU
+// #define DEFAULT_iMTU DEFAULT_eMTU
 
 #define PX_MEASURE_STATS 1
 #define PX_MEASURE_PER_QUEUE_STAT 1
@@ -338,6 +338,21 @@ is_ipv4(struct rte_mbuf *pkt)
 }
 /*----------------------------------------------------------------------------*/
 static inline int
+is_dtb(struct rte_mbuf *pkt)
+{
+    struct rte_icmp_hdr *icmp_hdr;
+    icmp_hdr = rte_pktmbuf_mtod_offset(pkt,
+                                       struct rte_icmp_hdr *,
+                                       pkt->l2_len + pkt->l3_len);
+    if ((icmp_hdr->icmp_type == 3) && (icmp_hdr->icmp_code == 4))
+    {
+        return 1;
+    }
+    
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline int
 is_ipv6(struct rte_mbuf *pkt)
 {
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
@@ -364,6 +379,16 @@ is_udp(struct rte_mbuf *pkt)
     return *get_ip_protoid(pkt) == IPPROTO_UDP;
 #else
     return pkt->packet_type & RTE_PTYPE_L4_UDP;
+#endif
+}
+/*----------------------------------------------------------------------------*/
+static inline int
+is_icmp(struct rte_mbuf *pkt)
+{
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    return *get_ip_protoid(pkt) == IPPROTO_ICMP;
+#else
+    return pkt->packet_type & RTE_PTYPE_L4_ICMP;
 #endif
 }
 /*----------------------------------------------------------------------------*/
@@ -434,9 +459,10 @@ unmark_px(struct rte_mbuf *pkt)
 }
 /*----------------------------------------------------------------------------*/
 static inline void
-tupledump(struct rte_mbuf *pkt)
+tupledump(struct four_tuple *ft)
 {
-    struct four_tuple *ft = get_four_tuple(pkt);
+    // printf("pkt_len: %d, l2_len: %d, l3_len: %d, l4_len: %d\n",
+    //        pkt->pkt_len, pkt->l2_len, pkt->l3_len, pkt->l4_len);
     printf("%d.%d.%d.%d:%d -> %d.%d.%d.%d:%d\n",
            *(uint8_t *)&ft->src_ip, *((uint8_t *)&ft->src_ip + 1),
            *((uint8_t *)&ft->src_ip + 2), *((uint8_t *)&ft->src_ip + 3),

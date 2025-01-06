@@ -46,8 +46,6 @@ px_create_flow_auto(uint16_t port_id, struct four_tuple *key, struct rte_mbuf *p
     struct rte_flow_item_ipv4 ipv4_mask = {0};
     struct rte_flow_item_tcp tcp_spec = {0};
     struct rte_flow_item_tcp tcp_mask = {0};
-    struct rte_flow_item_udp udp_spec = {0};
-    struct rte_flow_item_udp udp_mask = {0};
     struct rte_flow_item patterns[4];
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
     patterns[0].type = RTE_FLOW_ITEM_TYPE_ETH;

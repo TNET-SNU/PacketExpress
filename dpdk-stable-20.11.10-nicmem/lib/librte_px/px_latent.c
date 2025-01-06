@@ -79,17 +79,18 @@ int px_eth_dev_rss_reta_update(uint16_t port_id,
 {
     struct rte_eth_rss_reta_entry64 px_reta_conf[PX_RETA_GROUP_NUM];
     struct rte_eth_dev_info dev_info;
-    int i, j, group_num, inner_len;
+    int ret, i, j, group_num, inner_len;
 
     if (reta_size > PX_FLOW_MAX_RETA_SIZE)
     {
-        printf("px_eth_dev_rss_reta_update: reta_size too large\n");
+        fprintf(stderr, "reta_size too large: %d\n", reta_size);
         return -1;
     }
 
-    if (unlikely(rte_eth_dev_info_get(port_id, &dev_info)))
+    ret = rte_eth_dev_info_get(port_id, &dev_info);
+    if (unlikely(ret))
     {
-        printf("px_eth_dev_rss_reta_update: rte_eth_dev_info_get failed\n");
+        fprintf(stderr, "rte_eth_dev_info_get failed: %d\n", ret);
         return -1;
     }
 
@@ -112,9 +113,9 @@ int px_eth_dev_rss_reta_update(uint16_t port_id,
         }
     }
 
-    // printf("before)\n");
+    // fprintf(stderr, "before)\n");
     // px_dump_reta(reta_conf, reta_size);
-    // printf("after)\n");
+    // fprintf(stderr, "after)\n");
     // px_dump_reta(px_reta_conf, reta_size);
 
     return rte_eth_dev_rss_reta_update(port_id, px_reta_conf, reta_size);
@@ -164,28 +165,33 @@ void px_dump_reta(struct rte_eth_rss_reta_entry64 *reta_conf,
         pos += len;
     }
 
-    printf("RSS RETA: %s\n", buf);
+    fprintf(stderr, "RSS RETA: %s\n", buf);
 }
 /*----------------------------------------------------------------------------*/
 void px_eth_dump_reta(uint16_t port_id)
 {
     struct rte_eth_rss_reta_entry64 px_reta_conf[PX_RETA_GROUP_NUM];
     struct rte_eth_dev_info dev_info;
-    int i;
+    int ret, i;
 
-    if (unlikely(rte_eth_dev_info_get(port_id, &dev_info)))
+    ret = rte_eth_dev_info_get(port_id, &dev_info);
+    if (unlikely(ret))
     {
-        printf("px_dump_rss_reta: rte_eth_dev_info_get failed\n");
+        rte_exit(EXIT_FAILURE, "px_dump_rss_reta: rte_eth_dev_info_get failed: %d\n", ret);
         return;
     }
 
     memset(px_reta_conf, 0, sizeof(px_reta_conf));
     for (i = 0; i < dev_info.reta_size; i++)
+    {
         px_reta_conf[i / RTE_RETA_GROUP_SIZE].mask = UINT64_MAX;
+    }
 
-    if (unlikely(rte_eth_dev_rss_reta_query(port_id, px_reta_conf,
-                                            dev_info.reta_size)))
+    ret = rte_eth_dev_rss_reta_query(port_id, px_reta_conf, dev_info.reta_size);
+    if (unlikely(ret))
+    {
         return;
+    }
 
     px_dump_reta(px_reta_conf, dev_info.reta_size);
 }

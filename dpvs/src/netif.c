@@ -1801,7 +1801,7 @@ static inline uint16_t netif_rx_burst(portid_t pid, struct netif_queue_conf *qco
 #else
         nrx = rte_eth_rx_burst(pid, qconf->id, qconf->mbufs, NETIF_MAX_PKT_BURST);
 #if (USE_LRO || USE_DGRO)
-        px_parse_batch(qconf->mbufs, nrx, !JUMBO_FRAME);
+        px_parse_batch(pid, qconf->id, qconf->mbufs, nrx, !JUMBO_FRAME);
 #endif
 #if USE_DGRO
         struct rte_gro_param gro_param = {
@@ -2154,7 +2154,7 @@ static inline void netif_tx_burst(lcoreid_t cid, portid_t pid, queueid_t qindex)
     px_unlink(txq->mbufs, txq->len, NULL);
 #endif
 #if USE_CGRO || USE_LRO || USE_DGRO
-    px_setup_tso_burst(txq->mbufs, txq->len);
+    px_setup_tso_burst(pid, txq->id, txq->mbufs, txq->len);
 #endif
     ntx = rte_eth_tx_burst(pid, txq->id, txq->mbufs, txq->len);
     lcore_stats[cid].opackets += ntx;

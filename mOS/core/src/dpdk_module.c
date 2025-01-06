@@ -233,7 +233,7 @@ dpdk_send_pkts(struct mtcp_thread_context *ctxt, int nif)
 #endif
 
 #if USE_CGRO || USE_LRO || USE_DGRO
-		px_setup_tso_burst(dpc->wmbufs[nif].m_table, dpc->wmbufs[nif].len);
+		px_setup_tso_burst(nif, qid, dpc->wmbufs[nif].m_table, dpc->wmbufs[nif].len);
 #endif
 		ret = rte_eth_tx_burst(nif, qid, dpc->wmbufs[nif].m_table, dpc->wmbufs[nif].len);
 		if (ret < dpc->wmbufs[nif].len)
@@ -290,7 +290,7 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 	ret = rte_eth_rx_burst((uint8_t)ifidx, qid,
 			dpc->rmbufs[ifidx].m_table, MAX_PKT_BURST);
 #if (USE_LRO || USE_DGRO)
-	px_parse_batch(dpc->rmbufs[ifidx].m_table, ret, !JUMBO_FRAME);
+	px_parse_batch(ifidx, qid, dpc->rmbufs[ifidx].m_table, ret, !JUMBO_FRAME);
 #endif
 #if USE_DGRO
 	struct rte_gro_param gro_param = {

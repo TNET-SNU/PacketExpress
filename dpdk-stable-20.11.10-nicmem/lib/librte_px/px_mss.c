@@ -1,4 +1,5 @@
 #include "px_mss.h"
+#include <stdatomic.h>
 /*----------------------------------------------------------------------------*/
 static struct px_mss_ctx g_mss_ctx[RTE_MAX_LCORE] = {0};
 static pthread_t g_tid = 0;
@@ -20,6 +21,272 @@ bloom_init(void)
 void bloom_destroy(uint8_t *filter)
 {
     rte_free(filter);
+}
+/*----------------------------------------------------------------------------*/
+uint16_t *
+get_tcp_mss(struct rte_mbuf *pkt)
+{
+    uint8_t *tcpopt = get_tcp_option(pkt);
+    int total_optlen = get_tcp_optlen(pkt);
+    int opt, optlen;
+
+    for (int i = 0; i < total_optlen;)
+    {
+        opt = *(tcpopt + i++);
+        if (opt == TCPOPT_EOL)
+        {
+            /* end of option field */
+            break;
+        }
+        if (opt == TCPOPT_NOP)
+        {
+            /* no option */
+            continue;
+        }
+        optlen = *(tcpopt + i++);
+        if (i + optlen - 2 > total_optlen)
+        {
+            break;
+        }
+        if (opt == TCPOPT_MAXSEG)
+        {
+            return (uint16_t *)(tcpopt + i);
+        }
+        if (opt == TCPOPT_WINDOW)
+        {
+            i++;
+            continue;
+        }
+        if (opt == TCPOPT_SACK_PERMITTED)
+        {
+            continue;
+        }
+        if (opt == TCPOPT_TIMESTAMP)
+        {
+            i += 8;
+            continue;
+        }
+        /* not handle */
+        i += optlen - 2;
+    }
+
+    /* no MSS field found */
+    return NULL;
+}
+/*----------------------------------------------------------------------------*/
+void update_mss(uint16_t *mss_ptr)
+{
+#if SEMANTIC_TEST
+    /* use below on semantic test */
+    if (ntohs(*mss_ptr) >= DEFAULT_iMSS)
+    {
+        /* no need to update */
+        return;
+    }
+    printf("%d -> ", ntohs(*mss_ptr));
+    *mss_ptr = htons(DEFAULT_iMSS); // use when semantic test
+#else
+    /* use below on performance test */
+    printf("%d -> ", ntohs(*mss_ptr));
+    *mss_ptr = htons(DEFAULT_eMSS);
+#endif
+    printf("%d\n", ntohs(*mss_ptr));
+}
+/*----------------------------------------------------------------------------*/
+void flush_timeout(struct px_mss_ctx *ctx)
+{
+    struct flow_mss_entry *entry;
+    const void *next_key;
+    void *next_data;
+    uint32_t iter = 0;
+    time_t current_time = time(NULL);
+
+    /* Iterate through the hash table and remove old entries */
+    while (rte_hash_iterate(ctx->tbl, &next_key, &next_data, &iter) >= 0)
+    {
+        entry = (struct flow_mss_entry *)next_data;
+
+        if (difftime(current_time, entry->last_update) > MSS_TIMEOUT)
+        {
+            printf("Removing flow due to timeout\n");
+            rte_hash_del_key(ctx->tbl, next_key);
+            rte_mempool_put(ctx->pool, entry);
+        }
+    }
+}
+/*----------------------------------------------------------------------------*/
+int search_mss_entry(struct px_mss_ctx *ctx,
+                     uint32_t rss,
+                     struct four_tuple *key,
+                     uint16_t *mss)
+{
+    struct flow_mss_entry *entry;
+
+    if (!bloom_check(ctx->bf, rss, key))
+    {
+        /* not exist in bloom filter */
+        *mss = 0;
+        return -1;
+    };
+
+    if (rte_hash_lookup_data(ctx->tbl, key, (void **)&entry) < 0)
+    {
+        /* already evicted */
+        *mss = 0;
+        return -1;
+    }
+
+    /* Update time and return the MSS */
+    entry->last_update = time(NULL);
+    *mss = entry->mss;
+
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
+int bloom_check(uint8_t *filter,
+                uint32_t rss,
+                struct four_tuple *key)
+{
+    uint16_t hash0 = xor_hash0(rss, (uint32_t *)key);
+    if (!filter[hash0])
+    {
+        /* no data */
+        return 0;
+    }
+    uint16_t hash1 = xor_hash1(rss, (uint32_t *)key);
+    if (!filter[hash1] ||
+        !filter[hash0 ^ hash1])
+    {
+        /* no data */
+        return 0;
+    }
+
+    /* may exist */
+    return 1;
+}
+/*----------------------------------------------------------------------------*/
+void bloom_insert(uint8_t *filter,
+                  uint32_t rss,
+                  struct four_tuple *key)
+{
+    /* hash0 */
+    uint16_t hash0 = xor_hash0(rss, (uint32_t *)key);
+    /* atomic fetch-add */
+    uint8_t old0 = atomic_fetch_add_explicit(
+        (atomic_uchar *)&filter[hash0], 1,
+        memory_order_relaxed);
+    if (old0 == UINT8_MAX)
+    {
+        /* already full, restore hash0 */
+        atomic_fetch_sub_explicit(
+            (atomic_uchar *)&filter[hash0], 1,
+            memory_order_relaxed);
+        fprintf(stderr, "bloom_insert overflow, hash0=%u\n", hash0);
+        return;
+    }
+
+    /* hash1 */
+    uint16_t hash1 = xor_hash1(rss, (uint32_t *)key);
+    /* atomic fetch-add */
+    uint8_t old1 = atomic_fetch_add_explicit(
+        (atomic_uchar *)&filter[hash1], 1,
+        memory_order_relaxed);
+    if (old1 == UINT8_MAX)
+    {
+        /* already full, restore hash1, hash0 */
+        atomic_fetch_sub_explicit(
+            (atomic_uchar *)&filter[hash1], 1,
+            memory_order_relaxed);
+        atomic_fetch_sub_explicit(
+            (atomic_uchar *)&filter[hash0], 1,
+            memory_order_relaxed);
+        fprintf(stderr, "bloom_insert overflow, hash1=%u\n", hash1);
+        return;
+    }
+
+    /* hash2 */
+    uint16_t hash2 = hash0 ^ hash1;
+    /* atomic fetch-add */
+    uint8_t old2 = atomic_fetch_add_explicit(
+        (atomic_uchar *)&filter[hash2], 1,
+        memory_order_relaxed);
+    if (old2 == UINT8_MAX)
+    {
+        /* already full, restore hash2, hash1, hash0 */
+        atomic_fetch_sub_explicit(
+            (atomic_uchar *)&filter[hash2], 1,
+            memory_order_relaxed);
+        atomic_fetch_sub_explicit(
+            (atomic_uchar *)&filter[hash1], 1,
+            memory_order_relaxed);
+        atomic_fetch_sub_explicit(
+            (atomic_uchar *)&filter[hash0], 1,
+            memory_order_relaxed);
+        fprintf(stderr, "bloom_insert overflow, hash2=%u\n", hash2);
+        return;
+    }
+}
+/*----------------------------------------------------------------------------*/
+void bloom_delete(uint8_t *filter,
+                  uint32_t rss,
+                  struct four_tuple *key)
+{
+    /* hash0 */
+    uint16_t hash0 = xor_hash0(rss, (uint32_t *)key);
+    /* atomic fetch-sub */
+    uint8_t old0 = atomic_fetch_sub_explicit(
+        (atomic_uchar *)&filter[hash0], 1,
+        memory_order_relaxed);
+    if (old0 == 0)
+    {
+        /* empty yet, so restore hash0 */
+        atomic_fetch_add_explicit(
+            (atomic_uchar *)&filter[hash0], 1,
+            memory_order_relaxed);
+        fprintf(stderr, "bloom_delete: no data, hash0=%u\n", hash0);
+        return;
+    }
+
+    /* hash1 */
+    uint16_t hash1 = xor_hash1(rss, (uint32_t *)key);
+    /* atomic fetch-sub */
+    uint8_t old1 = atomic_fetch_sub_explicit(
+        (atomic_uchar *)&filter[hash1], 1,
+        memory_order_relaxed);
+    if (old1 == 0)
+    {
+        /* empty yet, so restore hash1, hash0 */
+        atomic_fetch_add_explicit(
+            (atomic_uchar *)&filter[hash1], 1,
+            memory_order_relaxed);
+        atomic_fetch_add_explicit(
+            (atomic_uchar *)&filter[hash0], 1,
+            memory_order_relaxed);
+        fprintf(stderr, "bloom_delete: no data, hash1=%u\n", hash1);
+        return;
+    }
+
+    /* hash2 */
+    uint16_t hash2 = hash0 ^ hash1;
+    /* atomic fetch-sub */
+    uint8_t old2 = atomic_fetch_sub_explicit(
+        (atomic_uchar *)&filter[hash2], 1,
+        memory_order_relaxed);
+    if (old2 == 0)
+    {
+        /* empty yet, so restore hash2, hash1, hash0 */
+        atomic_fetch_add_explicit(
+            (atomic_uchar *)&filter[hash2], 1,
+            memory_order_relaxed);
+        atomic_fetch_add_explicit(
+            (atomic_uchar *)&filter[hash1], 1,
+            memory_order_relaxed);
+        atomic_fetch_add_explicit(
+            (atomic_uchar *)&filter[hash0], 1,
+            memory_order_relaxed);
+        fprintf(stderr, "bloom_delete: no data, hash2=%u\n", hash2);
+        return;
+    }
 }
 /*----------------------------------------------------------------------------*/
 static void *
@@ -174,10 +441,10 @@ int insert_mss_entry(struct px_mss_ctx *ctx,
     /* if default MSS used, no need to insert */
 #if SEMANTIC_TEST
     /* use below on semantic test */
-    if (mss == DEFAULT_MSS)
+    if (mss == DEFAULT_eMSS)
 #else
     /* use below on performance test */
-    if (mss == LARGE_MSS)
+    if (mss == DEFAULT_iMSS)
 #endif
     {
         return 0;
