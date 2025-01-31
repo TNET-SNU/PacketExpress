@@ -12,8 +12,9 @@ extern "C"
 {
 #endif
 /*----------------------------------------------------------------------------*/
-#define PER_CORE_HOST_CACHE_SIZE 10000
-#define PER_PORT_NIC_CACHE_SIZE 400 // use small number to see offload rate
+// #define PER_PORT_NIC_CACHE_SIZE 400 // use small number to see offload rate
+#define PER_PORT_NIC_CACHE_SIZE 20000
+#define PER_CORE_HOST_CACHE_SIZE PER_PORT_NIC_CACHE_SIZE
 /*----------------------------------------------------------------------------*/
 int px_hairpin_configure(struct px_hairpin_ctx *hp_ctx,
                          uint16_t port_id,

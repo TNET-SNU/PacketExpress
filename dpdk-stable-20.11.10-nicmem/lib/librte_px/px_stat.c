@@ -1,13 +1,16 @@
 #include "px_stat.h"
+#include <signal.h>
+#include <time.h>
 /*----------------------------------------------------------------------------*/
-static pthread_t g_stat_thread = 0;
+// static pthread_t g_stat_thread = 0;
 static struct px_stat g_px_stat[RTE_MAX_ETHPORTS][PX_MAX_QUEUES_PER_PORT] = {0};
-static volatile int g_shutdown = 1;
+static volatile int g_stat_interval = 1;
 /*----------------------------------------------------------------------------*/
 void px_update_stats(uint16_t port_id,
                      uint16_t queue_id,
                      struct rte_mbuf **pkts,
-                     const uint16_t nb_pkts)
+                     const uint16_t nb_pkts,
+                     struct timespec *now_ns)
 {
     struct px_stat *stat;
     struct rte_mbuf *pkt;
@@ -40,6 +43,13 @@ void px_update_stats(uint16_t port_id,
         if (data_len)
         {
             data_pkt_cnt++;
+#if PX_MEASURE_DELAY
+            if (now_ns)
+            {
+                stat->delay_us +=
+                    get_usec_diff(now_ns, get_timestamp_from_headroom(pkt));
+            }
+#endif
             stat->data_pkt_cnt++;
             stat->data_pkt_segs_cnt += pkt->nb_segs;
             stat->data_bytes_cnt += pkt->pkt_len;
@@ -66,8 +76,9 @@ void px_update_stats(uint16_t port_id,
     stat->batch_cnt++;
 }
 /*----------------------------------------------------------------------------*/
-void px_print_stats(void)
+void px_print_stats(int args)
 {
+    (void)args;
     struct px_stat *iter, total = {0};
     int port_id, queue_id;
 
@@ -85,10 +96,16 @@ void px_print_stats(void)
             /* per queue stat */
             printf(" |-[P%2d][Q%2d] "
                    "%5lu Gbps, %5lu Kpps, "
+#if PX_MEASURE_DELAY
+                   "Avg delay: %5lu us, "
+#endif
                    "Avg pkt size: %5lu, Avg segs/pkt: %5lu, "
                    "Avg batch size: %5lu, Num of pkts: %5lu\n",
                    port_id, queue_id,
                    iter->bytes_cnt * 8 / E9, iter->pkt_cnt / E3,
+#if PX_MEASURE_DELAY
+                   iter->data_pkt_cnt ? iter->delay_us / iter->data_pkt_cnt : 0,
+#endif
                    iter->data_pkt_cnt ? iter->data_bytes_cnt / iter->data_pkt_cnt : 0,
                    iter->data_pkt_cnt ? iter->data_pkt_segs_cnt / iter->data_pkt_cnt : 0,
                    iter->batch_cnt ? iter->data_pkt_cnt_in_batch / iter->batch_cnt : 0,
@@ -109,6 +126,9 @@ void px_print_stats(void)
 #endif
             total.pkt_cnt += iter->pkt_cnt;
             total.bytes_cnt += iter->bytes_cnt;
+#if PX_MEASURE_DELAY
+            total.delay_us += iter->delay_us;
+#endif
             total.data_bytes_cnt += iter->data_bytes_cnt;
             total.data_pkt_cnt += iter->data_pkt_cnt;
             total.data_pkt_segs_cnt += iter->data_pkt_segs_cnt;
@@ -121,9 +141,15 @@ void px_print_stats(void)
     }
     printf("[   TOTAL   ] "
            "%5lu Gbps, %5lu Kpps, "
+#if PX_MEASURE_DELAY
+           "Avg delay: %5lu us, "
+#endif
            "Avg pkt size: %5lu, Avg segs/pkt: %5lu, "
            "Avg batch size: %5lu, Num of pkts: %5lu\n\n",
            total.bytes_cnt * 8 / E9, total.pkt_cnt / E3,
+#if PX_MEASURE_DELAY
+           total.data_pkt_cnt ? total.delay_us / total.data_pkt_cnt : 0,
+#endif
            total.data_pkt_cnt ? total.data_bytes_cnt / total.data_pkt_cnt : 0,
            total.data_pkt_cnt ? total.data_pkt_segs_cnt / total.data_pkt_cnt : 0,
            total.batch_cnt ? total.data_pkt_cnt_in_batch / total.batch_cnt : 0,
@@ -137,83 +163,43 @@ void px_print_stats(void)
                (i < UINT16_MAX / DIST_UNIT) ? "  " : "\n");
     }
 #endif
-}
-/*----------------------------------------------------------------------------*/
-void *
-px_stat_cb(void *args)
-{
-    cpu_set_t cpuset;
-    pthread_t thread = pthread_self();
-    int interval = *(int *)args;
-    int core_id;
 
-    core_id = sched_getcpu();
-
-    /* set stat print thread to run on requested core */
-    CPU_ZERO(&cpuset);
-    CPU_SET(core_id, &cpuset);
-    if (pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset))
-    {
-        fprintf(stderr, "pthread_setaffinity_np failed\n");
-        free(args);
-
-        return NULL;
-    }
-    printf("Stat print thread is running on core %d. Interval: %d\n",
-           core_id, interval);
-
-    while (!g_shutdown)
-    {
-        /* print stat every second */
-        sleep(interval);
-        px_print_stats();
-    }
-    free(args);
-
-    return NULL;
+    alarm(g_stat_interval);
 }
 /*----------------------------------------------------------------------------*/
 int px_start_print_thread(unsigned int stat_interval)
 {
     int *args;
+    (void)args;
 
     if (!stat_interval)
     {
         return 0;
     }
 
-    if (g_shutdown)
-    {
-        args = (int *)malloc(sizeof(int));
-        if (!args)
-        {
-            return -1;
-        }
-        *args = stat_interval;
+    g_stat_interval = stat_interval;
 
-        /* turn on the thread */
-        g_shutdown = 0;
-        if (pthread_create(&g_stat_thread, NULL, px_stat_cb, args) != 0)
-        {
-            fprintf(stderr, "pthread_create failed\n");
-            return -1;
-        }
+    struct sigaction sa;
+    sa.sa_handler = px_print_stats;
+    sa.sa_flags = 0;
+    sigemptyset(&sa.sa_mask);
+
+    if (sigaction(SIGALRM, &sa, NULL) == -1)
+    {
+        perror("sigaction failed");
+        return -1;
     }
+
+    alarm(g_stat_interval);
+
+    printf("Stat print thread started with interval %d seconds\n", g_stat_interval);
 
     return 0;
 }
 /*----------------------------------------------------------------------------*/
 int px_stop_print_thread(void)
 {
-    if (!g_shutdown)
-    {
-        g_shutdown = 1;
-        if (pthread_join(g_stat_thread, NULL) < 0)
-        {
-            fprintf(stderr, "pthread_join failed\n");
-            return -1;
-        }
-    }
+    alarm(0);
 
     return 0;
 }

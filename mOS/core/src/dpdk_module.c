@@ -301,7 +301,7 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 	};
 	ret = rte_gro_reassemble_burst(dpc->rmbufs[ifidx].m_table, ret, &gro_param);
 #endif
-	px_update_stats((uint8_t)ifidx, qid, dpc->rmbufs[ifidx].m_table, ret);
+	px_update_stats((uint8_t)ifidx, qid, dpc->rmbufs[ifidx].m_table, ret, NULL);
 #endif
 	dpc->rmbufs[ifidx].len = ret;
 
@@ -512,6 +512,7 @@ dpdk_load_module_upper_half(void)
 void
 dpdk_load_module_lower_half(void)
 {
+	int num_sockets = rte_socket_count();
 	int portid, rxlcore_id = 0, ret;
 	struct rte_eth_conf port_conf;
 	struct rte_eth_fc_conf fc_conf;	/* for Ethernet flow control settings */
@@ -523,7 +524,7 @@ dpdk_load_module_lower_half(void)
 			|| (g_config.mos->multiprocess && g_config.mos->multiprocess_is_master)) {
 		/* we use two mbuf for one core, respectively data mbuf, key mbuf */
 		// for (rxlcore_id = 0; rxlcore_id < g_config.mos->num_cores; rxlcore_id++) {
-		for (int sid = 0; sid < MAX_SOCKETS; sid++) {
+		for (int sid = 0; sid < num_sockets; sid++) {
 			char name[20];
 			/* create the mbuf pools for tx/rx of session data packets */
 			sprintf(name, "mempool-%d", sid);
@@ -557,8 +558,12 @@ dpdk_load_module_lower_half(void)
 					num_queue++;
 
 			/* re-adjust rss_hf */
-			port_conf = px_eth_conf(portid, NULL, g_key, sizeof(g_key),
-									MBUF_DATA_SIZE,
+			port_conf = px_eth_conf(portid, NULL, g_key, sizeof(g_key), MBUF_DATA_SIZE,
+#if USE_LRO
+                        			1,
+#else
+                        			0,
+#endif
 #if USE_CGRO || USE_DGRO
 									1,
 #else
@@ -577,7 +582,7 @@ dpdk_load_module_lower_half(void)
 			/* init port */
 			printf("[port %u] Initializing port... ", (unsigned) portid);
 			fflush(stdout);
-#if USE_CGRO || NICMEM
+#if (USE_CGRO || NICMEM || NUM_HAIRPIN_Q)
 			ret = px_eth_dev_configure(portid,
 									   num_queue,
 									   num_queue,
@@ -617,7 +622,7 @@ dpdk_load_module_lower_half(void)
 				if (!(g_config.mos->netdev_table->ent[eth_idx]->cpu_mask & (1L << rxlcore_id)))
 					continue;
 				/* first RX queue for data */
-#if USE_CGRO || NICMEM
+#if (USE_CGRO || NICMEM || NUM_HAIRPIN_Q)
 				ret = px_eth_rx_queue_setup(portid, queue_id, nb_rxd,
 											rte_eth_dev_socket_id(portid),
 											&dev_info[portid].default_rxconf,
@@ -683,7 +688,7 @@ dpdk_load_module_lower_half(void)
 			actions[1].type = RTE_FLOW_ACTION_TYPE_VOID;
 			for (uint16_t qid = 0; qid < g_config.mos->num_cores; qid++)
 			{
-				if (px_init(portid, qid, MAX_PKT_BURST, 0, !JUMBO_FRAME ? 4096 : 0, USE_LINK) < 0)
+				if (px_init(portid, qid, MAX_PKT_BURST, !JUMBO_FRAME ? 4096 : 0, USE_LINK) < 0)
 					rte_exit(EXIT_FAILURE, "px_init failed\n");
 				if (px_add_rule(portid, qid, patterns, 2, actions, 2) < 0)
 					rte_exit(EXIT_FAILURE, "px_add_rule failed\n");

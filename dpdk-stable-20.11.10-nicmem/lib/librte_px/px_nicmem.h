@@ -13,7 +13,7 @@ struct px_nicmem_ctx
 {
     uint16_t socket_id;
     uint16_t port_id;
-	uint16_t lro_size;
+	uint16_t pkt_size;
 	unsigned int num_nicmem;
 	struct rte_eth_dev_info dev_info;
     struct rte_eth_rxseg_split rx_seg[2];

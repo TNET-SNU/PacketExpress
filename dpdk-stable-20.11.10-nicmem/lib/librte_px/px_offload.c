@@ -481,7 +481,7 @@ int hp_context_init(int thread_core_id,
     int port_id, core_id;
     static int arg[RTE_MAX_ETHPORTS];
     uint16_t port_num = rte_eth_dev_count_avail();
-    g_num_cores = 16;
+    g_num_cores = 32; // rte_lcore_count()
 
     if (g_thread_core_id != -1)
     {

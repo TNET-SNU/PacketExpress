@@ -4,7 +4,7 @@ static struct rte_mempool *g_ext_pool[RTE_MAX_NUMA_NODES][RTE_MAX_ETHPORTS] = {N
 /*----------------------------------------------------------------------------*/
 int px_nicmem_configure(struct px_nicmem_ctx *nm_ctx,
                         uint16_t port_id,
-                        uint16_t lro_size,
+                        uint16_t pkt_size,
                         unsigned int num_nicmem)
 {
     int sid = rte_eth_dev_socket_id(port_id);
@@ -16,7 +16,7 @@ int px_nicmem_configure(struct px_nicmem_ctx *nm_ctx,
 
     nm_ctx->socket_id = sid;
     nm_ctx->port_id = port_id;
-    nm_ctx->lro_size = lro_size;
+    nm_ctx->pkt_size = pkt_size;
     nm_ctx->num_nicmem = num_nicmem;
 
     if (g_ext_pool[sid][port_id])
@@ -36,9 +36,9 @@ int px_nicmem_configure(struct px_nicmem_ctx *nm_ctx,
         }
     }
 
-    ext_mem[0].elt_size = nm_ctx->lro_size;
+    ext_mem[0].elt_size = nm_ctx->pkt_size;
     ext_mem[0].buf_len = nm_ctx->num_nicmem *
-                         nm_ctx->lro_size;
+                         nm_ctx->pkt_size;
 
     // MEM_NIC_PINNED
     fprintf(stderr, "Alloc nic pinned mem on port %d\n", port_id);
@@ -122,8 +122,8 @@ int px_nicmem_setup(struct px_nicmem_ctx *nm_ctx,
                     struct rte_eth_rxconf *rx_conf,
                     struct rte_mempool *mp)
 {
-    fprintf(stderr, "[%d][%d]: lro_size: %u\n",
-           nm_ctx->socket_id, nm_ctx->port_id, nm_ctx->lro_size);
+    fprintf(stderr, "[%d][%d]: pkt_size: %u\n",
+           nm_ctx->socket_id, nm_ctx->port_id, nm_ctx->pkt_size);
 
     if (nm_ctx->num_nicmem)
     {
@@ -133,7 +133,7 @@ int px_nicmem_setup(struct px_nicmem_ctx *nm_ctx,
             .offset = 0};
         nm_ctx->rx_seg[1] = (struct rte_eth_rxseg_split){
             .mp = g_ext_pool[nm_ctx->socket_id][nm_ctx->port_id],
-            .length = nm_ctx->lro_size,
+            .length = nm_ctx->pkt_size,
             .offset = 0};
         rx_conf->rx_seg = (union rte_eth_rxseg *)nm_ctx->rx_seg;
         rx_conf->rx_nseg = 2;

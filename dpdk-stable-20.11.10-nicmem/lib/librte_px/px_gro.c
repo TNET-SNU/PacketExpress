@@ -87,6 +87,46 @@ compare_seq(struct rte_mbuf *pkt1,
     return 0;
 }
 /*----------------------------------------------------------------------------*/
+/* Check if two UDP/IPv4 packets are neighbors. */
+/*
+ * 0: not related
+ * 1: append
+ * 2: prepend
+ */
+static inline uint32_t
+compare_ipid(struct rte_mbuf *pkt1,
+             struct rte_mbuf *pkt2)
+{
+    uint16_t id1 = ntohs(*get_ip_id(pkt1));
+    uint16_t id2 = ntohs(*get_ip_id(pkt2));
+
+    /* append or pre-pend the new packet */
+    if (is_nicmem(pkt1))
+    {
+        if ((id1 + (pkt1->nb_segs / 2)) == id2)
+        {
+            return 1;
+        }
+        if ((id2 + (pkt2->nb_segs / 2)) == id1)
+        {
+            return 2;
+        }
+    }
+    else
+    {
+        if ((id1 + pkt1->nb_segs) == id2)
+        {
+            return 1;
+        }
+        if ((id2 + pkt2->nb_segs) == id1)
+        {
+            return 2;
+        }
+    }
+
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
 /* Check if two TCP/IPv4 packets are neighbors. */
 static inline int
 check_seq_backup(struct rte_mbuf *pkt1,
@@ -187,7 +227,7 @@ merge_tcp(struct px_item *cur_item,
         return 0;
     }
 
-    /* mark as decapsulated */
+    /* mark tail packet as decapsulated */
     mark_decaped(pkt_tail);
 
     /* chain two packets together */
@@ -343,51 +383,60 @@ merge_udp2(struct px_item *cur_item,
 static inline int
 merge_udp3(struct px_item *cur_item,
            struct rte_mbuf *firstseg,
-           struct rte_mbuf *lastseg)
+           struct rte_mbuf *lastseg,
+           uint32_t cmp)
 {
-    struct rte_mbuf *orig_pkt;
-    uint16_t *orig_px_off, *new_px_off, orig_len, new_len;
+    struct rte_mbuf *pkt_head, *pkt_tail;
 
-    orig_pkt = cur_item->firstseg;
+    if (cmp == 1)
+    {
+        pkt_head = cur_item->firstseg;
+        pkt_tail = firstseg;
+    }
+    else
+    {
+        pkt_head = firstseg;
+        pkt_tail = cur_item->firstseg;
+    }
 
     /* check if the IPv4 packet length is greater than DEFAULT_iMTU */
-    if (orig_pkt->l3_len + orig_pkt->l4_len +
-            get_data_len(orig_pkt) + get_data_len(firstseg) + sizeof(uint16_t) >
-        DEFAULT_iMTU)
+    if (pkt_head->pkt_len + get_data_len(pkt_tail) >
+        DEFAULT_iMTU + sizeof(struct rte_ether_hdr))
     {
         return 0;
     }
 
-    /* backup original length to orig_pkt->buf_addr (this is headroom (=-128)) */
-    orig_px_off = (uint16_t *)orig_pkt->buf_addr;
-    if (orig_pkt->nb_segs == 1)
-    {
-        *orig_px_off = htons(get_data_len(orig_pkt));
-    }
-    orig_len = ntohs(*orig_px_off);
-    new_px_off = (uint16_t *)firstseg->buf_addr;
-    if (firstseg->nb_segs == 1)
-    {
-        *new_px_off = htons(get_data_len(firstseg));
-    }
-    new_len = ntohs(*new_px_off);
-
-    /* check segment length match */
-    if (orig_len != new_len)
+    /* check if pktlen is same */
+    if (*get_udp_len(pkt_head) != *get_udp_len(pkt_tail))
     {
         return 0;
     }
 
     /* Concatenation removes the ETH|IP|UDP hdr of tail packet */
-    rte_pktmbuf_adj(firstseg, get_hdr_len(firstseg));
+    if (!rte_pktmbuf_adj(pkt_tail, get_hdr_len(pkt_tail)))
+    {
+        printf("rte_pktmbuf_adj failed\n");
+        return 0;
+    }
 
-    /* chain two UDP datagram together */
-    cur_item->lastseg->next = firstseg;
-    cur_item->lastseg = lastseg;
+    /* mark tail packet as decapsulated */
+    mark_decaped(pkt_tail);
+
+    /* chain two packets together */
+    if (cmp == 1)
+    {
+        cur_item->lastseg->next = firstseg;
+        cur_item->lastseg = lastseg;
+    }
+    else
+    {
+        lastseg->next = cur_item->firstseg;
+        cur_item->firstseg = firstseg;
+    }
 
     /* update number of segments for the merged packet */
-    orig_pkt->nb_segs += firstseg->nb_segs;
-    orig_pkt->pkt_len += firstseg->pkt_len;
+    pkt_head->nb_segs += pkt_tail->nb_segs;
+    pkt_head->pkt_len += pkt_tail->pkt_len;
 
     return 1;
 }
@@ -418,7 +467,7 @@ concat_packet(struct px_item *cur_item,
 
     /* check if the IPv4 packet length is greater than DEFAULT_iMTU */
     if (unlikely(pkt_head->pkt_len + firstseg->pkt_len - decap_len >
-                 DEFAULT_iMTU + sizeof(struct rte_ether_hdr) - sizeof(uint16_t)))
+                 DEFAULT_iMTU + sizeof(struct rte_ether_hdr)))
     {
         return 0;
     }
@@ -501,22 +550,24 @@ embed_px_hdr2(struct rte_mbuf *pkt)
 /*
  * Add PX trailer at the end of the last segment
  *       ETH|IP|UDP|Payload|UDP|Payload|...|UDP|Payload -->
- * ETH|IP|UDP|Payload|Payload|...|Payload|PX (2B)|}
+ * ETH|IP|UDP|PX (2B)|Payload|Payload|...|Payload}
  */
 static inline void
-embed_px_trailer(struct rte_mbuf *pkt)
+embed_px_hdr3(struct rte_mbuf *pkt)
 {
-    struct rte_mbuf *lastseg;
-    uint16_t *trailer;
+    uint16_t pxhlen = sizeof(uint16_t);
+    uint8_t *ethh = rte_pktmbuf_mtod(pkt, uint8_t *);
+    uint16_t seglen = ntohs(*get_udp_len(pkt)) - sizeof(struct rte_udp_hdr);
+    uint8_t *pxh;
 
-    lastseg = rte_pktmbuf_lastseg(pkt);
+    /* move ETH|IP|UDP hdr to leftside by 2B */
+    rte_pktmbuf_prepend(pkt, pxhlen);
+    memmove(rte_pktmbuf_mtod(pkt, uint8_t *), ethh,
+            pkt->l2_len + pkt->l3_len + pkt->l4_len);
 
-    /* copy original length to trailer */
-    trailer = rte_pktmbuf_mtod_offset(lastseg, uint16_t *, lastseg->data_len);
-    *trailer = *(uint16_t *)pkt->buf_addr;
-
-    /* add 2B to write original segment length */
-    rte_pktmbuf_append(pkt, sizeof(uint16_t));
+    /* write PX hdr */
+    pxh = get_payload(pkt);
+    *(uint16_t *)pxh = htons(seglen);
 }
 /*----------------------------------------------------------------------------*/
 /*
@@ -554,7 +605,7 @@ update_udp(struct rte_mbuf *pkt)
     {
         // embed_px_hdr(pkt);
         // embed_px_hdr2(pkt);
-        embed_px_trailer(pkt);
+        embed_px_hdr3(pkt);
     }
 
     /* update IP len */
@@ -587,11 +638,11 @@ unset_tcppsh(struct rte_mbuf *pkt)
 /*----------------------------------------------------------------------------*/
 static inline void
 update_tcp(struct rte_mbuf *pkt,
-           uint16_t tso_segsz)
+           uint16_t segsz)
 {
-    if (get_data_len(pkt) > tso_segsz)
+    if (get_data_len(pkt) > segsz)
     {
-        setup_tso(pkt, tso_segsz);
+        setup_tso(pkt, segsz);
         unset_tcppsh(pkt);
     }
     else
@@ -955,6 +1006,9 @@ separate_edge_seg(struct px_ctx *pctx,
                 goto err;
             }
             seq_diff = prev->data_len - hdr_size + edge->data_len;
+#if PX_MEASURE_DELAY
+            copy_timestamp(edge_head, pkt);
+#endif
         }
         /* restore the chain to next mbuf */
         prev->next = edge;
@@ -987,6 +1041,9 @@ separate_edge_seg(struct px_ctx *pctx,
                 goto err;
             }
             seq_diff = edge->data_len - hdr_size;
+#if PX_MEASURE_DELAY
+            copy_timestamp(edge_head, pkt);
+#endif
         }
     }
 
@@ -1061,9 +1118,18 @@ Enqueue:
     //        pctx->now_ns.tv_sec, pctx->now_ns.tv_nsec,
     //        timestamp->tv_sec, timestamp->tv_nsec);
     /* give up merge and enqueue to stall ring */
-    if (is_udp(firstseg) && (firstseg->nb_segs > 1))
+    if (is_udp(firstseg))
     {
-        update_udp(firstseg);
+        /* if nicmem enabled, nb_segs is 2 by default */
+        if ((g_px_dev[pctx->port_id].nm_ctx.num_nicmem > 0) && (firstseg->nb_segs > 2))
+        {
+            update_udp(firstseg);
+        }
+        /* if nicmem disabled, nb_segs is 1 by default */
+        if ((g_px_dev[pctx->port_id].nm_ctx.num_nicmem == 0) && (firstseg->nb_segs > 1))
+        {
+            update_udp(firstseg);
+        }
     }
 
     if (pctx->do_link)
@@ -1090,10 +1156,11 @@ assemble_udp(struct px_ctx *pctx,
              struct rte_mbuf *lastseg,
              struct timespec *timestamp)
 {
-    struct px_item *cur_item;
+    struct px_item *cur_item, *prev_item, *merged_item;
     struct px_flow *cur_flow;
     uint16_t bucket_idx, start_flow_idx;
     unsigned int timeout_ns = g_px_dev[pctx->port_id].timeout_ns;
+    uint32_t cmp;
     struct px_rule *rule = TAILQ_FIRST(&pctx->rule_set.rules);
 
     /* get pointer to key (4-tuple) */
@@ -1123,18 +1190,58 @@ assemble_udp(struct px_ctx *pctx,
         cur_flow = &pctx->flows[cur_flow->next_flow_idx];
     }
 
-    cur_item = &pctx->items[cur_flow->cur_item_idx];
-    // if (!merge_udp(cur_item, firstseg, lastseg))
-    // if (!merge_udp2(cur_item, firstseg, lastseg))
-    if (!merge_udp3(cur_item, firstseg, lastseg))
+    /* find first neighbor item for the input pkt */
+    prev_item = cur_item = &pctx->items[cur_flow->start_item_idx];
+    while (!(cmp = compare_ipid(cur_item->firstseg, firstseg)))
+    {
+        /* this item is not neighbor of input pkt */
+        if (cur_item->next_item_idx == INVALID_INDEX)
+        {
+            /* end of item list; no neighbor items matched */
+            insert_item(pctx, firstseg, lastseg, cur_item, timestamp);
+            return;
+        }
+        prev_item = cur_item;
+        cur_item = &pctx->items[cur_item->next_item_idx];
+    }
+
+    /* found first neighbor item */
+    if (!merge_udp3(cur_item, firstseg, lastseg, cmp))
+    {
+        /* bigger than 9KB; store this packet as a new item in the given flow */
+        insert_item(pctx, firstseg, lastseg, cur_item, timestamp);
+        return;
+    }
+
+    /* now pkt is merged to one item, so we dont need to insert new item */
+    merged_item = cur_item;
+
+    /* update timestamp of merged item */
+    if (timeout_ns)
+    {
+        update_timestamp(&merged_item->timestamp, timestamp);
+    }
+
+    /*
+     * to solve C -> A -> B (or A -> C -> B) issue,
+     * find second neighbor item for the input pkt
+     */
+    do
+    {
+        /* this item is not neighbor of input pkt */
+        if (cur_item->next_item_idx == INVALID_INDEX)
+        {
+            /* end of item list; no neighbor items matched */
+            return;
+        }
+        prev_item = cur_item;
+        cur_item = &pctx->items[cur_item->next_item_idx];
+    } while (!(cmp = compare_ipid(merged_item->firstseg, cur_item->firstseg)));
+
+    /* found second neighbor item */
+    if (!merge_udp3(merged_item, cur_item->firstseg, cur_item->lastseg, cmp))
     {
         /* current item length is bigger than 9KB */
-
-        /* update current item index */
-        cur_flow->cur_item_idx = pctx->item_num;
-
-        /* store this packet as a new item */
-        insert_item(pctx, firstseg, lastseg, cur_item, timestamp);
         return;
     }
 
@@ -1143,6 +1250,9 @@ assemble_udp(struct px_ctx *pctx,
     {
         update_timestamp(&cur_item->timestamp, timestamp);
     }
+
+    /* merged again; remove current item because it is merged to prior item */
+    prev_item->next_item_idx = cur_item->next_item_idx;
 }
 /*----------------------------------------------------------------------------*/
 /*
@@ -1293,21 +1403,36 @@ assemble_tcp(struct px_ctx *pctx,
 }
 /*----------------------------------------------------------------------------*/
 static inline void
-parse_dtb(struct rte_mbuf *pkt, uint16_t *nh_mtu, struct four_tuple **ft)
+parse_dtb(struct rte_mbuf *pkt,
+          uint16_t *nh_mtu,
+          struct four_tuple **ft)
 {
-    struct rte_icmp_hdr *icmp_hdr;
-    struct rte_ipv4_hdr *inner_ip_hdr;
-    icmp_hdr = rte_pktmbuf_mtod_offset(pkt,
-                                       struct rte_icmp_hdr *,
-                                       pkt->l2_len + pkt->l3_len);
-    *nh_mtu = ntohs(icmp_hdr->icmp_ident);
+    uint16_t *nh_mtu_ptr = get_icmp_nh_mtu(pkt);
+    *nh_mtu = ntohs(*nh_mtu_ptr);
     if (*nh_mtu == 0)
     {
         *nh_mtu = FALLBACK_eMTU;
     }
 
-    inner_ip_hdr = (struct rte_ipv4_hdr *)(icmp_hdr + 1);
-    *ft = (struct four_tuple *)&inner_ip_hdr->src_addr;
+    *ft = get_icmp_inner_four_tuple(pkt);
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+update_dtb(struct rte_mbuf *pkt,
+           uint16_t nh_mtu)
+{
+    uint16_t *icmp_csum_ptr, *nh_mtu_ptr;
+    uint16_t old_nh_mtu, old_csum;
+    nh_mtu_ptr = get_icmp_nh_mtu(pkt);
+    old_nh_mtu = ntohs(*nh_mtu_ptr);
+    *nh_mtu_ptr = htons(nh_mtu);
+
+    /* Update checksum incrementally */
+    icmp_csum_ptr = get_icmp_csum(pkt);
+    old_csum = *icmp_csum_ptr;
+    *icmp_csum_ptr = inc_csum_update(old_csum,
+                                     old_nh_mtu,
+                                     nh_mtu);
 }
 /*----------------------------------------------------------------------------*/
 static inline int
@@ -1423,28 +1548,54 @@ parse_packet(struct px_ctx *pctx,
     /* parse L4 */
     if (is_tcp(pkt))
     {
-        put_4tuple_to_headroom(pkt);
+        /* target for offloading */
+        if (g_px_dev[pctx->port_id].hp_ctx.hp_num_rxq)
+        {
+            put_4tuple_to_headroom(pkt);
+        }
         ret = parse_for_tcp_gro(pkt, tcp_flags);
+
+        /* check if the pkt is outgoing */
+        if (is_uplink(pkt))
+        {
+            mark_px(pkt);
+        }
 
         /* use below when stop TCP GRO */
         // return -1;
     }
     else if (is_udp(pkt))
     {
-        put_4tuple_to_headroom(pkt);
+        /* target for offloading */
+        if (g_px_dev[pctx->port_id].hp_ctx.hp_num_rxq)
+        {
+            put_4tuple_to_headroom(pkt);
+        }
         *tcp_flags = 0;
+
+        /* backup original length to orig_pkt->buf_addr (this is headroom (=-128)) */
+        uint16_t *orig_px_off = (uint16_t *)pkt->buf_addr;
+        *orig_px_off = htons(get_data_len(pkt));
         ret = parse_for_udp_gro(pkt);
 
+        /* check if the pkt is outgoing */
+        if (is_uplink(pkt))
+        {
+            mark_px(pkt);
+            // return -1;
+        }
+
         /* use below when stop UDP GRO */
-        return -1;
+        // return -1;
     }
     else if (pctx->mss_ctx && is_icmp(pkt))
     {
+        /* non-target for offloading */
         *tcp_flags = 0;
-        if (is_dtb(pkt))
+        if (is_dtb(pkt) && is_downlink(pkt))
         {
             parse_dtb(pkt, &nh_mtu, &key);
-            printf("[DTB] Next-Hop MTU: %u\n", nh_mtu);
+            fprintf(stderr, "[DTB] Next-Hop MTU: %u\n", nh_mtu);
             reverse_key = (struct four_tuple){
                 .src_ip = key->dst_ip,
                 .dst_ip = key->src_ip,
@@ -1476,12 +1627,16 @@ parse_packet(struct px_ctx *pctx,
                              reverse_rss,
                              &reverse_key,
                              nh_mtu);
+
+            /* modify the next-hop MTU */
+            update_dtb(pkt, DEFAULT_iMTU);
         }
 
         return -1;
     }
     else
     {
+        /* non-target for offloading */
         *tcp_flags = 0;
         return -1;
     }
@@ -1493,6 +1648,15 @@ parse_packet(struct px_ctx *pctx,
     if (unlikely(pkt->pkt_len <= get_hdr_len(pkt)))
     {
         return -1;
+    }
+
+    /* if nicmem is on, try GRO for packets larger than nicmem DMA size (128B) */
+    if (g_px_dev[pctx->port_id].nm_ctx.num_nicmem > 0)
+    {
+        if (pkt->nb_segs < 2)
+        {
+            return -1;
+        }
     }
 
     return ret;
@@ -1529,7 +1693,18 @@ void px_parse_batch(uint16_t port_id,
                 }
 
                 /* update MSS */
-                update_mss(mss_ptr);
+#if SEMANTIC_TEST
+                if (is_uplink(pkt))
+                {
+                    update_mss(mss_ptr, 0);
+                }
+                else
+                {
+                    update_mss(mss_ptr, 1);
+                }
+#else
+                update_mss(mss_ptr, 1);
+#endif
             }
         }
     }
@@ -1541,7 +1716,7 @@ void px_setup_tso_burst(uint16_t port_id,
                         uint16_t nb_pkts)
 {
     struct rte_mbuf *pkt;
-    uint16_t tso_segsz;
+    uint16_t segsz;
     uint16_t i;
     (void)port_id, (void)queue_id;
 
@@ -1556,12 +1731,25 @@ void px_setup_tso_burst(uint16_t port_id,
         }
         pkt->l4_len = (*get_tcp_doff(pkt) >> 4) << 2;
 
-        // tso_segsz = (DEFAULT_iMTU - pkt->l3_len - pkt->l4_len);
-        tso_segsz = (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len) *
-                    (DEFAULT_iMTU / DEFAULT_eMTU);
-        if (get_data_len(pkt) > tso_segsz)
+#if SEMANTIC_TEST
+        if (is_uplink(pkt))
         {
-            setup_tso(pkt, tso_segsz);
+            segsz = (DEFAULT_iMTU - pkt->l3_len - pkt->l4_len);
+        }
+        else
+        {
+            segsz = (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len) *
+                    ((DEFAULT_iMTU - pkt->l3_len - pkt->l4_len) /
+                     (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len));
+        }
+#else
+        segsz = (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len) *
+                ((DEFAULT_iMTU - pkt->l3_len - pkt->l4_len) /
+                 (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len));
+#endif
+        if (get_data_len(pkt) > segsz)
+        {
+            setup_tso(pkt, segsz);
         }
         else
         {
@@ -1658,6 +1846,9 @@ px_uso_burst(struct px_ctx *pctx,
                 *iplen = htons(pkt->l3_len + pkt->l4_len + last_seglen);
                 udplen = get_udp_len(hdr_clone);
                 *udplen = htons(pkt->l4_len + last_seglen);
+#if PX_MEASURE_DELAY
+                copy_timestamp(hdr_clone, pkt);
+#endif
             }
             else
             {
@@ -1704,7 +1895,7 @@ link_and_flush(struct px_ctx *pctx,
     struct rte_mbuf *tmp, *start_pkt, *prev_pkt, *cur_pkt, *edge;
     struct px_flow *cur_flow;
     struct px_item *cur_item;
-    uint16_t item_idx, tso_segsz, last_segsz, idx = 0;
+    uint16_t item_idx, segsz, last_segsz, idx = 0;
     uint16_t *start_id, id_diff;
 
     for (int i = 0; i < pctx->flow_num; i++)
@@ -1728,14 +1919,23 @@ link_and_flush(struct px_ctx *pctx,
         tmp = pctx->items[item_idx].firstseg;
         if (pctx->mss_ctx && is_tcp(tmp))
         {
-            search_mss_entry(pctx->mss_ctx,
-                             tmp->hash.rss,
-                             get_four_tuple(tmp),
-                             &tso_segsz);
+            /* if outgoing packet, use original eMSS */
+            if (is_px(tmp))
+            {
+                search_mss_entry(pctx->mss_ctx,
+                                 tmp->hash.rss,
+                                 get_four_tuple(tmp),
+                                 &segsz);
+            }
+            /* if incoming packet, use our iMSS */
+            else
+            {
+                segsz = 0;
+            }
         }
         else
         {
-            tso_segsz = 0;
+            segsz = 0;
         }
 
         /* process the others after the first item */
@@ -1747,29 +1947,46 @@ link_and_flush(struct px_ctx *pctx,
 
             if (is_tcp(cur_pkt))
             {
-                if (tso_segsz)
+                if (segsz)
                 {
-                    tso_segsz -= cur_pkt->l4_len - sizeof(struct rte_tcp_hdr);
+                    /* subtract TCP option length */
+                    segsz -= cur_pkt->l4_len - sizeof(struct rte_tcp_hdr);
                 }
                 else
                 {
 #if SEMANTIC_TEST
-                    tso_segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len);
+                    if (is_px(cur_pkt))
+                    {
+                        segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len);
+                    }
+                    else
+                    {
+                        segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len) *
+                                ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
+                                 (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len));
+                    }
 #else
-                    tso_segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len) *
-                                (DEFAULT_iMTU / DEFAULT_eMTU);
+                    segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len) *
+                            ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
+                             (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len));
 #endif
                 }
+
+                /* check if delayed merging needed and if is from outside */
+#if SEMANTIC_TEST
+                if (g_px_dev[pctx->port_id].timeout_ns && !is_px(cur_pkt))
+#else
                 if (g_px_dev[pctx->port_id].timeout_ns)
+#endif
                 {
                     /* check if current packet should be stalled */
-                    if (get_data_len(cur_pkt) < tso_segsz)
+                    if (get_data_len(cur_pkt) < segsz)
                     {
                         /*
                          * size of this packet is R < 9K
                          * stall current packet (R) to merge more
                          */
-                        update_tcp(cur_pkt, tso_segsz);
+                        update_tcp(cur_pkt, segsz);
                         handle_incomplete(pctx,
                                           cur_pkt,
                                           cur_item->lastseg,
@@ -1778,7 +1995,7 @@ link_and_flush(struct px_ctx *pctx,
                     }
 
                     /* check if edge duplication is needed */
-                    last_segsz = get_data_len(cur_pkt) % tso_segsz;
+                    last_segsz = get_data_len(cur_pkt) % segsz;
                     if (last_segsz &&
                         (edge = separate_edge_seg(pctx, cur_pkt, last_segsz)))
                     {
@@ -1787,25 +2004,49 @@ link_and_flush(struct px_ctx *pctx,
                          * flush complete packets (N)
                          * stall duplicated edge (R) to merge more
                          */
-                        update_tcp(edge, tso_segsz);
+                        update_tcp(edge, segsz);
                         handle_incomplete(pctx,
                                           edge,
                                           rte_pktmbuf_lastseg(edge),
                                           &cur_item->timestamp);
                     }
                 }
-                // printf("tso_segsz: %d\n", tso_segsz);
-                update_tcp(cur_pkt, tso_segsz);
+                // printf("segsz: %d\n", segsz);
+                update_tcp(cur_pkt, segsz);
             }
             else if (is_udp(cur_pkt))
             {
+                if (!segsz)
+                {
+#if SEMANTIC_TEST
+                    /* if outgoing packet */
+                    if (is_px(cur_pkt))
+                    {
+                        /* ToDo: Get the eMTU size from the PX header */
+                        segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len);
+                    }
+                    /* if incoming packet */
+                    else
+                    {
+                        segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len) *
+                                ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
+                                 (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len));
+                    }
+#else
+                    segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len) *
+                            ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
+                             (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len));
+#endif
+                }
+                /* check if delayed merging needed and if is from outside */
+#if SEMANTIC_TEST
+                if (g_px_dev[pctx->port_id].timeout_ns && !is_px(cur_pkt))
+#else
                 if (g_px_dev[pctx->port_id].timeout_ns)
+#endif
                 {
                     /* check if current packet should be stalled */
-                    if (cur_pkt->pkt_len - cur_pkt->l2_len +
-                            (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len) +
-                            sizeof(uint16_t) <=
-                        DEFAULT_iMTU)
+                    if (get_data_len(cur_pkt) < segsz)
                     {
                         /*
                          * size of this packet < 9K
@@ -1817,11 +2058,9 @@ link_and_flush(struct px_ctx *pctx,
                                           &cur_item->timestamp);
                         continue;
                     }
+                    // printf("get_data_len(cur_pkt): %d, segsz: %d\n", get_data_len(cur_pkt), segsz);
                 }
-                if (cur_pkt->nb_segs > 1)
-                {
-                    update_udp(cur_pkt);
-                }
+                update_udp(cur_pkt);
 
                 /* make UDP packets continuous for UDP_GRO at endpoints */
                 if (!start_id)
@@ -1961,139 +2200,7 @@ px_core(struct px_ctx *pctx,
     int i;
     struct px_rule *rule = TAILQ_FIRST(&pctx->rule_set.rules);
 
-    /* Stage 1: Parse and try GRO */
-    for (i = 0; i < nb_pkts; i++)
-    {
-        pkt = pkts[i];
-
-        /* check packet can be GROed */
-        if (parse_packet(pctx, pkt, &tcp_flags) < 0)
-        {
-            /* it cannot be GROed */
-            if (!rule->dec_act.do_concat && pctx->do_link)
-            {
-                clear_link(pkt);
-            }
-
-            /* check if MTU translation necessary */
-
-            /* check SYN flag */
-            if (tcp_flags & RTE_TCP_SYN_FLAG)
-            {
-
-                /* mss parsing */
-                mss_ptr = get_tcp_mss(pkt);
-                if (!mss_ptr)
-                {
-                    fprintf(stderr, "[Err] no MSS field\n");
-                    /* push back */
-                    pkts[cnt++] = pkt;
-                    continue;
-                }
-
-                if (pctx->mss_ctx)
-                {
-                    /* get four tuple and reverse four tuple */
-                    key = get_four_tuple(pkt);
-                    reverse_key = (struct four_tuple){
-                        .src_ip = key->dst_ip,
-                        .dst_ip = key->src_ip,
-                        .src_port = key->dst_port,
-                        .dst_port = key->src_port,
-                    };
-                    reverse_key_le = (struct four_tuple){
-                        .src_ip = ntohl(key->dst_ip),
-                        .dst_ip = ntohl(key->src_ip),
-                        .src_port = ntohs(key->src_port),
-                        .dst_port = ntohs(key->dst_port),
-                    };
-                    reverse_rss = rte_softrss((uint32_t *)&reverse_key_le,
-                                              sizeof(struct four_tuple) >> 2,
-                                              g_rss_key);
-                    // if (tcp_flags & RTE_TCP_ACK_FLAG)
-                    // {
-                    //     printf("[SYNACK] rss: %u, reverse_rss: %u\n", pkt->hash.rss, reverse_rss);
-                    // }
-                    // else
-                    // {
-                    //     printf("[SYN] rss: %u, reverse_rss: %u\n", pkt->hash.rss, reverse_rss);
-                    // }
-
-                    /* ToDo: we should consider ReTa */
-
-                    inner_qid = reverse_rss %
-                                (g_px_dev[pkt->port].num_rxq *
-                                 g_px_dev[pkt->port].num_rxq_incr);
-                    outer_qid = inner_qid / g_px_dev[pkt->port].num_rxq_incr;
-                    new_pctx = &g_pctx[pkt->port][outer_qid];
-
-                    /* insert MSS to hashtable */
-                    insert_mss_entry(new_pctx->mss_ctx,
-                                     reverse_rss,
-                                     &reverse_key,
-                                     ntohs(*mss_ptr));
-                }
-
-                /* update MSS */
-                update_mss(mss_ptr);
-            }
-
-            /* check FIN | RST flag */
-            if (tcp_flags & (RTE_TCP_FIN_FLAG | RTE_TCP_RST_FLAG))
-            {
-                if (pctx->mss_ctx)
-                {
-                    /* get four tuple and reverse four tuple */
-                    key = get_four_tuple(pkt);
-                    reverse_key = (struct four_tuple){
-                        .src_ip = key->dst_ip,
-                        .dst_ip = key->src_ip,
-                        .src_port = key->dst_port,
-                        .dst_port = key->src_port,
-                    };
-                    reverse_key_le = (struct four_tuple){
-                        .src_ip = ntohl(key->dst_ip),
-                        .dst_ip = ntohl(key->src_ip),
-                        .src_port = ntohs(key->src_port),
-                        .dst_port = ntohs(key->dst_port),
-                    };
-                    reverse_rss = rte_softrss((uint32_t *)&reverse_key_le,
-                                              sizeof(struct four_tuple) >> 2,
-                                              g_rss_key);
-                    // printf("[FIN/RST] rss: %u, reverse_rss: %u\n", pkt->hash.rss, reverse_rss);
-
-                    /* ToDo: we should consider ReTa */
-
-                    inner_qid = reverse_rss %
-                                (g_px_dev[pkt->port].num_rxq *
-                                 g_px_dev[pkt->port].num_rxq_incr);
-                    outer_qid = inner_qid / g_px_dev[pkt->port].num_rxq_incr;
-                    new_pctx = &g_pctx[pkt->port][outer_qid];
-
-                    /* evict MSSes from hashtable */
-                    evict_mss_entry(new_pctx->mss_ctx,
-                                    reverse_rss,
-                                    &reverse_key);
-                }
-            }
-
-            /* push back */
-            pkts[cnt++] = pkt;
-            continue;
-        }
-
-        /* try GRO */
-        if (is_tcp(pkt))
-        {
-            assemble_tcp(pctx, pkt, rte_pktmbuf_lastseg(pkt), &pctx->now_ns);
-        }
-        else if (is_udp(pkt))
-        {
-            assemble_udp(pctx, pkt, rte_pktmbuf_lastseg(pkt), &pctx->now_ns);
-        }
-    }
-
-    /* Stage 2: try GRO with stalled items */
+    /* Stage 1: try GRO with stalled items */
     if (g_px_dev[pctx->port_id].timeout_ns)
     {
         stall = &pctx->stalls[pctx->latent_id];
@@ -2112,6 +2219,159 @@ px_core(struct px_ctx *pctx,
             }
         }
         stall->num = 0;
+    }
+
+    /* Stage 2: Parse and try GRO */
+    for (i = 0; i < nb_pkts; i++)
+    {
+        pkt = pkts[i];
+
+        /* check packet can be GROed */
+        if (parse_packet(pctx, pkt, &tcp_flags) < 0)
+        {
+            /* it cannot be GROed */
+            if (!rule->dec_act.do_concat && pctx->do_link)
+            {
+                clear_link(pkt);
+            }
+
+            /* check if MTU translation necessary */
+            if (pctx->mss_ctx)
+            {
+                /* if packet is from outside */
+                if (!is_px(pkt))
+                {
+                    /* check SYN/SYNACK */
+                    if (tcp_flags & RTE_TCP_SYN_FLAG)
+                    {
+                        /* mss parsing */
+                        mss_ptr = get_tcp_mss(pkt);
+                        if (!mss_ptr)
+                        {
+                            fprintf(stderr, "[Err] no MSS field\n");
+                            /* push back */
+                            pkts[cnt++] = pkt;
+                            continue;
+                        }
+
+                        /* get four tuple and reverse four tuple */
+                        key = get_four_tuple(pkt);
+                        reverse_key = (struct four_tuple){
+                            .src_ip = key->dst_ip,
+                            .dst_ip = key->src_ip,
+                            .src_port = key->dst_port,
+                            .dst_port = key->src_port,
+                        };
+                        reverse_key_le = (struct four_tuple){
+                            .src_ip = ntohl(key->dst_ip),
+                            .dst_ip = ntohl(key->src_ip),
+                            .src_port = ntohs(key->src_port),
+                            .dst_port = ntohs(key->dst_port),
+                        };
+                        reverse_rss = rte_softrss((uint32_t *)&reverse_key_le,
+                                                  sizeof(struct four_tuple) >> 2,
+                                                  g_rss_key);
+                        // if (tcp_flags & RTE_TCP_ACK_FLAG)
+                        // {
+                        //     printf("[SYNACK] rss: %u, reverse_rss: %u\n", pkt->hash.rss, reverse_rss);
+                        // }
+                        // else
+                        // {
+                        //     printf("[SYN] rss: %u, reverse_rss: %u\n", pkt->hash.rss, reverse_rss);
+                        // }
+
+                        /* ToDo: we should consider ReTa */
+
+                        inner_qid = reverse_rss %
+                                    (g_px_dev[pkt->port].num_rxq *
+                                     g_px_dev[pkt->port].num_rxq_incr);
+                        outer_qid = inner_qid / g_px_dev[pkt->port].num_rxq_incr;
+                        new_pctx = &g_pctx[pkt->port][outer_qid];
+
+                        /* insert MSS to hashtable */
+                        insert_mss_entry(new_pctx->mss_ctx,
+                                         reverse_rss,
+                                         &reverse_key,
+                                         ntohs(*mss_ptr));
+
+                        // if (tcp_flags & RTE_TCP_ACK_FLAG)
+                        // {
+                        //     hexdump("SYNACK", rte_pktmbuf_mtod(pkt, uint8_t *), pkt->data_len);
+                        // }
+                        // else
+                        // {
+                        //     hexdump("SYN", rte_pktmbuf_mtod(pkt, uint8_t *), pkt->data_len);
+                        // }
+                        /* update MSS */
+                        update_mss(mss_ptr, 1);
+                    }
+                    /* check FIN/RST */
+                    else if (tcp_flags & (RTE_TCP_FIN_FLAG | RTE_TCP_RST_FLAG))
+                    {
+                        /* evict if it is incoming */
+                        if (pctx->mss_ctx && !is_px(pkt))
+                        {
+                            /* get four tuple and reverse four tuple */
+                            key = get_four_tuple(pkt);
+                            reverse_key = (struct four_tuple){
+                                .src_ip = key->dst_ip,
+                                .dst_ip = key->src_ip,
+                                .src_port = key->dst_port,
+                                .dst_port = key->src_port,
+                            };
+                            reverse_key_le = (struct four_tuple){
+                                .src_ip = ntohl(key->dst_ip),
+                                .dst_ip = ntohl(key->src_ip),
+                                .src_port = ntohs(key->src_port),
+                                .dst_port = ntohs(key->dst_port),
+                            };
+                            reverse_rss = rte_softrss((uint32_t *)&reverse_key_le,
+                                                      sizeof(struct four_tuple) >> 2,
+                                                      g_rss_key);
+                            // printf("[FIN/RST] rss: %u, reverse_rss: %u\n", pkt->hash.rss, reverse_rss);
+
+                            /* ToDo: we should consider ReTa */
+
+                            inner_qid = reverse_rss %
+                                        (g_px_dev[pkt->port].num_rxq *
+                                         g_px_dev[pkt->port].num_rxq_incr);
+                            outer_qid = inner_qid / g_px_dev[pkt->port].num_rxq_incr;
+                            new_pctx = &g_pctx[pkt->port][outer_qid];
+
+                            /* evict MSSes from hashtable */
+                            evict_mss_entry(new_pctx->mss_ctx,
+                                            reverse_rss,
+                                            &reverse_key);
+                        }
+                    }
+                }
+                /* if packet is from inside */
+                else
+                {
+                    if (tcp_flags & RTE_TCP_SYN_FLAG)
+                    {
+                        /* mss parsing */
+                        mss_ptr = get_tcp_mss(pkt);
+                        /* update MSS */
+                        update_mss(mss_ptr, 0);
+                    }
+                }
+            }
+
+            /* push back */
+            pkts[cnt++] = pkt;
+            continue;
+        }
+
+        /* try GRO */
+        if (is_tcp(pkt))
+        {
+            assemble_tcp(pctx, pkt, rte_pktmbuf_lastseg(pkt), &pctx->now_ns);
+        }
+        else if (is_udp(pkt))
+        {
+            assemble_udp(pctx, pkt, rte_pktmbuf_lastseg(pkt), &pctx->now_ns);
+        }
     }
 
     cnt += link_and_flush(pctx, pkts + cnt, nb_pkts - cnt);
@@ -2201,10 +2461,10 @@ void px_deinit(uint16_t port_id,
     /* reset pctx */
     memset(pctx, 0, sizeof(*pctx));
 
-    if (px_stop_print_thread() < 0)
-    {
-        rte_exit(EXIT_FAILURE, "Error joining stat thread\n");
-    }
+    // if (px_stop_print_thread() < 0)
+    // {
+    //     rte_exit(EXIT_FAILURE, "Error joining stat thread\n");
+    // }
 
     if (g_px_dev[port_id].hp_ctx.hp_num_rxq)
     {
@@ -2215,7 +2475,6 @@ void px_deinit(uint16_t port_id,
 int px_init(uint16_t port_id,
             uint16_t queue_id,
             int burst,
-            unsigned int stat_interval,
             int mss_table_size,
             int do_link)
 {
@@ -2257,7 +2516,7 @@ int px_init(uint16_t port_id,
     {
         /* ToDo: Use mempool for items, flows, buckets, stalls array
          * estimate the buffer size as BW * Delay */
-        table_size = burst * 100;
+        table_size = UINT16_MAX;
     }
     else
     {
@@ -2285,7 +2544,7 @@ int px_init(uint16_t port_id,
     pctx->flow_num = pctx->item_num = 0;
 
     /* use larger table for buckets to reduce collision */
-    pctx->bucket_size = pctx->array_size * 2;
+    pctx->bucket_size = UINT16_MAX;
     pctx->buckets = (uint16_t *)calloc(pctx->bucket_size, sizeof(uint16_t));
     if (!pctx->buckets)
     {
@@ -2334,12 +2593,6 @@ int px_init(uint16_t port_id,
         }
     }
 
-    /* thread for stat printing */
-    if (px_start_print_thread(stat_interval) < 0)
-    {
-        rte_exit(EXIT_FAILURE, "Error creating stat thread\n");
-    }
-
     /* initiate hairpin context */
     if (g_px_dev[port_id].hp_ctx.hp_num_rxq)
     {
@@ -2360,7 +2613,8 @@ px_eth_conf(uint16_t port_id,
             struct rte_eth_conf *conf,
             uint8_t *rss_key,
             int rss_key_len,
-            int lro_size,
+            int pkt_size,
+            int is_lro,
             int is_gro,
             int is_nicmem)
 {
@@ -2371,11 +2625,11 @@ px_eth_conf(uint16_t port_id,
     if (!conf)
     {
         conf = &new_conf;
-        if (!rss_key)
-        {
-            rss_key = g_rss_key_default;
-            rss_key_len = sizeof(g_rss_key_default);
-        }
+    }
+    if (!rss_key)
+    {
+        rss_key = g_rss_key_default;
+        rss_key_len = sizeof(g_rss_key_default);
     }
 
     /* backup as global parameters */
@@ -2397,10 +2651,11 @@ px_eth_conf(uint16_t port_id,
     conf->rxmode.max_rx_pkt_len = RTE_ETHER_MAX_LEN;
     conf->rxmode.split_hdr_size = 0;
 
-    if (lro_size > (RTE_ETHER_MAX_LEN / 64 + 1) * 64)
+    if (is_lro)
     {
         conf->rxmode.offloads |= DEV_RX_OFFLOAD_TCP_LRO;
     }
+    conf->rxmode.max_lro_pkt_size = pkt_size;
 
     if (is_gro)
     {
@@ -2418,7 +2673,6 @@ px_eth_conf(uint16_t port_id,
 #endif
     }
 
-    conf->rxmode.max_lro_pkt_size = lro_size;
     if (rss_key)
     {
         conf->rx_adv_conf.rss_conf.rss_key = rss_key;
@@ -2440,10 +2694,11 @@ px_eth_conf(uint16_t port_id,
                              RTE_ETH_TX_OFFLOAD_UDP_CKSUM |
                              RTE_ETH_TX_OFFLOAD_TCP_TSO;
 
-    if (lro_size > (RTE_ETHER_MAX_LEN / 64 + 1) * 64)
+    if (is_lro)
     {
         conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_TCP_LRO;
     }
+    conf->rxmode.max_lro_pkt_size = pkt_size;
 
     if (is_gro)
     {
@@ -2455,7 +2710,7 @@ px_eth_conf(uint16_t port_id,
         conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT |
                                  RTE_ETH_RX_OFFLOAD_SCATTER;
     }
-    conf->rxmode.max_lro_pkt_size = lro_size;
+
     if (rss_key)
     {
         conf->rx_adv_conf.rss_conf.rss_key = rss_key;
@@ -2596,6 +2851,12 @@ int px_eth_dev_configure(uint16_t port_id,
             rte_exit(EXIT_FAILURE, "px_hairpin_configure failed: %d\n", ret);
             return ret;
         }
+    }
+
+    /* thread for stat printing */
+    if (px_start_print_thread(1) < 0)
+    {
+        rte_exit(EXIT_FAILURE, "Error creating stat thread\n");
     }
 
     return ret;
@@ -2748,6 +3009,9 @@ rx_and_px_gro(uint16_t port_id,
                             inner_qid,
                             rx_pkts + total,
                             nb_pkts - total);
+#if PX_MEASURE_DELAY
+    px_set_timestamp_batch(rx_pkts + total, recv, &pctx->now_ns);
+#endif
     // }
     // for (int j = 0; j < recv; j++)
     // {
@@ -2808,6 +3072,9 @@ rx_and_px_gro_delayed(uint16_t port_id,
                                     rx_pkts + total_mq + total_sq,
                                     nb_pkts - total_mq - total_sq);
             // }
+#if PX_MEASURE_DELAY
+            px_set_timestamp_batch(rx_pkts + total_mq + total_sq, recv, &pctx->now_ns);
+#endif
             if (!recv)
             {
                 break;
@@ -2860,7 +3127,11 @@ px_eth_rx_burst(uint16_t port_id,
     }
 
     /* stage 3: update stats */
-    px_update_stats(port_id, queue_id, orig_batch, read_px_rx_ring + read_orig_rx_ring);
+    px_update_stats(port_id,
+                    queue_id,
+                    orig_batch,
+                    read_px_rx_ring + read_orig_rx_ring,
+                    &g_pctx[port_id][queue_id].now_ns);
 
     return read_px_rx_ring + read_orig_rx_ring;
 }

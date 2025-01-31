@@ -2,6 +2,7 @@
 #define PX_STAT_H_
 
 #include "px_common.h"
+#include "px_delay.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -37,6 +38,11 @@ struct px_stat
     uint64_t data_pkt_cnt_in_batch;
     uint64_t batch_cnt;
 
+#if PX_MEASURE_DELAY
+    /* sum of packets' delay in microsecond */
+    uint64_t delay_us;
+#endif
+
 #if PX_MEASURE_DIST
     /* distribution of packets with payload */
     uint64_t dist[UINT16_MAX / DIST_UNIT + 1];
@@ -46,9 +52,10 @@ struct px_stat
 void px_update_stats(uint16_t port_id,
                      uint16_t queue_id,
                      struct rte_mbuf **pkts,
-                     const uint16_t nb_pkts);
+                     const uint16_t nb_pkts,
+                     struct timespec *now_ns);
 /*----------------------------------------------------------------------------*/
-void px_print_stats(void);
+void px_print_stats(int args);
 /*----------------------------------------------------------------------------*/
 void *px_stat_cb(void *args);
 /*----------------------------------------------------------------------------*/

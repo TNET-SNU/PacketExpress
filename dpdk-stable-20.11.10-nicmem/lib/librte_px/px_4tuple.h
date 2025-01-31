@@ -13,8 +13,7 @@ static inline int
 put_4tuple_to_headroom(struct rte_mbuf *pkt)
 {
     /* backup the tuple in the headroom */
-    memcpy(rte_pktmbuf_mtod(pkt, struct four_tuple *) - 1,
-           get_four_tuple(pkt), sizeof(struct four_tuple));
+    memcpy(pkt->buf_addr, get_four_tuple(pkt), sizeof(struct four_tuple));
 
     pkt->ol_flags |= (PKT_FIRST_FREE << 1);
 
@@ -31,7 +30,7 @@ get_4tuple_from_headroom(struct rte_mbuf *pkt)
     }
     pkt->ol_flags &= ~(PKT_FIRST_FREE << 1);
 
-    return rte_pktmbuf_mtod(pkt, struct four_tuple *) - 1;
+    return (struct four_tuple *)pkt->buf_addr;
 }
 /*----------------------------------------------------------------------------*/
 #ifdef __cplusplus

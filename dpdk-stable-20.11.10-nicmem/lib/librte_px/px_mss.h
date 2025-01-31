@@ -40,7 +40,6 @@ extern "C"
 #define MSS_TIMEOUT 300
 /*----------------------------------------------------------------------------*/
 /* for counting bloom filter */
-#define MSS_POOL_CACHE_SIZE 32
 #define LOG_BLOOM_FILTER_SIZE 13
 #define BLOOM_FILTER_SIZE (1 << LOG_BLOOM_FILTER_SIZE)
 /*----------------------------------------------------------------------------*/
@@ -89,7 +88,7 @@ xor_hash1(uint32_t rss, uint32_t *data)
 uint16_t *
 get_tcp_mss(struct rte_mbuf *pkt);
 /*----------------------------------------------------------------------------*/
-void update_mss(uint16_t *mss_ptr);
+void update_mss(uint16_t *mss_ptr, int direction);
 /*----------------------------------------------------------------------------*/
 void flush_timeout(struct px_mss_ctx *ctx);
 /*----------------------------------------------------------------------------*/
@@ -102,7 +101,7 @@ uint8_t *bloom_init(void);
 /*----------------------------------------------------------------------------*/
 void bloom_destroy(uint8_t *filter);
 /*----------------------------------------------------------------------------*/
-int bloom_check(uint8_t *filter,
+int bloom_search(uint8_t *filter,
                 uint32_t rss,
                 struct four_tuple *key);
 /*----------------------------------------------------------------------------*/

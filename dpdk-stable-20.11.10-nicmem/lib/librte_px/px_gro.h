@@ -180,14 +180,14 @@ px_eth_conf(uint16_t port_id,
             struct rte_eth_conf *conf,
             uint8_t *rss_key,
             int rss_key_len,
-            int lro_size,
+            int pkt_size,
+			int is_lro,
             int is_gro,
             int is_nicmem);
 /*----------------------------------------------------------------------------*/
 int px_init(uint16_t port_id,
 			uint16_t queue_id,
 			int burst,
-			unsigned int stat_interval,
 			int mss_table_size,
 			int do_link);
 /*----------------------------------------------------------------------------*/

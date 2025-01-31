@@ -91,16 +91,16 @@ CFLAGS += -D USE_LRO=1
 # Choose one of below
 
 # 1. DPDK GRO on
-# CFLAGS += -D USE_DGRO=1
+CFLAGS += -D USE_DGRO=1
 
 # 2. CUSTOM GRO on, no latent RXQ, no stall
 # CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=1 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
 
 # 3. CUSTOM GRO on, no stall
-CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
+# CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
 
 # 4. CUSTOM GRO on, stall 50us
-# CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=36000 -D USE_LINK=0
+# CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=72000 -D USE_LINK=0
 
 # 6. CUSTOM GRO + LINKING
 # CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=1
@@ -108,21 +108,21 @@ CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
 ################################################################################
 
 # To use nicmem, make sure to use DPDK version 20.11
-CFLAGS += -D NICMEM=0
-# CFLAGS += -D NICMEM=1
+# CFLAGS += -D NICMEM=0
+CFLAGS += -D NICMEM=1
 
 ################################################################################
 
 # Choose one of below
 
 # To use hairpin offload, make sure to use DPDK version 22.11
-CXXFLAGS += -D NUM_HAIRPIN_Q=0
-# CXXFLAGS += -D NUM_HAIRPIN_Q=1
+CFLAGS += -D NUM_HAIRPIN_Q=0
+# CFLAGS += -D NUM_HAIRPIN_Q=1
 
 # (not supported yet) if want to use rte_flow_async API, use below
-# CXXFLAGS += -D RTE_FLOW_ASYNC_API=1
+# CFLAGS += -D RTE_FLOW_ASYNC_API=1
 
-# CXXFLAGS += -D RTE_FLOW_MEASURE_DELAY=1
+# CFLAGS += -D RTE_FLOW_MEASURE_DELAY=1
 
 ################################################################################
 

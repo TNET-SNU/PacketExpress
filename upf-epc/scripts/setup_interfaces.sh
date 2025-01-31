@@ -35,25 +35,25 @@ ipaddrs=(10.1.90.1/24 10.1.95.1/24
 # MAC addresses of gateway interface(s)
 # In the order of (s1u sgi)
 # macaddrs=(58:a2:e1:a7:a8:46 58:a2:e1:a7:a8:47) # eth0, eth0vf0
-macaddrs=(58:a2:e1:a7:a8:46 58:a2:e1:a7:a8:47 # eth0, eth0vf0
-		  58:a2:e1:a7:a9:be 58:a2:e1:a7:a9:bf # eth1, eth1vf0
-		  58:a2:e1:a7:a8:c6 58:a2:e1:a7:a8:c7 # eth2, eth2vf0
+macaddrs=(58:a2:e1:a7:a8:46 58:a2:e1:a7:a8:47  # eth0, eth0vf0
+		  58:a2:e1:a7:a9:be 58:a2:e1:a7:a9:bf  # eth1, eth1vf0
+		  58:a2:e1:a7:a8:c6 58:a2:e1:a7:a8:c7  # eth2, eth2vf0
 		  a0:88:c2:d7:81:0e a0:88:c2:d7:81:0f) # eth3, eth3vf0
 
 # Static IP addresses of the neighbors of gateway interface(s)
 # In the order of (n-s1u n-sgi)
 # nhipaddrs=(10.1.90.2 10.1.95.2) # stream1 stream2
-nhipaddrs=(10.1.90.2 10.1.95.2 # stream1 stream2
-		   10.2.90.2 10.2.95.2 # stream3 stream4
-		   10.3.90.2 10.3.95.2 # stream5 stream6
+nhipaddrs=(10.1.90.2 10.1.95.2  # stream1 stream2
+		   10.2.90.2 10.2.95.2  # stream3 stream4
+		   10.3.90.2 10.3.95.2  # stream5 stream6
 		   10.4.90.2 10.4.95.2) # stream7 stream8
 
 # Static MAC addresses of the neighbors of gateway interface(s)
 # In the order of (n-s1u n-sgi)
 # nhmacaddrs=(58:a2:e1:a7:a9:ee a0:88:c2:d6:9d:d2) # stream1 stream2
-nhmacaddrs=(58:a2:e1:a7:a9:ee a0:88:c2:d6:9d:d2 # stream1 stream2
-			a0:88:c2:d6:9e:32 58:a2:e1:a7:a8:b6 # stream3 stream4
-			58:a2:e1:a7:a9:fe 58:a2:e1:a7:aa:7e # stream5 stream6
+nhmacaddrs=(58:a2:e1:a7:a9:ee a0:88:c2:d6:9d:d2  # stream1 stream2
+			a0:88:c2:d6:9e:32 58:a2:e1:a7:a8:b6  # stream3 stream4
+			58:a2:e1:a7:a9:fe 58:a2:e1:a7:aa:7e  # stream5 stream6
 			58:a2:e1:a7:a9:7e 58:a2:e1:a7:aa:86) # stream7 stream8
 
 # IPv4 route table entries in cidr format per port
@@ -69,14 +69,12 @@ num_ipaddrs=${#ipaddrs[@]}
 num_nhipaddrs=${#nhipaddrs[@]}
 
 # turn on offloads
-sudo ethtool -K eth0 tso on lro on gro on gso on
-sudo ethtool -K eth0vf0 tso on lro on gro on gso on
-sudo ethtool -K eth1 tso on lro on gro on gso on
-sudo ethtool -K eth1vf0 tso on lro on gro on gso on
-sudo ethtool -K eth2 tso on lro on gro on gso on
-sudo ethtool -K eth2vf0 tso on lro on gro on gso on
-sudo ethtool -K eth3 tso on lro on gro on gso on
-sudo ethtool -K eth3vf0 tso on lro on gro on gso on
+num_ifaces=${#ifaces[@]}
+for ((i = 0; i < num_ifaces; i++)); do
+    sudo ethtool -K "${ifaces[$i]}" tso on lro on gro on gso on
+	# sudo ethtool -A "${ifaces[$i]}" rx off tx off
+	# sudo ethtool -G "${ifaces[$i]}" rx 8192 tx 8192
+done
 
 # set MTU
 sudo ip link set dev eth0 mtu 9000

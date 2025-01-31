@@ -1812,7 +1812,7 @@ static inline uint16_t netif_rx_burst(portid_t pid, struct netif_queue_conf *qco
         };
         nrx = rte_gro_reassemble_burst(qconf->mbufs, nrx, &gro_param);
 #endif
-        px_update_stats(pid, qconf->id, qconf->mbufs, nrx);
+        px_update_stats(pid, qconf->id, qconf->mbufs, nrx, NULL);
 #endif
     }
 
@@ -4006,8 +4006,12 @@ int netif_port_start(struct netif_port *port)
     adapt_device_conf(port->id, &port->dev_conf.rx_adv_conf.rss_conf.rss_hf,
             &port->dev_conf.rxmode.offloads, &port->dev_conf.txmode.offloads);
 
-    port->dev_conf = px_eth_conf(port->id, &port->dev_conf, NULL, 0,
-                                 MBUF_DATA_SIZE,
+    port->dev_conf = px_eth_conf(port->id, &port->dev_conf, NULL, 0, MBUF_DATA_SIZE,
+#if USE_LRO
+                                 1,
+#else
+                                 0,
+#endif
 #if USE_CGRO || USE_DGRO
                                  1,
 #else
@@ -4019,7 +4023,7 @@ int netif_port_start(struct netif_port *port)
                                  0
 #endif
                                  );
-#if USE_CGRO || NICMEM
+#if (USE_CGRO || NICMEM || NUM_HAIRPIN_Q)
     ret = px_eth_dev_configure(port->id,
                                port->nrxq,
                                port->ntxq,
@@ -4131,7 +4135,7 @@ int netif_port_start(struct netif_port *port)
     actions[1].type = RTE_FLOW_ACTION_TYPE_VOID;
     for (qid = 0; qid < port->nrxq; qid++)
     {
-        if (px_init(port->id, qid, NETIF_MAX_PKT_BURST, 1, !JUMBO_FRAME ? 4096 : 0, USE_LINK) < 0) {
+        if (px_init(port->id, qid, NETIF_MAX_PKT_BURST, !JUMBO_FRAME ? 4096 : 0, USE_LINK) < 0) {
             RTE_LOG(ERR, NETIF, "%s: fail to config %s:rx-queue-%d\n",
                     __func__, port->name, qid);
             return EDPVS_DPDKAPIFAIL;

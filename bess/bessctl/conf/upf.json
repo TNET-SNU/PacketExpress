@@ -90,7 +90,7 @@
     },
 
     "": "Number of worker threads. Default: 1",
-    "workers": 1,
+    "workers": 32,
 
     "": "Number of NIC ports. Default: 2",
     "num_ports": 4,

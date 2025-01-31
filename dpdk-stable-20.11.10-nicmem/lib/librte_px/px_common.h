@@ -32,14 +32,20 @@ extern "C"
 #define SEMANTIC_TEST 1
 #define MAX_NAME_SIZE 32
 #define FALLBACK_eMTU 1240
+
 #define DEFAULT_eMTU RTE_ETHER_MTU
+
+/* choose one of below for test */
+// #define DEFAULT_iMTU 3000
+// #define DEFAULT_iMTU 4500
+// #define DEFAULT_iMTU 6000
+// #define DEFAULT_iMTU 7500
 #define DEFAULT_iMTU 9000
-/* use below when jumboMTU is not set on endpoints' interfaces */
-// #define DEFAULT_iMTU DEFAULT_eMTU
 
 #define PX_MEASURE_STATS 1
 #define PX_MEASURE_PER_QUEUE_STAT 1
 #define PX_MEASURE_DIST 0
+#define PX_MEASURE_DELAY 1
 
 #define MAX_CORE_NUM 32
 #define PX_MAX_CORE_NUM MAX_CORE_NUM
@@ -202,8 +208,7 @@ get_ip_id(struct rte_mbuf *pkt)
 {
     return rte_pktmbuf_mtod_offset(pkt, uint16_t *,
                                    pkt->l2_len +
-                                       sizeof(uint16_t) +
-                                       sizeof(uint16_t)); // Ver ~ total_len
+                                       sizeof(uint32_t)); // Ver ~ total_len
 }
 /*----------------------------------------------------------------------------*/
 static inline uint8_t *
@@ -215,6 +220,35 @@ get_ip_protoid(struct rte_mbuf *pkt)
                                        sizeof(uint8_t));  // TTL
 }
 /*----------------------------------------------------------------------------*/
+static inline uint16_t *
+get_icmp_csum(struct rte_mbuf *pkt)
+{
+    return rte_pktmbuf_mtod_offset(pkt, uint16_t *,
+                                   pkt->l2_len +
+                                       pkt->l3_len +
+                                       sizeof(uint16_t)); // type ~ code
+}
+/*----------------------------------------------------------------------------*/
+static inline uint16_t *
+get_icmp_nh_mtu(struct rte_mbuf *pkt)
+{
+    return rte_pktmbuf_mtod_offset(pkt, uint16_t *,
+                                   pkt->l2_len +
+                                       pkt->l3_len +
+                                       sizeof(uint32_t) + // type ~ csum
+                                       sizeof(uint16_t)); // unused
+}
+/*----------------------------------------------------------------------------*/
+static inline struct four_tuple *
+get_icmp_inner_four_tuple(struct rte_mbuf *pkt)
+{
+    return rte_pktmbuf_mtod_offset(pkt, struct four_tuple *,
+                                   pkt->l2_len +
+                                       pkt->l3_len +
+                                       sizeof(struct rte_icmp_hdr) +
+                                       3 * sizeof(uint32_t)); // Ver ~ csum
+}
+/*----------------------------------------------------------------------------*/
 static inline struct four_tuple *
 get_four_tuple(struct rte_mbuf *pkt)
 {
@@ -222,7 +256,7 @@ get_four_tuple(struct rte_mbuf *pkt)
                                    pkt->l2_len +
                                        3 * sizeof(uint32_t)); // Ver ~ csum
 }
-/*--------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 static inline uint16_t *
 get_src_port(struct rte_mbuf *pkt)
 {
@@ -237,7 +271,7 @@ get_dst_port(struct rte_mbuf *pkt)
     return rte_pktmbuf_mtod_offset(pkt, uint16_t *,
                                    pkt->l2_len +
                                        pkt->l3_len +
-                                       sizeof(uint16_t)); // source port
+                                       sizeof(uint16_t)); // src port
 }
 /*----------------------------------------------------------------------------*/
 static inline uint16_t *
@@ -246,7 +280,7 @@ get_udp_len(struct rte_mbuf *pkt)
     return rte_pktmbuf_mtod_offset(pkt, uint16_t *,
                                    pkt->l2_len +
                                        pkt->l3_len +
-                                       sizeof(uint16_t) * 2);
+                                       sizeof(uint16_t) * 2); // src/dst port
 }
 /*----------------------------------------------------------------------------*/
 static inline uint8_t *
@@ -439,6 +473,19 @@ is_tso(struct rte_mbuf *pkt)
 }
 /*----------------------------------------------------------------------------*/
 static inline int
+is_uplink(struct rte_mbuf *pkt)
+{
+    uint8_t *s = (uint8_t *)get_four_tuple(pkt);
+    return *(s + 2) == 90;
+}
+/*----------------------------------------------------------------------------*/
+static inline int
+is_downlink(struct rte_mbuf *pkt)
+{
+    return !is_uplink(pkt);
+}
+/*----------------------------------------------------------------------------*/
+static inline int
 is_px(struct rte_mbuf *pkt)
 {
     return *get_ip_tos(pkt) & PX_MARK_ON_TOS;
@@ -470,6 +517,29 @@ tupledump(struct four_tuple *ft)
            *((uint8_t *)&ft->dst_ip), *((uint8_t *)&ft->dst_ip + 1),
            *((uint8_t *)&ft->dst_ip + 2), *((uint8_t *)&ft->dst_ip + 3),
            ntohs(ft->dst_port));
+}
+/*----------------------------------------------------------------------------*/
+/* Incremental checksum update for 16-bit value change */
+static inline uint16_t
+inc_csum_update(uint16_t csum,
+                uint16_t old_value,
+                uint16_t new_value)
+{
+    uint32_t sum;
+
+    /* subtract old value and add new value (1's complement arithmetic) */
+    sum = ~csum & UINT16_MAX;       // take 1's complement of the current checksum
+    sum += ~old_value & UINT16_MAX; // subtract old value (1's complement addition)
+    sum += new_value;               // add new value
+
+    /* fold to 16 bits by adding carry */
+    while (sum >> sizeof(uint16_t))
+    {
+        sum = (sum & UINT16_MAX) + (sum >> sizeof(uint16_t));
+    }
+
+    /* take 1's complement again to get the final checksum */
+    return ~((uint16_t)sum);
 }
 /*----------------------------------------------------------------------------*/
 #ifdef __cplusplus

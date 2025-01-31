@@ -326,6 +326,303 @@ CommandResponse flow_create(dpdk_port_t port_id, const uint32_t &flow_profile) {
   return err;
 }
 /*----------------------------------------------------------------------------*/
+struct rte_flow *
+onload_iperf_flow(uint16_t port_id, uint16_t num_rxq, uint16_t num_rxq_incr)
+{
+  struct rte_flow *flow = NULL;
+  struct rte_flow_error error;
+  /* Holds the flow attributes. */
+  struct rte_flow_attr attr = {
+    /* set the rule on the main group. */
+    .group = 0,
+    /* give the offload rule higher priority */
+    .priority = 0,
+    /* Rx flow */
+    .ingress = 1,
+    .egress = 0,
+    .transfer = 0
+  };
+
+  /* make pattern */
+  struct rte_flow_item_ipv4 ipv4_spec = {0};
+  struct rte_flow_item_ipv4 ipv4_mask = {0};
+  struct rte_flow_item_tcp tcp_spec = {0};
+  struct rte_flow_item_tcp tcp_mask = {0};
+  struct rte_flow_item patterns[] = {
+    {.type = RTE_FLOW_ITEM_TYPE_IPV4,
+      .spec = &ipv4_spec,
+      .last = NULL,
+      .mask = &ipv4_mask},
+    {.type = RTE_FLOW_ITEM_TYPE_TCP,
+      .spec = &tcp_spec,
+      .last = NULL,
+      .mask = &tcp_mask},
+    {.type = RTE_FLOW_ITEM_TYPE_END}
+  };
+
+  /* ipv4 pattern */
+  ipv4_spec.hdr.next_proto_id = IPPROTO_TCP;
+  ipv4_mask.hdr.next_proto_id = UINT8_MAX;
+
+  /* tcp pattern */
+  tcp_spec.hdr.dst_port = htons(5001);
+  tcp_mask.hdr.dst_port = UINT16_MAX;
+
+  /* make rss action */
+  uint16_t rss_queues[RTE_MAX_QUEUES_PER_PORT];
+  for (int i = 0; i < num_rxq * num_rxq_incr; i++)
+  {
+    rss_queues[i] = i;
+  }
+  struct rte_flow_action_rss rss_hairpin;
+  rss_hairpin.func = RTE_ETH_HASH_FUNCTION_DEFAULT;
+  rss_hairpin.level = 0;
+  rss_hairpin.types = ETH_RSS_TCP | ETH_RSS_UDP | ETH_RSS_IP;
+  rss_hairpin.key_len = sizeof(rss_key);
+  rss_hairpin.queue_num = num_rxq * num_rxq_incr;
+  rss_hairpin.key = rss_key;
+  rss_hairpin.queue = rss_queues;
+
+  /* make actions */
+  struct rte_flow_action actions[] = {
+    /* deliver to hairpin queue RSS */
+    {.type = RTE_FLOW_ACTION_TYPE_RSS,
+      .conf = &rss_hairpin},
+    {.type = RTE_FLOW_ACTION_TYPE_END}
+  };
+
+  /* create main traffic rule */
+#define VALIDATE_FLOW_RULE 1
+#if VALIDATE_FLOW_RULE
+  if (rte_flow_validate(port_id, &attr, patterns, actions, &error) < 0)
+  {
+    fprintf(stderr, "rte_flow_validate() failed for port %d. "
+                    "Error type: %d, Error msg: %s\n",
+            port_id, error.type, error.message);
+    return NULL;
+  }
+#endif
+
+  flow = px_latent_flow_create(port_id, &attr, patterns, actions, &error);
+  if (!flow)
+  {
+    fprintf(stderr, "px_latent_flow_create() failed for port %d. "
+                    "Error type: %d, Error msg: %s\n",
+            port_id, error.type, error.message);
+  }
+
+  return flow;
+}
+/*----------------------------------------------------------------------------*/
+struct rte_flow *
+onload_iperf_ack_flow(uint16_t port_id, uint16_t num_rxq, uint16_t num_rxq_incr)
+{
+  struct rte_flow *flow = NULL;
+  struct rte_flow_error error;
+  /* Holds the flow attributes. */
+  struct rte_flow_attr attr = {
+    /* set the rule on the main group. */
+    .group = 0,
+    /* give the offload rule higher priority */
+    .priority = 0,
+    /* Rx flow */
+    .ingress = 1,
+    .egress = 0,
+    .transfer = 0
+  };
+
+  /* make pattern */
+  struct rte_flow_item_eth eth_spec = {0};
+  struct rte_flow_item_eth eth_mask = {0};
+  struct rte_flow_item_ipv4 ipv4_spec = {0};
+  struct rte_flow_item_ipv4 ipv4_mask = {0};
+  struct rte_flow_item_tcp tcp_spec = {0};
+  struct rte_flow_item_tcp tcp_mask = {0};
+  struct rte_flow_item patterns[] = {
+    {.type = RTE_FLOW_ITEM_TYPE_ETH,
+      .spec = &eth_spec,
+      .last = NULL,
+      .mask = &eth_mask},
+    {.type = RTE_FLOW_ITEM_TYPE_IPV4,
+      .spec = &ipv4_spec,
+      .last = NULL,
+      .mask = &ipv4_mask},
+    {.type = RTE_FLOW_ITEM_TYPE_TCP,
+      .spec = &tcp_spec,
+      .last = NULL,
+      .mask = &tcp_mask},
+    {.type = RTE_FLOW_ITEM_TYPE_END}
+  };
+
+  /* ipv4 pattern */
+  ipv4_spec.hdr.next_proto_id = IPPROTO_TCP;
+  ipv4_mask.hdr.next_proto_id = UINT8_MAX;
+
+  /* tcp pattern */
+  tcp_spec.hdr.src_port = htons(5001);
+  tcp_mask.hdr.src_port = UINT16_MAX;
+
+  /* make rss action */
+  uint16_t rss_queues[RTE_MAX_QUEUES_PER_PORT];
+  for (int i = 0; i < num_rxq * num_rxq_incr; i++)
+  {
+    rss_queues[i] = i;
+  }
+  struct rte_flow_action_rss rss_hairpin;
+  rss_hairpin.func = RTE_ETH_HASH_FUNCTION_DEFAULT;
+  rss_hairpin.level = 0;
+  rss_hairpin.types = ETH_RSS_TCP | ETH_RSS_UDP | ETH_RSS_IP;
+  rss_hairpin.key_len = sizeof(rss_key);
+  rss_hairpin.queue_num = num_rxq * num_rxq_incr;
+  rss_hairpin.key = rss_key;
+  rss_hairpin.queue = rss_queues;
+
+  /* make actions */
+  struct rte_flow_action actions[] = {
+    /* deliver to hairpin queue RSS */
+    {.type = RTE_FLOW_ACTION_TYPE_RSS,
+      .conf = &rss_hairpin},
+    {.type = RTE_FLOW_ACTION_TYPE_END}
+  };
+
+  /* create main traffic rule */
+#define VALIDATE_FLOW_RULE 1
+#if VALIDATE_FLOW_RULE
+  if (rte_flow_validate(port_id, &attr, patterns, actions, &error) < 0)
+  {
+    fprintf(stderr, "rte_flow_validate() failed for port %d. "
+                    "Error type: %d, Error msg: %s\n",
+            port_id, error.type, error.message);
+    return NULL;
+  }
+#endif
+
+  flow = px_latent_flow_create(port_id, &attr, patterns, actions, &error);
+  if (!flow)
+  {
+    fprintf(stderr, "px_latent_flow_create() failed for port %d. "
+                    "Error type: %d, Error msg: %s\n",
+            port_id, error.type, error.message);
+  }
+
+  return flow;
+}
+/*----------------------------------------------------------------------------*/
+struct rte_flow *
+offload_all_flow(uint16_t port_id, uint16_t num_rxq, uint16_t num_rxq_incr)
+{
+  struct rte_flow *flow = NULL;
+  struct rte_flow_error error;
+  /* Holds the flow attributes. */
+  struct rte_flow_attr attr = {
+      /* set the rule on the main group. */
+      .group = 0,
+      /* give the offload rule the lowest priority (higer value = lower priority) */
+      .priority = 3,
+      /* Rx flow */
+      .ingress = 1,
+      .egress = 0,
+      .transfer = 0};
+
+  /* make pattern */
+  struct rte_flow_item_eth eth_spec = {0};
+  struct rte_flow_item_eth eth_mask = {0};
+  struct rte_flow_item patterns[] = {
+    {.type = RTE_FLOW_ITEM_TYPE_ETH,
+      .spec = &eth_spec,
+      .last = NULL,
+      .mask = &eth_mask},
+    {.type = RTE_FLOW_ITEM_TYPE_END},
+  };
+  eth_spec.type = htons(RTE_ETHER_TYPE_IPV4);
+  eth_mask.type = UINT16_MAX;
+
+  /* make dst and src MAC action */
+  struct rte_flow_action_set_mac modify_src_mac, modify_dst_mac;
+  if (port_id == 0) {
+    memcpy(modify_dst_mac.mac_addr,
+            "\x58\xa2\xe1\xa7\x7c\xc6",
+            sizeof(struct rte_ether_addr));
+    memcpy(modify_src_mac.mac_addr,
+            "\x58\xa2\xe1\xa7\xa8\x46",
+            sizeof(struct rte_ether_addr));
+  }
+  else if (port_id == 1) {
+    memcpy(modify_dst_mac.mac_addr,
+            "\x58\xa2\xe1\xa7\x7c\xd6",
+            sizeof(struct rte_ether_addr));
+    memcpy(modify_src_mac.mac_addr,
+            "\x58\xa2\xe1\xa7\xa9\xbe",
+            sizeof(struct rte_ether_addr));
+  }
+  else if (port_id == 2) {
+    memcpy(modify_dst_mac.mac_addr,
+            "\x58\xa2\xe1\xa7\x7c\xbe",
+            sizeof(struct rte_ether_addr));
+    memcpy(modify_src_mac.mac_addr,
+            "\x58\xa2\xe1\xa7\xa8\xc6",
+            sizeof(struct rte_ether_addr));
+  }
+  else if (port_id == 3) {
+    memcpy(modify_dst_mac.mac_addr,
+            "\x58\xa2\xe1\xa7\xa9\x8e",
+            sizeof(struct rte_ether_addr));
+    memcpy(modify_src_mac.mac_addr,
+            "\xa0\x88\xc2\xd7\x81\x0e",
+            sizeof(struct rte_ether_addr));
+  }
+  
+  /* make rss action */
+  uint16_t rss_queues[16];
+  for (int i = 0; i < 1; i++)
+  {
+      rss_queues[i] = num_rxq * num_rxq_incr + i;
+  }
+  struct rte_flow_action_rss rss_hairpin;
+  rss_hairpin.func = RTE_ETH_HASH_FUNCTION_DEFAULT;
+  rss_hairpin.level = 0;
+  rss_hairpin.types = ETH_RSS_TCP | ETH_RSS_UDP | ETH_RSS_IP;
+  rss_hairpin.key_len = sizeof(rss_key);
+  rss_hairpin.queue_num = 1;
+  rss_hairpin.key = rss_key;
+  rss_hairpin.queue = rss_queues;
+
+  /* make actions */
+  struct rte_flow_action actions[] = {
+    /* modify src MAC */
+    {.type = RTE_FLOW_ACTION_TYPE_SET_MAC_SRC,
+      .conf = &modify_src_mac},
+    /* modify dst MAC */
+    {.type = RTE_FLOW_ACTION_TYPE_SET_MAC_DST,
+      .conf = &modify_dst_mac},
+    /* deliver to hairpin queue RSS */
+    {.type = RTE_FLOW_ACTION_TYPE_RSS,
+      .conf = &rss_hairpin},
+    {.type = RTE_FLOW_ACTION_TYPE_END}
+  };
+
+  /* create main traffic rule */
+#define VALIDATE_FLOW_RULE 1
+#if VALIDATE_FLOW_RULE
+  if (rte_flow_validate(port_id, &attr, patterns, actions, &error) < 0)
+  {
+      fprintf(stderr, "rte_flow_validate() failed for port %d. "
+                      "Error type: %d, Error msg: %s\n",
+              port_id, error.type, error.message);
+      return NULL;
+  }
+#endif
+
+  flow = px_latent_flow_create(port_id, &attr, patterns, actions, &error);
+  if (!flow) {
+    fprintf(stderr, "px_latent_flow_create() failed for port %d. "
+                    "Error type: %d, Error msg: %s\n",
+            port_id, error.type, error.message);
+  }
+
+  return flow;
+}
+/*----------------------------------------------------------------------------*/
 CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
 
   dpdk_port_t ret_port_id = DPDK_PORT_UNKNOWN;
@@ -378,8 +675,12 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
    * with minor tweaks */
   rte_eth_dev_info_get(ret_port_id, &dev_info);
 
-  eth_conf = px_eth_conf(ret_port_id, NULL, rss_key, sizeof(rss_key),
-                         SNBUF_DATA,
+  eth_conf = px_eth_conf(ret_port_id, NULL, rss_key, sizeof(rss_key), SNBUF_DATA,
+#if USE_LRO
+                         1,
+#else
+                         0,
+#endif
 #if USE_CGRO || USE_DGRO
                          1,
 #else
@@ -605,13 +906,26 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
 #endif
   for (uint16_t qid = 0; qid < num_rxq; qid++)
   {
-    if (px_init(dpdk_port_id_, qid, bess::PacketBatch::kMaxBurst, 1, !JUMBO_FRAME ? 4096 : 0, USE_LINK) < 0)
-      return CommandFailure(ENOMEM, "Flow table creation failed");
+    if (px_init(dpdk_port_id_, qid, bess::PacketBatch::kMaxBurst, !JUMBO_FRAME ? 4096 : 0, USE_LINK) < 0)
+      return CommandFailure(ENOMEM, "px_init failed");
     if (px_add_rule(dpdk_port_id_, qid, patterns, 2, actions, 2) < 0)
-      return CommandFailure(ENOMEM, "Pattern insertion failed");
+      return CommandFailure(ENOMEM, "px_add_rule failed");
   }
+#define TEST_SMALL_FLOW_TREX 0
+#if TEST_SMALL_FLOW_TREX
+  if (offload_all_flow(ret_port_id, num_rxq, NUM_LATENT_RXQ) == NULL)
+    return CommandFailure(ENOMEM, "offload_all_flow failed");
+  if (onload_iperf_flow(ret_port_id, num_rxq, NUM_LATENT_RXQ) == NULL)
+    return CommandFailure(ENOMEM, "onload_iperf_flow failed");
+  if (onload_iperf_ack_flow(ret_port_id, num_rxq, NUM_LATENT_RXQ) == NULL)
+    return CommandFailure(ENOMEM, "onload_iperf_ack_flow failed");
+  if (rte_eth_dev_set_mtu(ret_port_id, 9978) < 0)
+    return CommandFailure(ENOMEM, "rte_eth_dev_set_mtu failed");
+#endif
 #elif NUM_HAIRPIN_Q
-  if (hp_context_init(get_num_cpus() - 1, PER_CORE_HOST_CACHE_SIZE, PER_PORT_NIC_CACHE_SIZE) < 0)
+  if (hp_context_init(get_num_cpus() - 1,
+                      PER_CORE_HOST_CACHE_SIZE,
+                      PER_PORT_NIC_CACHE_SIZE) < 0)
   {
     return CommandFailure(ENOMEM, "hp_context_init failed");
   }
@@ -739,8 +1053,6 @@ void PMDPort::CollectStats(bool reset) {
     return;
   }
 #endif
-  if (dpdk_port_id_ == 0)
-    px_print_stats();
 
   VLOG(1) << bess::utils::Format(
       "PMD port %d: ipackets %" PRIu64 " opackets %" PRIu64 " ibytes %" PRIu64
@@ -797,7 +1109,7 @@ int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   };
   recv = rte_gro_reassemble_burst(reinterpret_cast<rte_mbuf **>(pkts), recv, &gro_param);
 #endif
-  px_update_stats(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), recv);
+  px_update_stats(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), recv, NULL);
 #endif
 
   return recv;
@@ -805,26 +1117,26 @@ int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
 
 int PMDPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
 #if !USE_CGRO && (USE_LRO || USE_DGRO)
-  px_setup_tso_burst(dpdk_port_id_, qid, <rte_mbuf **>(pkts), cnt);
+  px_setup_tso_burst(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), cnt);
 #endif
 #if NUM_HAIRPIN_Q
-  for (int i = 0; i < cnt; i++) {
-    bess::Packet *pkt = pkts[i];
-    struct ri_node node;
-    struct four_tuple *key = get_4tuple_from_headroom(reinterpret_cast<rte_mbuf *>(pkt));
-    if (!key)
-      continue;
-    node.key = *key;
-    node.pkt = reinterpret_cast<rte_mbuf *>(pkt);
-    if ((node.key.src_port + node.key.dst_port) % 5 < 5) // offload 100% of flows
-    // if ((node.key.src_port + node.key.dst_port) % 5 < 4) // offload 80% of flows
-    // if ((node.key.src_port + node.key.dst_port) % 5 < 3) // offload 60% of flows
-    // if ((node.key.src_port + node.key.dst_port) % 5 < 2) // offload 40% of flows
-    // if ((node.key.src_port + node.key.dst_port) % 5 < 1) // offload 20% of flows
-    // if ((node.key.src_port + node.key.dst_port) % 5 < 0) // offload 0% of flows
-    if (hp_create_rule(rte_lcore_id(), &node) < 0)
-      continue;
-  }
+  // for (int i = 0; i < cnt; i++) {
+  //   bess::Packet *pkt = pkts[i];
+  //   struct ri_node node;
+  //   struct four_tuple *key = get_4tuple_from_headroom(reinterpret_cast<rte_mbuf *>(pkt));
+  //   if (!key)
+  //     continue;
+  //   node.key = *key;
+  //   node.pkt = reinterpret_cast<rte_mbuf *>(pkt);
+  //   if ((node.key.src_port + node.key.dst_port) % 5 < 5) // offload 100% of flows
+  //   // if ((node.key.src_port + node.key.dst_port) % 5 < 4) // offload 80% of flows
+  //   // if ((node.key.src_port + node.key.dst_port) % 5 < 3) // offload 60% of flows
+  //   // if ((node.key.src_port + node.key.dst_port) % 5 < 2) // offload 40% of flows
+  //   // if ((node.key.src_port + node.key.dst_port) % 5 < 1) // offload 20% of flows
+  //   // if ((node.key.src_port + node.key.dst_port) % 5 < 0) // offload 0% of flows
+  //   if (hp_create_rule(rte_lcore_id(), &node) < 0)
+  //     continue;
+  // }
 #endif
 
   int sent = rte_eth_tx_burst(dpdk_port_id_, qid,

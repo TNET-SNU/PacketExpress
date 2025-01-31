@@ -5,24 +5,6 @@ static struct px_mss_ctx g_mss_ctx[RTE_MAX_LCORE] = {0};
 static pthread_t g_tid = 0;
 static volatile int g_shutdown = 0;
 /*----------------------------------------------------------------------------*/
-uint8_t *
-bloom_init(void)
-{
-    uint8_t *filter = (uint8_t *)rte_malloc("filter", UINT16_MAX + 1, 0);
-    if (!filter)
-    {
-        fprintf(stderr, "bloom_init: rte_malloc failed\n");
-    }
-    memset(filter, 0, UINT16_MAX + 1);
-
-    return filter;
-}
-/*----------------------------------------------------------------------------*/
-void bloom_destroy(uint8_t *filter)
-{
-    rte_free(filter);
-}
-/*----------------------------------------------------------------------------*/
 uint16_t *
 get_tcp_mss(struct rte_mbuf *pkt)
 {
@@ -74,76 +56,48 @@ get_tcp_mss(struct rte_mbuf *pkt)
     return NULL;
 }
 /*----------------------------------------------------------------------------*/
-void update_mss(uint16_t *mss_ptr)
+void update_mss(uint16_t *mss_ptr, int direction)
 {
+    printf("%d -> ", ntohs(*mss_ptr));
 #if SEMANTIC_TEST
     /* use below on semantic test */
-    if (ntohs(*mss_ptr) >= DEFAULT_iMSS)
+    /* if incoming packet */
+    if (direction)
     {
-        /* no need to update */
-        return;
+        *mss_ptr = htons(DEFAULT_iMSS);
     }
-    printf("%d -> ", ntohs(*mss_ptr));
-    *mss_ptr = htons(DEFAULT_iMSS); // use when semantic test
+    /* if outgoing packet */
+    else
+    {
+        *mss_ptr = htons(DEFAULT_eMSS);
+    }
 #else
+    (void)direction;
     /* use below on performance test */
-    printf("%d -> ", ntohs(*mss_ptr));
     *mss_ptr = htons(DEFAULT_eMSS);
 #endif
     printf("%d\n", ntohs(*mss_ptr));
 }
 /*----------------------------------------------------------------------------*/
-void flush_timeout(struct px_mss_ctx *ctx)
+uint8_t *
+bloom_init(void)
 {
-    struct flow_mss_entry *entry;
-    const void *next_key;
-    void *next_data;
-    uint32_t iter = 0;
-    time_t current_time = time(NULL);
-
-    /* Iterate through the hash table and remove old entries */
-    while (rte_hash_iterate(ctx->tbl, &next_key, &next_data, &iter) >= 0)
+    uint8_t *filter = (uint8_t *)rte_malloc("filter", UINT16_MAX + 1, 0);
+    if (!filter)
     {
-        entry = (struct flow_mss_entry *)next_data;
-
-        if (difftime(current_time, entry->last_update) > MSS_TIMEOUT)
-        {
-            printf("Removing flow due to timeout\n");
-            rte_hash_del_key(ctx->tbl, next_key);
-            rte_mempool_put(ctx->pool, entry);
-        }
+        fprintf(stderr, "bloom_init: rte_malloc failed\n");
     }
+    memset(filter, 0, UINT16_MAX + 1);
+
+    return filter;
 }
 /*----------------------------------------------------------------------------*/
-int search_mss_entry(struct px_mss_ctx *ctx,
-                     uint32_t rss,
-                     struct four_tuple *key,
-                     uint16_t *mss)
+void bloom_destroy(uint8_t *filter)
 {
-    struct flow_mss_entry *entry;
-
-    if (!bloom_check(ctx->bf, rss, key))
-    {
-        /* not exist in bloom filter */
-        *mss = 0;
-        return -1;
-    };
-
-    if (rte_hash_lookup_data(ctx->tbl, key, (void **)&entry) < 0)
-    {
-        /* already evicted */
-        *mss = 0;
-        return -1;
-    }
-
-    /* Update time and return the MSS */
-    entry->last_update = time(NULL);
-    *mss = entry->mss;
-
-    return 0;
+    rte_free(filter);
 }
 /*----------------------------------------------------------------------------*/
-int bloom_check(uint8_t *filter,
+int bloom_search(uint8_t *filter,
                 uint32_t rss,
                 struct four_tuple *key)
 {
@@ -332,7 +286,7 @@ init_mss_ctx(uint16_t core_id,
     ctx->pool = rte_mempool_create(name,
                                    num_entry,
                                    sizeof(struct flow_mss_entry),
-                                   MSS_POOL_CACHE_SIZE,
+                                   RTE_MEMPOOL_CACHE_MAX_SIZE,
                                    0,
                                    NULL,
                                    NULL,
@@ -431,6 +385,34 @@ int destroy_mss_ctx(struct px_mss_ctx *ctx)
     return 0;
 }
 /*----------------------------------------------------------------------------*/
+int search_mss_entry(struct px_mss_ctx *ctx,
+                     uint32_t rss,
+                     struct four_tuple *key,
+                     uint16_t *mss)
+{
+    struct flow_mss_entry *entry;
+
+    if (!bloom_search(ctx->bf, rss, key))
+    {
+        /* not exist in bloom filter */
+        *mss = 0;
+        return -1;
+    };
+    
+    if (rte_hash_lookup_data(ctx->tbl, key, (void **)&entry) < 0)
+    {
+        /* already evicted */
+        *mss = 0;
+        return -1;
+    }
+
+    /* Update time and return the MSS */
+    entry->last_update = time(NULL);
+    *mss = entry->mss;
+
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
 int insert_mss_entry(struct px_mss_ctx *ctx,
                      uint32_t rss,
                      struct four_tuple *key,
@@ -515,6 +497,28 @@ int evict_mss_entry(struct px_mss_ctx *ctx,
         }
 
         return -1;
+    }
+}
+/*----------------------------------------------------------------------------*/
+void flush_timeout(struct px_mss_ctx *ctx)
+{
+    struct flow_mss_entry *entry;
+    const void *next_key;
+    void *next_data;
+    uint32_t iter = 0;
+    time_t current_time = time(NULL);
+
+    /* Iterate through the hash table and remove old entries */
+    while (rte_hash_iterate(ctx->tbl, &next_key, &next_data, &iter) >= 0)
+    {
+        entry = (struct flow_mss_entry *)next_data;
+
+        if (difftime(current_time, entry->last_update) > MSS_TIMEOUT)
+        {
+            printf("Removing flow due to timeout\n");
+            rte_hash_del_key(ctx->tbl, next_key);
+            rte_mempool_put(ctx->pool, entry);
+        }
     }
 }
 /*----------------------------------------------------------------------------*/
