@@ -18,6 +18,29 @@ static uint8_t g_rss_key_default[40] =
 //      0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
 //      0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A};
 /*----------------------------------------------------------------------------*/
+/* ToDo: Make an API for receiving dst MAC information from kernel via netlink*/
+static struct px_arp_entry g_arp_table[] = {
+    {"10.1.90.2", "58:a2:e1:a7:a9:ee"}, // stream1
+    {"10.2.90.2", "a0:88:c2:d6:9e:32"}, // stream3
+    {"10.3.90.2", "58:a2:e1:a7:a9:fe"}, // stream5
+    {"10.4.90.2", "58:a2:e1:a7:a9:7e"}, // stream7
+
+    {"10.1.95.2", "a0:88:c2:d6:9d:d2"}, // stream2
+    {"10.2.95.2", "58:a2:e1:a7:a8:b6"}, // stream4
+    {"10.3.95.2", "58:a2:e1:a7:aa:7e"}, // stream6
+    {"10.4.95.2", "58:a2:e1:a7:aa:86"}, // stream8
+
+    {"10.1.90.1", "58:a2:e1:a7:a8:46"}, // rapids1.eth0
+    {"10.2.90.1", "58:a2:e1:a7:a9:be"}, // rapids1.eth1
+    {"10.3.90.1", "58:a2:e1:a7:a8:c6"}, // rapids1.eth2
+    {"10.4.90.1", "a0:88:c2:d7:81:0e"}, // rapids1.eth3
+
+    {"10.1.95.1", "58:a2:e1:a7:7c:c6"}, // rapids0.eth0
+    {"10.2.95.1", "58:a2:e1:a7:7c:d6"}, // rapids0.eth1
+    {"10.3.95.1", "58:a2:e1:a7:7c:be"}, // rapids0.eth2
+    {"10.4.95.1", "58:a2:e1:a7:a9:8e"}, // rapids0.eth3
+};
+/*----------------------------------------------------------------------------*/
 /* Check if TCP option fields equal. */
 static inline uint32_t
 compare_option(struct rte_mbuf *pkt1,
@@ -2733,7 +2756,10 @@ int px_eth_dev_configure(uint16_t port_id,
                          unsigned int timeout_ns,
                          uint16_t hp_num_rxq,
                          uint16_t hp_num_txq,
-                         struct rte_eth_conf *eth_conf)
+                         struct rte_eth_conf *eth_conf,
+                         struct px_arp_entry *arp_table,
+                         int arp_table_size,
+                         int opt_out)
 {
     struct px_dev *px_dev = &g_px_dev[port_id];
     int ret;
@@ -2839,13 +2865,21 @@ int px_eth_dev_configure(uint16_t port_id,
     /* setup hairpin if necessary */
     if (hp_num_rxq && hp_num_txq)
     {
+        if (!arp_table || !arp_table_size)
+        {
+            arp_table = g_arp_table;
+            arp_table_size = sizeof(g_arp_table) / sizeof(struct px_arp_entry);
+        }
         ret = px_hairpin_configure(&g_px_dev[port_id].hp_ctx,
                                    port_id,
                                    num_rxq,
                                    num_rxq_incr,
                                    hp_num_rxq,
                                    hp_num_txq,
-                                   eth_conf);
+                                   eth_conf,
+                                   arp_table,
+                                   arp_table_size,
+                                   opt_out);
         if (ret)
         {
             rte_exit(EXIT_FAILURE, "px_hairpin_configure failed: %d\n", ret);

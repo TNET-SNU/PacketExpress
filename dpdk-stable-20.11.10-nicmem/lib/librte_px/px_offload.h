@@ -22,8 +22,11 @@ int px_hairpin_configure(struct px_hairpin_ctx *hp_ctx,
                          uint16_t num_rxq_incr,
                          uint16_t hp_num_rxq,
                          uint16_t hp_num_txq,
-                         struct rte_eth_conf *eth_conf);
-
+                         struct rte_eth_conf *eth_conf,
+                         struct px_arp_entry *arp_table,
+                         int arp_table_size,
+                         int opt_out);
+/*----------------------------------------------------------------------------*/
 int px_hairpin_setup(struct px_hairpin_ctx *hp_ctx,
                      uint16_t num_rxq,
                      uint16_t num_txq,

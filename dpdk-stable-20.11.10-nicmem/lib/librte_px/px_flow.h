@@ -15,6 +15,8 @@ extern "C"
 #define MAX_ACTIONS_NUM 8
 #define MAX_TEMPLATE_TABLE_NUM 16
 
+#define VALIDATE_FLOW_RULE 1
+
 enum cache_cmd
 {
     NOOP,
@@ -68,6 +70,9 @@ struct px_hairpin_ctx
     uint16_t port_id;
     struct rte_ether_addr mac;
 
+    /* ARP table context */
+    struct px_arp_ctx *actx;
+
     /* below are for e-switch offloading using rte_flow */
 #if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0) && RTE_FLOW_ASYNC_API
     int table_id;
@@ -86,7 +91,11 @@ struct px_hairpin_ctx
     uint16_t hp_rss_queues[16];
 };
 /*----------------------------------------------------------------------------*/
-int hp_ctx_init(uint16_t port_id, struct px_hairpin_ctx *hp_ctx);
+int hp_ctx_init(uint16_t port_id,
+                struct px_hairpin_ctx *hp_ctx,
+                struct px_arp_entry *arp_table,
+                int arp_table_size,
+                int opt_out);
 /*----------------------------------------------------------------------------*/
 struct rte_flow *
 px_create_flow_static(uint16_t port_id,

@@ -12,6 +12,7 @@ sources = files(
         'px_nicmem.c',
         'px_flow.c',
         'px_cache.c',
+        'px_arp.c',
         'px_reqring.c',
         'px_offload.c'
 )
@@ -28,6 +29,7 @@ headers = files(
         'px_nicmem.h',
         'px_flow.h',
         'px_cache.h',
+        'px_arp.h',
         'px_reqring.h',
         'px_offload.h',
         'px_4tuple.h'

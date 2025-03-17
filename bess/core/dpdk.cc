@@ -165,10 +165,10 @@ void init_eal(int dpdk_mb_per_socket, std::string nonworker_corelist) {
   rte_args.Append({"-a", "94:00.0,hp_buf_log_sz=16,dv_flow_en=2,dv_esw_en=1,dv_xmeta_en=4"}); // eth5
 #else
   /* For synchronous APIs */
-  rte_args.Append({"-a", "16:00.0,hp_buf_log_sz=19,dv_flow_en=1,dv_esw_en=1"}); // eth2
-  rte_args.Append({"-a", "40:00.0,hp_buf_log_sz=19,dv_flow_en=1,dv_esw_en=1"}); // eth3
-  rte_args.Append({"-a", "6a:00.0,hp_buf_log_sz=19,dv_flow_en=1,dv_esw_en=1"}); // eth4
-  rte_args.Append({"-a", "94:00.0,hp_buf_log_sz=19,dv_flow_en=1,dv_esw_en=1"}); // eth5
+  // rte_args.Append({"-a", "16:00.0,hp_buf_log_sz=16,dv_flow_en=1,dv_esw_en=1"}); // eth2
+  // rte_args.Append({"-a", "40:00.0,hp_buf_log_sz=16,dv_flow_en=1,dv_esw_en=1"}); // eth3
+  // rte_args.Append({"-a", "6a:00.0,hp_buf_log_sz=16,dv_flow_en=1,dv_esw_en=1"}); // eth4
+  // rte_args.Append({"-a", "94:00.0,hp_buf_log_sz=16,dv_flow_en=1,dv_esw_en=1"}); // eth5
 #endif
 #endif
 

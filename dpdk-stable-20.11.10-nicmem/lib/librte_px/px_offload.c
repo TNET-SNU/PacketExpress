@@ -343,7 +343,10 @@ int px_hairpin_configure(struct px_hairpin_ctx *hp_ctx,
                          uint16_t num_rxq_incr,
                          uint16_t hp_num_rxq,
                          uint16_t hp_num_txq,
-                         struct rte_eth_conf *eth_conf)
+                         struct rte_eth_conf *eth_conf,
+                         struct px_arp_entry *arp_table,
+                         int arp_table_size,
+                         int opt_out)
 {
     int ret;
 
@@ -375,8 +378,8 @@ int px_hairpin_configure(struct px_hairpin_ctx *hp_ctx,
     hp_ctx->count_hairpin.shared = 0;
     hp_ctx->count_hairpin.id = 0;
 
-    /* make a fast path to hp manager */
-    hp_ctx_init(port_id, hp_ctx);
+    /* initiate hairpin context */
+    hp_ctx_init(port_id, hp_ctx, arp_table, arp_table_size, opt_out);
 
     return 0;
 }

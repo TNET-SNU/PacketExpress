@@ -213,7 +213,10 @@ int px_eth_dev_configure(uint16_t port_id,
 						 unsigned int timeout_ns,
                          uint16_t hp_num_rxq,
                          uint16_t hp_num_txq,
-						 struct rte_eth_conf *eth_conf);
+						 struct rte_eth_conf *eth_conf,
+                         struct px_arp_entry *arp_table,
+                         int arp_table_size,
+						 int opt_out);
 /*----------------------------------------------------------------------------*/
 int px_eth_rx_queue_setup(uint16_t port_id,
 						  uint16_t rx_queue_id,

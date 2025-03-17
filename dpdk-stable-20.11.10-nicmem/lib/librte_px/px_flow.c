@@ -2,10 +2,143 @@
 /* fast-path to hp manager */
 struct px_hairpin_ctx *g_hp_ctx[RTE_MAX_ETHPORTS] = {NULL};
 /*----------------------------------------------------------------------------*/
-int hp_ctx_init(uint16_t port_id, struct px_hairpin_ctx *hp_ctx)
+/**
+ * Offload all flows with ARP action to hairpin queue
+ * We use synchronous legacy API
+ * because this function is called only once at initial time
+ *
+ * Caveat:
+ * Do not offload SYN/SYNACK/FIN/RST TCP packets and ICMP packets
+ * as they should be handled by PXGW
+ */
+static inline int
+offload_all_flows(struct px_hairpin_ctx *hp_ctx)
+{
+    uint16_t port_id = hp_ctx->port_id;
+    struct px_arp_bin *arp_bin_table;
+    int arp_table_size;
+    struct rte_ether_addr *dst_mac, *src_mac = &hp_ctx->mac;
+    struct rte_flow *flow = NULL;
+    struct rte_flow_error error;
+    /* Holds the flow attributes. */
+    struct rte_flow_attr attr = {
+        /* set the rule on the main group. */
+        .group = 0,
+        /* give the offload rule the lowest priority (higer value = lower priority) */
+        .priority = 3,
+        /* Rx flow */
+        .ingress = 1,
+        .egress = 0,
+        .transfer = 0};
+
+    /* make patterns */
+    struct rte_flow_item_eth eth_spec = {0};
+    struct rte_flow_item_eth eth_mask = {0};
+    struct rte_flow_item_ipv4 ipv4_spec = {0};
+    struct rte_flow_item_ipv4 ipv4_mask = {0};
+    struct rte_flow_item_tcp tcp_spec = {0};
+    struct rte_flow_item_tcp tcp_mask = {0};
+    struct rte_flow_item patterns[] = {
+        {.type = RTE_FLOW_ITEM_TYPE_ETH,
+         .spec = &eth_spec,
+         .last = NULL,
+         .mask = &eth_mask},
+        {.type = RTE_FLOW_ITEM_TYPE_IPV4,
+         .spec = &ipv4_spec,
+         .last = NULL,
+         .mask = &ipv4_mask},
+        {.type = RTE_FLOW_ITEM_TYPE_END},
+    };
+    ipv4_mask.hdr.dst_addr = UINT32_MAX;
+    /* only for non-SYN/FIN/RST TCP packets */
+    tcp_mask.hdr.tcp_flags = RTE_TCP_SYN_FLAG |
+                             RTE_TCP_FIN_FLAG |
+                             RTE_TCP_RST_FLAG;
+    tcp_spec.hdr.tcp_flags = 0;
+
+    /* make SRC MAC action */
+    struct rte_flow_action_set_mac modify_src_mac, modify_dst_mac;
+    memcpy(modify_src_mac.mac_addr,
+           src_mac,
+           sizeof(struct rte_ether_addr));
+
+    /* make actions */
+    struct rte_flow_action actions[] = {
+        /* modify src MAC */
+        {.type = RTE_FLOW_ACTION_TYPE_SET_MAC_SRC,
+         .conf = &modify_src_mac},
+        /* modify dst MAC */
+        {.type = RTE_FLOW_ACTION_TYPE_SET_MAC_DST,
+         .conf = &modify_dst_mac},
+        /* deliver to hairpin queue RSS */
+        {.type = RTE_FLOW_ACTION_TYPE_RSS,
+         .conf = &hp_ctx->rss_hairpin},
+        {.type = RTE_FLOW_ACTION_TYPE_END}};
+
+    arp_bin_table = hp_ctx->actx->arp_bin_table;
+    arp_table_size = hp_ctx->actx->table_size;
+
+    /* make rte_flow rules for all ARP entries */
+    for (int i = 0; i < arp_table_size; i++)
+    {
+        /* update DST IP in pattern and DST MAC in action */
+        ipv4_spec.hdr.dst_addr = arp_bin_table[i].ip;
+        memcpy(modify_dst_mac.mac_addr,
+               &arp_bin_table[i].mac,
+               sizeof(struct rte_ether_addr));
+
+        /* create main traffic rule */
+#if VALIDATE_FLOW_RULE
+        if (rte_flow_validate(port_id, &attr, patterns, actions, &error) < 0)
+        {
+            fprintf(stderr, "rte_flow_validate() failed for port %d. "
+                            "Error type: %d, Error msg: %s\n",
+                    port_id, error.type, error.message);
+
+            return -1;
+        }
+#endif
+
+        arp_bin_table[i].flow = px_latent_flow_create(port_id, &attr, patterns, actions, &error);
+        if (!arp_bin_table[i].flow)
+        {
+            fprintf(stderr, "px_latent_flow_create() failed for port %d. "
+                            "Error type: %d, Error msg: %s\n",
+                    port_id, error.type, error.message);
+        }
+    }
+
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
+int hp_ctx_init(uint16_t port_id,
+                struct px_hairpin_ctx *hp_ctx,
+                struct px_arp_entry *arp_table,
+                int arp_table_size,
+                int opt_out)
 {
     /* make a fast path to hp manager */
     g_hp_ctx[port_id] = hp_ctx;
+
+    /* initialize ARP table */
+    if (!hp_ctx->actx)
+    {
+        hp_ctx->actx =
+            init_arp_table(arp_table, arp_table_size);
+        if (!hp_ctx->actx)
+        {
+            return -1;
+        }
+    }
+
+    /* if opt-out flag on, offload all IPv4 flows */
+    if (opt_out)
+    {
+        if (offload_all_flows(hp_ctx) < 0)
+        {
+            return -1;
+        }
+    }
 
     return 0;
 }
@@ -103,7 +236,7 @@ px_create_flow_auto(uint16_t port_id, struct four_tuple *key, struct rte_mbuf *p
     modify_mac.operation = (enum rte_flow_modify_op)RTE_FLOW_MODIFY_SET;
     modify_mac.dst.field = RTE_FLOW_FIELD_MAC_DST;
     modify_mac.src.field = RTE_FLOW_FIELD_POINTER;
-    modify_mac.src.pvalue = get_macs(pkt);
+    modify_mac.src.pvalue = get_macs(pkt); // modified MACs
     modify_mac.width = sizeof(struct rte_ether_addr) * 8 * 2;
 
     /* make 4-tuple action */
@@ -111,7 +244,7 @@ px_create_flow_auto(uint16_t port_id, struct four_tuple *key, struct rte_mbuf *p
     modify_four_tuple.operation = (enum rte_flow_modify_op)RTE_FLOW_MODIFY_SET;
     modify_four_tuple.dst.field = RTE_FLOW_FIELD_IPV4_SRC;
     modify_four_tuple.src.field = RTE_FLOW_FIELD_POINTER;
-    modify_four_tuple.src.pvalue = get_four_tuple(pkt) + 1;
+    modify_four_tuple.src.pvalue = get_four_tuple(pkt); // modified 4-tuple
     modify_four_tuple.width = sizeof(struct four_tuple) * 8;
 
     struct rte_flow_action actions[] = {
@@ -178,7 +311,6 @@ px_create_flow_auto(uint16_t port_id, struct four_tuple *key, struct rte_mbuf *p
 #endif
 
     /* create main traffic rule */
-#define VALIDATE_FLOW_RULE 1
 #if VALIDATE_FLOW_RULE
     if (rte_flow_validate(port_id, &attr, patterns, actions, &error) < 0)
     {

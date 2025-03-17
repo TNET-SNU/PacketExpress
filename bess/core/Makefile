@@ -123,7 +123,7 @@ CXXFLAGS += -D JUMBO_FRAME=0
 # Choose one of below
 
 # 1. LRO on
-CXXFLAGS += -D USE_LRO=1
+# CXXFLAGS += -D USE_LRO=1
 
 # 2. LRO off
 # CXXFLAGS += -D USE_LRO=0
@@ -148,7 +148,7 @@ CXXFLAGS += -D USE_LRO=1
 # CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=1
 
 # 7. CUSTOM GRO + LINKING, stall 72us
-CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=72000 -D USE_LINK=1
+# CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=72000 -D USE_LINK=1
 
 ################################################################################
 
@@ -160,16 +160,16 @@ CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=72000 -D USE_L
 ################################################################################
 
 # To use nicmem, make sure to use DPDK version 20.11
-# CXXFLAGS += -D NICMEM=0
-CXXFLAGS += -D NICMEM=1
+CXXFLAGS += -D NICMEM=0
+# CXXFLAGS += -D NICMEM=1
 
 ################################################################################
 
 # Choose one of below
 
 # To use hairpin offload, make sure to use DPDK version 22.11
-CXXFLAGS += -D NUM_HAIRPIN_Q=0
-# CXXFLAGS += -D NUM_HAIRPIN_Q=1
+# CXXFLAGS += -D NUM_HAIRPIN_Q=0
+CXXFLAGS += -D NUM_HAIRPIN_Q=1
 
 # (not supported yet) if want to use rte_flow_async API, use below
 # make sure to use DPDK version 22.11
