@@ -44,7 +44,7 @@ px_ring_enqueue(struct px_ring *ring,
         {
             /* enqueue at most */
             memcpy(queue + tail, table,
-                   (diff - 1) * sizeof(struct rte_mbuf *));
+                   diff * sizeof(struct rte_mbuf *));
             ring->tail = head - 1;
 
             return diff;
