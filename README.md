@@ -12,7 +12,7 @@ Use Ubuntu 18.04.
                         libzmq5 libunwind-dev liblzma-dev libpcap-dev libssl-dev libnuma-dev libgflags-dev \
                         libgraph-easy-perl libgtest-dev libc-ares-dev libbenchmark-dev libelf-dev \
                         libdwarf-dev zlib1g-dev
-   pip3 install ninja protobuf==3.19.6 grpcio scapy flask iptools mitogen psutil pyroute2 pyelftools meson
+   pip3 install ninja protobuf==3.19.6 grpcio scapy flask iptools mitogen psutil pyroute2==0.8.1 pyelftools meson
    ```
 
 For details, please refer to prerequisites of BESS, DPDK (data plane) and UPF-EPC (control plane).
@@ -153,6 +153,6 @@ For usage example, see bess/core/modules/offload_manager.cc.
 
 ## Where's the main logic for nicmem?
 
-Search NICMEM macro.
-I will also move them to DPDK library.
+See dpdk-stable-20.11.1/lib/px/px_nicmem.c and px_nicmem.h.
+For usage example, see bess/core/driveres/pmd.cc.
 
