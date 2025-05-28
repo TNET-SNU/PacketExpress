@@ -34,8 +34,8 @@ struct px_arp_ctx
 };
 /*----------------------------------------------------------------------------*/
 struct px_arp_ctx *
-init_arp_table(struct px_arp_entry *arp_table,
-               int table_size);
+px_init_arp_table(struct px_arp_entry *arp_table,
+                  int table_size);
 /*----------------------------------------------------------------------------*/
 void free_arp_table(struct px_arp_ctx *actx);
 /*----------------------------------------------------------------------------*/

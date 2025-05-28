@@ -9,6 +9,10 @@
 #include <rte_log.h>
 #include <rte_errno.h>
 #include <rte_string_fns.h>
+#include <rte_arp.h>
+#include <rte_ip.h>
+#include <rte_udp.h>
+#include <rte_byteorder.h>
 
 #include "rte_pdump.h"
 
@@ -69,6 +73,132 @@ static struct pdump_rxtx_cbs {
 } rx_cbs[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT],
 tx_cbs[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT];
 
+static int
+inet_addr_equal(int af, const union addr *a1,
+		const union addr *a2)
+{
+	switch (af) {
+	case AF_INET:
+		return a1->in.s_addr == a2->in.s_addr;
+	case AF_INET6:
+		return memcmp(a1->in6.s6_addr, a2->in6.s6_addr, 16) == 0;
+	default:
+		return memcmp(a1, a2, sizeof(union addr)) == 0;
+	}
+}
+
+static int
+inet_is_addr_any(int af, const union addr *addr)
+{
+	switch (af) {
+	case AF_INET:
+		return addr->in.s_addr == htonl(INADDR_ANY);
+	case AF_INET6:
+		return IN6_ARE_ADDR_EQUAL(&addr->in6, &in6addr_any);
+	default:
+		return -1;
+	}
+
+	return -1;
+}
+static int
+pdump_filter(struct rte_mbuf *m, struct pdump_filter *filter)
+{
+	struct rte_ether_hdr *eth_hdr;
+	struct vlan_eth_hdr *vlan_eth_hdr;
+	union addr s_addr, d_addr;
+	int prepend = 0;
+	uint16_t type = 0;
+	uint16_t iph_len = 0;
+	uint8_t proto = 0;
+
+	int af;
+
+	if (filter->af == 0 && filter->s_port == 0 &&
+			filter->d_port == 0 && filter->proto == 0 &&
+			filter->proto_port == 0)
+		return 0;
+
+	eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
+
+	if (eth_hdr->ether_type == htons(ETH_P_8021Q)) {
+		prepend += sizeof(struct vlan_eth_hdr);
+		vlan_eth_hdr = rte_pktmbuf_mtod(m, struct vlan_eth_hdr *);
+		type = vlan_eth_hdr->h_vlan_encapsulated_proto;
+	} else {
+		prepend += sizeof(struct rte_ether_hdr);
+		eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
+		type = eth_hdr->ether_type;
+	}
+
+	if (rte_pktmbuf_adj(m, prepend) == NULL)
+		goto prepend;
+
+	if (type == rte_cpu_to_be_16(RTE_ETHER_TYPE_ARP)) {
+		struct rte_arp_hdr *arp = rte_pktmbuf_mtod(m, struct rte_arp_hdr *);
+		af = AF_INET;
+		s_addr.in.s_addr = arp->arp_data.arp_sip;
+		d_addr.in.s_addr = arp->arp_data.arp_tip;
+	} else if (type == rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4)) {
+		struct rte_ipv4_hdr *ip4 = rte_pktmbuf_mtod(m, struct rte_ipv4_hdr *);
+		af = AF_INET;
+		s_addr.in.s_addr = ip4->src_addr;
+		d_addr.in.s_addr = ip4->dst_addr;
+		proto = ip4->next_proto_id;
+		iph_len = (ip4->version_ihl & 0xf) << 2;
+	} else if (type == rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6)) {
+		struct rte_ipv6_hdr *ip6 = rte_pktmbuf_mtod(m, struct rte_ipv6_hdr *);
+		af = AF_INET6;
+		rte_memcpy(&s_addr.in6, &ip6->src_addr, 16);
+		rte_memcpy(&d_addr.in6, &ip6->dst_addr, 16);
+		proto = ip6->proto;
+		iph_len = sizeof(struct rte_ipv6_hdr);
+	} else {
+		goto prepend;
+	}
+
+	/*filter*/
+	if (!inet_is_addr_any(af, &filter->s_addr) &&
+		!inet_addr_equal(af, &filter->s_addr, &s_addr))
+		goto prepend;
+	if (!inet_is_addr_any(af, &filter->d_addr) &&
+		!inet_addr_equal(af, &filter->d_addr, &d_addr))
+		goto prepend;
+	if (!inet_is_addr_any(af, &filter->host_addr) &&
+		!inet_addr_equal(af, &filter->host_addr, &s_addr) &&
+		!inet_addr_equal(af, &filter->host_addr, &d_addr))
+		goto prepend;
+
+	if (filter->proto && filter->proto != proto)
+		goto prepend;
+
+	if (filter->s_port || filter->d_port || filter->proto_port) {
+		if (proto != IPPROTO_TCP && proto != IPPROTO_UDP)
+			goto prepend;
+		struct rte_udp_hdr _uh;
+		const struct rte_udp_hdr *uh;
+		uh = rte_pktmbuf_read(m, iph_len, sizeof(_uh), &_uh);
+		if (uh == NULL)
+			goto prepend;
+		if (filter->s_port && filter->s_port != rte_cpu_to_be_16(uh->src_port))
+			goto prepend;
+
+		if (filter->d_port && filter->d_port != rte_cpu_to_be_16(uh->dst_port))
+			goto prepend;
+
+		if (filter->proto_port &&
+				filter->proto_port != rte_cpu_to_be_16(uh->src_port) &&
+				filter->proto_port != rte_cpu_to_be_16(uh->dst_port))
+			goto prepend;
+	}
+
+	rte_pktmbuf_prepend(m, prepend);
+	return 0;
+
+prepend:
+	rte_pktmbuf_prepend(m, prepend);
+	return -1;
+}
 
 static inline void
 pdump_copy(struct rte_mbuf **pkts, uint16_t nb_pkts, void *user_params)
@@ -86,6 +216,8 @@ pdump_copy(struct rte_mbuf **pkts, uint16_t nb_pkts, void *user_params)
 	ring = cbs->ring;
 	mp = cbs->mp;
 	for (i = 0; i < nb_pkts; i++) {
+		if (pdump_filter(pkts[i], cbs->filter) != 0)
+			continue;
 		p = rte_pktmbuf_copy(pkts[i], mp, 0, UINT32_MAX);
 		if (p)
 			dup_bufs[d_pkts++] = p;
@@ -122,7 +254,7 @@ pdump_tx(uint16_t port __rte_unused, uint16_t qidx __rte_unused,
 static int
 pdump_register_rx_callbacks(uint16_t end_q, uint16_t port, uint16_t queue,
 				struct rte_ring *ring, struct rte_mempool *mp,
-				uint16_t operation)
+				struct pdump_filter *filter, uint16_t operation)
 {
 	uint16_t qid;
 	struct pdump_rxtx_cbs *cbs = NULL;
@@ -140,6 +272,7 @@ pdump_register_rx_callbacks(uint16_t end_q, uint16_t port, uint16_t queue,
 			}
 			cbs->ring = ring;
 			cbs->mp = mp;
+			cbs->filter = filter;
 			cbs->cb = rte_eth_add_first_rx_callback(port, qid,
 								pdump_rx, cbs);
 			if (cbs->cb == NULL) {
@@ -176,7 +309,7 @@ pdump_register_rx_callbacks(uint16_t end_q, uint16_t port, uint16_t queue,
 static int
 pdump_register_tx_callbacks(uint16_t end_q, uint16_t port, uint16_t queue,
 				struct rte_ring *ring, struct rte_mempool *mp,
-				uint16_t operation)
+				struct pdump_filter *filter, uint16_t operation)
 {
 
 	uint16_t qid;
@@ -195,6 +328,7 @@ pdump_register_tx_callbacks(uint16_t end_q, uint16_t port, uint16_t queue,
 			}
 			cbs->ring = ring;
 			cbs->mp = mp;
+			cbs->filter = filter;
 			cbs->cb = rte_eth_add_tx_callback(port, qid, pdump_tx,
 								cbs);
 			if (cbs->cb == NULL) {
@@ -238,6 +372,7 @@ set_pdump_rxtx_cbs(const struct pdump_request *p)
 	uint16_t operation;
 	struct rte_ring *ring;
 	struct rte_mempool *mp;
+	struct pdump_filter *filter;
 
 	flags = p->flags;
 	operation = p->op;
@@ -253,6 +388,7 @@ set_pdump_rxtx_cbs(const struct pdump_request *p)
 		queue = p->data.en_v1.queue;
 		ring = p->data.en_v1.ring;
 		mp = p->data.en_v1.mp;
+		filter = p->data.en_v1.filter;
 	} else {
 		ret = rte_eth_dev_get_port_by_name(p->data.dis_v1.device,
 				&port);
@@ -265,6 +401,7 @@ set_pdump_rxtx_cbs(const struct pdump_request *p)
 		queue = p->data.dis_v1.queue;
 		ring = p->data.dis_v1.ring;
 		mp = p->data.dis_v1.mp;
+		filter = p->data.dis_v1.filter;
 	}
 
 	/* validation if packet capture is for all queues */
@@ -303,7 +440,7 @@ set_pdump_rxtx_cbs(const struct pdump_request *p)
 	if (flags & RTE_PDUMP_FLAG_RX) {
 		end_q = (queue == RTE_PDUMP_ALL_QUEUES) ? nb_rx_q : queue + 1;
 		ret = pdump_register_rx_callbacks(end_q, port, queue, ring, mp,
-							operation);
+				filter, operation);
 		if (ret < 0)
 			return ret;
 	}
@@ -312,7 +449,7 @@ set_pdump_rxtx_cbs(const struct pdump_request *p)
 	if (flags & RTE_PDUMP_FLAG_TX) {
 		end_q = (queue == RTE_PDUMP_ALL_QUEUES) ? nb_tx_q : queue + 1;
 		ret = pdump_register_tx_callbacks(end_q, port, queue, ring, mp,
-							operation);
+				filter, operation);
 		if (ret < 0)
 			return ret;
 	}

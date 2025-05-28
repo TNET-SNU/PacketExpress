@@ -340,6 +340,15 @@ rx_burst_8023ad(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts,
 
 		/* Handle slow protocol packets. */
 		while (j < num_rx_total) {
+			/* If packet is not pure L2 and is known:
+			 * Such as OSPF protocol multcast packet,
+			 * we want to handle it in user mode by ourselves,
+			 * skip slow protocol flow */
+			if ((bufs[j]->packet_type & ~RTE_PTYPE_L2_ETHER) != 0) {
+				j++;
+				continue;
+			}
+
 			if (j + 3 < num_rx_total)
 				rte_prefetch0(rte_pktmbuf_mtod(bufs[j + 3], void *));
 
@@ -1288,8 +1297,10 @@ skip_tx_ring:
 					slave_port_ids[i];
 	}
 
-	if (unlikely(dist_slave_count < 1))
+	if (unlikely(dist_slave_count < 1)) {
+		RTE_BOND_LOG(WARNING, "no distributing slaves on bonding port %d", internals->port_id);
 		return 0;
+	}
 
 	return tx_burst_balance(queue, bufs, nb_bufs, dist_slave_port_ids,
 				dist_slave_count);
@@ -1780,7 +1791,14 @@ slave_configure(struct rte_eth_dev *bonded_eth_dev,
 
 		errval = rte_eth_rx_queue_setup(slave_eth_dev->data->port_id, q_id,
 				bd_rx_q->nb_rx_desc,
-				rte_eth_dev_socket_id(slave_eth_dev->data->port_id),
+				// In spite of performance problem, bonding slaves had better to support
+				// slaves from different numa nodes. Considering that numa node on which
+				// the resources of bonding port is allocated from is specified by
+				// rte_eth_bond_create() at bonding creation, the slave's queue_setup
+				// would fail if specified with the slave's numa node id that is different
+				// from the one of the bonding port. See rte_eth_dma_zone_reserve() for
+				// details.
+				SOCKET_ID_ANY,
 				&(bd_rx_q->rx_conf), bd_rx_q->mb_pool);
 		if (errval != 0) {
 			RTE_BOND_LOG(ERR,
@@ -1796,7 +1814,14 @@ slave_configure(struct rte_eth_dev *bonded_eth_dev,
 
 		errval = rte_eth_tx_queue_setup(slave_eth_dev->data->port_id, q_id,
 				bd_tx_q->nb_tx_desc,
-				rte_eth_dev_socket_id(slave_eth_dev->data->port_id),
+				// In spite of performance problem, bonding slaves had better to support
+				// slaves from different numa nodes. Considering that numa node on which
+				// the resources of bonding port is allocated from is specified by
+				// rte_eth_bond_create() at bonding creation, the slave's queue_setup
+				// would fail if specified with the slave's numa node id that is different
+				// from the one of the bonding port. See rte_eth_dma_zone_reserve() for
+				// details.
+				SOCKET_ID_ANY,
 				&bd_tx_q->tx_conf);
 		if (errval != 0) {
 			RTE_BOND_LOG(ERR,

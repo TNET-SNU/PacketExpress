@@ -771,7 +771,8 @@ int
 rte_dev_alloc_dm(struct rte_device *dev, void **addr,
 		 size_t *len)
 {
-	printf("name %s\n", dev->bus->name);
+	// fprintf(stderr, "dev name: %s\n", dev->name);
+	// fprintf(stderr, "bus name: %s\n", dev->bus->name);
 	if (dev->bus->alloc_dm == NULL) {
 		rte_errno = ENOTSUP;
 		return -1;

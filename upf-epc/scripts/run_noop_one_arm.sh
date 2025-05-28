@@ -13,9 +13,9 @@ rootdir=$workdir/../..
 
 # reset bess daemon and run up4
 cd $rootdir/bess/bessctl
-# python3 bessctl daemon reset
-python3 bessctl run noop-one-arm
+# python3.8 bessctl daemon reset
+python3.8 bessctl run noop-one-arm
 
 # run route control
 cd $rootdir/bess
-python3 route_control_one_arm.py -i "${ifaces[@]}"
+python3.8 route_control_one_arm.py -i "${ifaces[@]}"

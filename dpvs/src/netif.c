@@ -4032,7 +4032,11 @@ int netif_port_start(struct netif_port *port)
 #else
                                1,
 #endif
-                               NICMEM ? 32768 - 1 : 0,
+#if NICMEM
+                               port->rxq_desc_nb,
+#else
+                               0,
+#endif
 #if USE_CGRO
                                STALL_TIMEOUT_NS,
 #else
@@ -4040,7 +4044,15 @@ int netif_port_start(struct netif_port *port)
 #endif
                                NUM_HAIRPIN_Q,
                                NUM_HAIRPIN_Q,
-                               &port->dev_conf);
+                               &port->dev_conf,
+                               NULL,
+                               0,
+#if USE_OPTOUT
+                               1
+#else
+                               0
+#endif
+                               );
 #else
     ret = rte_eth_dev_configure(port->id,
                                 port->nrxq,

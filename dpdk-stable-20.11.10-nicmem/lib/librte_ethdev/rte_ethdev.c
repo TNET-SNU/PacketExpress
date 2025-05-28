@@ -1925,7 +1925,7 @@ rte_eth_rx_queue_check_split(const struct rte_eth_rxseg_split *rx_seg,
 		uint32_t offset = rx_seg[seg_idx].offset;
 
 		if (mpl == NULL) {
-			RTE_ETHDEV_LOG(ERR, "null mempool pointer\n");
+			RTE_ETHDEV_LOG(ERR, "null mempool pointer, seg_idx: %d\n", seg_idx);
 			return -EINVAL;
 		}
 		if (seg_idx != 0 && mp_first != mpl &&

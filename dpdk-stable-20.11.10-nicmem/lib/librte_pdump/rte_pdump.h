@@ -15,6 +15,8 @@
 #include <stdint.h>
 #include <rte_mempool.h>
 #include <rte_ring.h>
+#include <arpa/inet.h>
+#include <linux/if_ether.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -27,6 +29,31 @@ enum {
 	RTE_PDUMP_FLAG_TX = 2,  /* transmit direction */
 	/* both receive and transmit directions */
 	RTE_PDUMP_FLAG_RXTX = (RTE_PDUMP_FLAG_RX|RTE_PDUMP_FLAG_TX)
+};
+
+union addr {
+	struct in_addr      in;
+	struct in6_addr     in6;
+};
+
+struct pdump_filter {
+	int         af;
+	union addr  s_addr;
+	union addr  d_addr;
+	union addr  host_addr; //s_addr or d_addr
+
+	uint8_t     proto;
+	uint16_t    proto_port; //s_port or d_port
+	uint16_t    s_port;
+	uint16_t    d_port;
+};
+
+struct vlan_eth_hdr {
+	unsigned char   h_dest[ETH_ALEN];
+	unsigned char   h_source[ETH_ALEN];
+	unsigned short  h_vlan_proto;
+	unsigned short  h_vlan_TCI;
+	unsigned short  h_vlan_encapsulated_proto;
 };
 
 /**

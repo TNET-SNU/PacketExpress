@@ -824,8 +824,10 @@ txq_set_params(struct mlx5_txq_ctrl *txq_ctrl)
 	else
 		txqs_inline = (unsigned int)config->txqs_inline;
 	inlen_send = (config->txq_inline_max == MLX5_ARG_UNSET) ?
-		     MLX5_SEND_DEF_INLINE_LEN :
+		    //  MLX5_SEND_DEF_INLINE_LEN :
+		     0 :
 		     (unsigned int)config->txq_inline_max;
+	// printf("inlen_send = %d\n", inlen_send);
 	inlen_empw = (config->txq_inline_mpw == MLX5_ARG_UNSET) ?
 		     MLX5_EMPW_DEF_INLINE_LEN :
 		     (unsigned int)config->txq_inline_mpw;
@@ -1152,7 +1154,9 @@ mlx5_txq_new(struct rte_eth_dev *dev, uint16_t idx, uint16_t desc,
 	tmpl->txq.port_id = dev->data->port_id;
 	tmpl->txq.idx = idx;
 	if (conf->inline_min) {
-		printf("setting config->txq_inline_min = %d\n", conf->inline_min);
+		printf("setting config->txq_inline_min: %d -> %d\n",
+			   priv->config.txq_inline_min,
+			   conf->inline_min);
 		priv->config.txq_inline_min = conf->inline_min;
 	}
 	txq_set_params(tmpl);

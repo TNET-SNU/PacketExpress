@@ -549,7 +549,7 @@ mlx5_rxq_check_vec_support(struct mlx5_rxq_data *rxq)
 
 	// To compare apples-to-apples disable vec for all
 	// (not just rxq->sge_n != 0)
-	return -ENOTSUP;
+	// return -ENOTSUP;
 	if (!ctrl->priv->config.rx_vec_en || rxq->sges_n != 0)
 		return -ENOTSUP;
 	if (rxq->lro)

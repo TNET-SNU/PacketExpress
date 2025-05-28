@@ -864,7 +864,6 @@ bond_mode_8023ad_periodic_cb(void *arg)
 	struct port *port;
 	struct rte_eth_link link_info;
 	struct rte_ether_addr slave_addr;
-	struct rte_mbuf *lacp_pkt = NULL;
 	uint16_t slave_id;
 	uint16_t i;
 
@@ -936,6 +935,7 @@ bond_mode_8023ad_periodic_cb(void *arg)
 			/* Find LACP packet to this port. Do not check subtype,
 			 * it is done in function that queued packet
 			 */
+			struct rte_mbuf *lacp_pkt = NULL;
 			int retval = rte_ring_dequeue(port->rx_ring,
 					(void **)&lacp_pkt);
 

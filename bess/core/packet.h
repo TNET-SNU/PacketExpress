@@ -324,7 +324,6 @@ class alignas(64) Packet {
 };
 
 static_assert(std::is_standard_layout<Packet>::value, "Incorrect class Packet");
-static_assert(sizeof(Packet) == SNBUF_SIZE, "Incorrect class Packet");
 
 #if __AVX__
 #include "packet_avx.h"

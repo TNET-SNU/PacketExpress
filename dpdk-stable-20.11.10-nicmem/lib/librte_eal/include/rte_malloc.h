@@ -248,6 +248,21 @@ rte_calloc_socket(const char *type, size_t num, size_t size, unsigned align, int
 	__rte_alloc_size(2, 3);
 
 /**
+ * Check the header/tailer cookies of memory pointed to by the provided pointer.
+ *
+ * This pointer must have been returned by a previous call to
+ * rte_malloc(), rte_zmalloc(), rte_calloc() or rte_realloc().
+ *
+ * @param ptr
+ *   The pointer to memory to be checked.
+ * @return
+ *   - true if the header/tailer cookies are OK.
+ *   - Otherwise, false.
+ */
+int
+rte_memmory_ok(void *ptr);
+
+/**
  * Frees the memory space pointed to by the provided pointer.
  *
  * This pointer must have been returned by a previous call to

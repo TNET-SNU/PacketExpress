@@ -226,7 +226,7 @@ mlx5_alloc_dm(struct rte_pci_device *pdev, void **addr,
 	struct rte_eth_dev *dev;
 	struct mlx5_priv *priv;
 
-	DRV_LOG(WARNING, "Allocating NIC memory\n");
+	DRV_LOG(WARNING, "Allocating NIC memory");
 	dev = pci_dev_to_eth_dev(pdev);
 	priv = dev->data->dev_private;
 	*addr = (void *) MLX5_DM_OFF;
@@ -252,7 +252,7 @@ mlx5_get_dma_map(struct rte_pci_device *pdev, void *addr,
 	}
 	priv = dev->data->dev_private;
 	sh = priv->sh;
-	DRV_LOG(WARNING, "%s mapping DM MR addr: 0x%08lx len: 0x%08lx\n",
+	DRV_LOG(WARNING, "%s mapping DM MR addr: 0x%08lx len: 0x%08lx",
 		__func__, (uint64_t)addr - MLX5_DM_OFF, len + MLX5_DM_OFF);
 	mr = mlx5_create_dm_mr_ext(sh->pd, sh->dm, (uintptr_t)addr - MLX5_DM_OFF,
 				   len + MLX5_DM_OFF,

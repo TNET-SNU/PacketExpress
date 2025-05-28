@@ -37,7 +37,7 @@ mac_str_to_bin(const char *mac_str,
 /*----------------------------------------------------------------------------*/
 struct px_arp_ctx *
 px_init_arp_table(struct px_arp_entry *arp_string_table,
-               int table_size)
+                  int table_size)
 {
     struct px_arp_ctx *actx;
     struct px_arp_bin *arp_bin_table;

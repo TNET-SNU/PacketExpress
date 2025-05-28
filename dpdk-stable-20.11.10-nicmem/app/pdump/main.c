@@ -27,6 +27,7 @@
 #include <rte_ring.h>
 #include <rte_string_fns.h>
 #include <rte_pdump.h>
+#include <rte_malloc.h>
 
 #define CMD_LINE_OPT_PDUMP "pdump"
 #define CMD_LINE_OPT_PDUMP_NUM 256
@@ -41,6 +42,14 @@
 #define PDUMP_RING_SIZE_ARG "ring-size"
 #define PDUMP_MSIZE_ARG "mbuf-size"
 #define PDUMP_NUM_MBUFS_ARG "total-num-mbufs"
+
+#define PDUMP_HOST_ARG "host"
+#define PDUMP_SRC_ARG "src-host"
+#define PDUMP_DST_ARG "dst-host"
+#define PDUMP_PROTO_PORT_AGE "proto-port"
+#define PDUMP_SPORT_ARG "src-port"
+#define PDUMP_DPORT_ARG "dst-port"
+#define PDUMP_PROTO_ARG "proto"
 
 #define VDEV_NAME_FMT "net_pcap_%s_%d"
 #define VDEV_PCAP_ARGS_FMT "tx_pcap=%s"
@@ -97,6 +106,13 @@ static const char * const valid_pdump_arguments[] = {
 	PDUMP_RING_SIZE_ARG,
 	PDUMP_MSIZE_ARG,
 	PDUMP_NUM_MBUFS_ARG,
+	PDUMP_HOST_ARG,
+	PDUMP_SRC_ARG,
+	PDUMP_DST_ARG,
+	PDUMP_PROTO_PORT_AGE,
+	PDUMP_SPORT_ARG,
+	PDUMP_DPORT_ARG,
+	PDUMP_PROTO_ARG,
 	NULL
 };
 
@@ -130,6 +146,7 @@ struct pdump_tuples {
 	enum pcap_stream rx_vdev_stream_type;
 	enum pcap_stream tx_vdev_stream_type;
 	bool single_pdump_dev;
+	struct pdump_filter *filter;
 
 	/* stats */
 	struct pdump_stats stats;
@@ -158,6 +175,11 @@ pdump_usage(const char *prgname)
 			"(queue=<queue_id>),"
 			"(rx-dev=<iface or pcap file> |"
 			" tx-dev=<iface or pcap file>,"
+			"[host=<ipaddress> | src-host=<source ip address> |"
+			"dst-host=<destination ip address>],"
+			"[proto=<protocol type>support:tcp/udp/icmp],"
+			"[proto-port=<protocol port> |src-port=<source protocol port> |"
+			"dst-port=<destination protocol port>],"
 			"[ring-size=<ring size>default:16384],"
 			"[mbuf-size=<mbuf data size>default:2176],"
 			"[total-num-mbufs=<number of mbufs>default:65535]'\n",
@@ -240,6 +262,64 @@ parse_uint_value(const char *key, const char *value, void *extra_args)
 		return ret;
 
 	v->val = t;
+	return 0;
+}
+
+static int
+parse_host(const char *key __rte_unused, const char *value, void *extra_args)
+{
+	struct pdump_tuples *pt = extra_args;
+	struct in_addr	inaddr;
+	struct in6_addr	inaddr6;
+	union  addr		addr;
+	int				af = 0;
+
+	if (inet_pton(AF_INET6, value, &inaddr6) > 0) {
+		af = AF_INET6;
+		addr.in6 = inaddr6;
+	} else if (inet_pton(AF_INET, value, &inaddr) > 0){
+		af = AF_INET;
+		addr.in = inaddr;
+	} else {
+		printf("IP address invaled\n");
+		return -EINVAL;
+	}
+
+	if (pt->filter && pt->filter->af != 0 && af != pt->filter->af) {
+		printf("IPv4 and IPv6 conflict\n");
+		return -EINVAL;
+	} else {
+		pt->filter->af = af;
+	}
+
+	if (!strcmp(key, PDUMP_HOST_ARG)) {
+		rte_memcpy(&pt->filter->host_addr, &addr, sizeof(addr));
+	} else if (!strcmp(key, PDUMP_SRC_ARG)) {
+		rte_memcpy(&pt->filter->s_addr, &addr, sizeof(addr));
+	} else if (!strcmp(key, PDUMP_DST_ARG)) {
+		rte_memcpy(&pt->filter->d_addr, &addr, sizeof(addr));
+	}
+
+	return 0;
+}
+
+static int
+parse_proto(const char *key __rte_unused, const char *value, void *extra_args)
+{
+	struct pdump_tuples *pt = extra_args;
+
+	if (!strcmp(value, "tcp")) {
+		pt->filter->proto = IPPROTO_TCP;
+	} else if (!strcmp(value, "udp")) {
+		pt->filter->proto = IPPROTO_UDP;
+	} else if (!strcmp(value, "icmp")) {
+		pt->filter->proto = IPPROTO_ICMP;
+	} else {
+		printf("invalid value:\"%s\" for key:\"%s\", "
+			"value must be tcp/udp/icmp\n", value, key);
+		return -EINVAL;
+	}
+
 	return 0;
 }
 
@@ -369,6 +449,75 @@ parse_pdump(const char *optarg)
 		pt->total_num_mbufs = (uint16_t) v.val;
 	} else
 		pt->total_num_mbufs = MBUFS_PER_POOL;
+
+	/* filter parsing and validation */
+	pt->filter = rte_zmalloc("pdump_filter",
+			sizeof(struct pdump_filter), 0);
+	cnt1 = rte_kvargs_count(kvlist, PDUMP_HOST_ARG);
+	if (cnt1 == 1) {
+		ret = rte_kvargs_process(kvlist, PDUMP_HOST_ARG,
+				&parse_host, pt);
+		if (ret < 0)
+			goto free_kvlist;
+	}
+
+	cnt1 = rte_kvargs_count(kvlist, PDUMP_SRC_ARG);
+	if (cnt1 == 1) {
+		ret = rte_kvargs_process(kvlist, PDUMP_SRC_ARG,
+				&parse_host, pt);
+		if (ret < 0)
+			goto free_kvlist;
+	}
+
+	cnt1 = rte_kvargs_count(kvlist, PDUMP_DST_ARG);
+	if (cnt1 == 1) {
+		ret = rte_kvargs_process(kvlist, PDUMP_DST_ARG,
+				&parse_host, pt);
+		if (ret < 0)
+			goto free_kvlist;
+	}
+
+
+	cnt1 = rte_kvargs_count(kvlist, PDUMP_PROTO_PORT_AGE);
+	if (cnt1 == 1) {
+		v.min = 1;
+		v.max = UINT16_MAX;
+		ret = rte_kvargs_process(kvlist, PDUMP_PROTO_PORT_AGE,
+				&parse_uint_value, &v);
+		if (ret < 0)
+			goto free_kvlist;
+		pt->filter->proto_port = (uint16_t) v.val;
+	}
+
+	cnt1 = rte_kvargs_count(kvlist, PDUMP_SPORT_ARG);
+	if (cnt1 == 1) {
+		v.min = 1;
+		v.max = UINT16_MAX;
+		ret = rte_kvargs_process(kvlist, PDUMP_SPORT_ARG,
+				&parse_uint_value, &v);
+		if (ret < 0)
+			goto free_kvlist;
+		pt->filter->s_port = (uint16_t) v.val;
+	}
+
+	cnt1 = rte_kvargs_count(kvlist, PDUMP_DPORT_ARG);
+	if (cnt1 == 1) {
+		v.min = 1;
+		v.max = UINT16_MAX;
+		ret = rte_kvargs_process(kvlist, PDUMP_DPORT_ARG,
+				&parse_uint_value, &v);
+		if (ret < 0)
+			goto free_kvlist;
+		pt->filter->d_port = (uint16_t) v.val;
+	}
+
+	cnt1 = rte_kvargs_count(kvlist, PDUMP_PROTO_ARG);
+	if (cnt1 == 1) {
+		ret = rte_kvargs_process(kvlist, PDUMP_PROTO_ARG,
+				&parse_proto, pt);
+		if (ret < 0)
+			goto free_kvlist;
+	}
 
 	num_tuples++;
 
@@ -510,6 +659,8 @@ cleanup_rings(void)
 			rte_ring_free(pt->rx_ring);
 		if (pt->tx_ring)
 			rte_ring_free(pt->tx_ring);
+		if (pt->filter)
+			rte_free(pt->filter);
 	}
 }
 
@@ -837,20 +988,20 @@ enable_pdump(void)
 						pt->queue,
 						RTE_PDUMP_FLAG_RX,
 						pt->rx_ring,
-						pt->mp, NULL);
+						pt->mp, pt->filter);
 				ret1 = rte_pdump_enable_by_deviceid(
 						pt->device_id,
 						pt->queue,
 						RTE_PDUMP_FLAG_TX,
 						pt->tx_ring,
-						pt->mp, NULL);
+						pt->mp, pt->filter);
 			} else if (pt->dump_by_type == PORT_ID) {
 				ret = rte_pdump_enable(pt->port, pt->queue,
 						RTE_PDUMP_FLAG_RX,
-						pt->rx_ring, pt->mp, NULL);
+						pt->rx_ring, pt->mp, pt->filter);
 				ret1 = rte_pdump_enable(pt->port, pt->queue,
 						RTE_PDUMP_FLAG_TX,
-						pt->tx_ring, pt->mp, NULL);
+						pt->tx_ring, pt->mp, pt->filter);
 			}
 		} else if (pt->dir == RTE_PDUMP_FLAG_RX) {
 			if (pt->dump_by_type == DEVICE_ID)
@@ -858,22 +1009,22 @@ enable_pdump(void)
 						pt->device_id,
 						pt->queue,
 						pt->dir, pt->rx_ring,
-						pt->mp, NULL);
+						pt->mp, pt->filter);
 			else if (pt->dump_by_type == PORT_ID)
 				ret = rte_pdump_enable(pt->port, pt->queue,
 						pt->dir,
-						pt->rx_ring, pt->mp, NULL);
+						pt->rx_ring, pt->mp, pt->filter);
 		} else if (pt->dir == RTE_PDUMP_FLAG_TX) {
 			if (pt->dump_by_type == DEVICE_ID)
 				ret = rte_pdump_enable_by_deviceid(
 						pt->device_id,
 						pt->queue,
 						pt->dir,
-						pt->tx_ring, pt->mp, NULL);
+						pt->tx_ring, pt->mp, pt->filter);
 			else if (pt->dump_by_type == PORT_ID)
 				ret = rte_pdump_enable(pt->port, pt->queue,
 						pt->dir,
-						pt->tx_ring, pt->mp, NULL);
+						pt->tx_ring, pt->mp, pt->filter);
 		}
 		if (ret < 0 || ret1 < 0) {
 			cleanup_pdump_resources();

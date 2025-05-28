@@ -2930,6 +2930,7 @@ mlx5_tx_dseg_iptr(struct mlx5_txq_data *__rte_restrict txq,
 	uintptr_t dst, src;
 
 	MLX5_ASSERT(len);
+	// if (len > MLX5_DSEG_MIN_INLINE_SIZE) {
 	if (len > 0) {
 		dseg->bcount = rte_cpu_to_be_32(len);
 		dseg->lkey = mlx5_tx_mb2mr(txq, loc->mbuf);

@@ -28,6 +28,8 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
+BESS_LINK_DYNAMIC := 1
+
 # Disable all implicit Makefile rules
 MAKEFLAGS += --no-builtin-rules
 .SUFFIXES: ;
@@ -102,9 +104,10 @@ CXXFLAGS += -std=c++17 -g3 -ggdb3 -march=$(CPU) \
             -Wall \
             -Wextra \
             -Wcast-align \
-            -Wno-error=deprecated-declarations \
-            -Wno-error=unused-value \
-            -Wno-error=array-bounds \
+            -Wno-address-of-packed-member \
+            -Wno-deprecated-declarations \
+            -Wno-unused-value \
+            -Wno-array-bounds \
 	          -Wno-missing-field-initializers \
             $(PKG_CFLAGS)
 
@@ -142,7 +145,7 @@ CXXFLAGS += -D JUMBO_FRAME=0
 # CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
 
 # 4. CUSTOM GRO on, stall 72us
-# CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=72000 -D USE_LINK=0
+# CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=16 -D STALL_TIMEOUT_NS=72000 -D USE_LINK=0
 
 # 6. CUSTOM GRO + LINKING
 # CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=1
@@ -167,12 +170,11 @@ CXXFLAGS += -D NICMEM=0
 
 # Choose one of below
 
-# To use hairpin offload, make sure to use DPDK version 22.11
-# CXXFLAGS += -D NUM_HAIRPIN_Q=0
-CXXFLAGS += -D NUM_HAIRPIN_Q=1
+CXXFLAGS += -D NUM_HAIRPIN_Q=0
+# CXXFLAGS += -D NUM_HAIRPIN_Q=1
 
 # (not supported yet) if want to use rte_flow_async API, use below
-# make sure to use DPDK version 22.11
+# To use rte_flow_async API, make sure to use DPDK version 22.11
 
 # CXXFLAGS += -D RTE_FLOW_ASYNC_API=1
 

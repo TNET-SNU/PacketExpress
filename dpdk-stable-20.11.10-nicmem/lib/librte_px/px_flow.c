@@ -124,7 +124,7 @@ int hp_ctx_init(uint16_t port_id,
     if (!hp_ctx->actx)
     {
         hp_ctx->actx =
-            init_arp_table(arp_table, arp_table_size);
+            px_init_arp_table(arp_table, arp_table_size);
         if (!hp_ctx->actx)
         {
             return -1;

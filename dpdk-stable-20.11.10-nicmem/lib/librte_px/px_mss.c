@@ -56,26 +56,27 @@ get_tcp_mss(struct rte_mbuf *pkt)
     return NULL;
 }
 /*----------------------------------------------------------------------------*/
-void update_mss(uint16_t *mss_ptr, int direction)
+void update_mss(uint16_t *mss_ptr, uint16_t new_mss, int direction)
 {
+    (void)direction;
     printf("%d -> ", ntohs(*mss_ptr));
+    if (new_mss)
+    {
+        *mss_ptr = htons(new_mss);
+    }
 #if SEMANTIC_TEST
     /* use below on semantic test */
     /* if incoming packet */
-    if (direction)
+    else if (direction)
     {
         *mss_ptr = htons(DEFAULT_iMSS);
     }
     /* if outgoing packet */
+#endif
     else
     {
         *mss_ptr = htons(DEFAULT_eMSS);
     }
-#else
-    (void)direction;
-    /* use below on performance test */
-    *mss_ptr = htons(DEFAULT_eMSS);
-#endif
     printf("%d\n", ntohs(*mss_ptr));
 }
 /*----------------------------------------------------------------------------*/

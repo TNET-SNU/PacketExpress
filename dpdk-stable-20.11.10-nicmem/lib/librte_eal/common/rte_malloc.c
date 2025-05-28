@@ -30,6 +30,10 @@
 #include "eal_memcfg.h"
 #include "eal_private.h"
 
+int rte_memmory_ok(void *addr)
+{
+	return malloc_elem_cookies_ok(RTE_PTR_SUB(addr, MALLOC_ELEM_HEADER_LEN));
+}
 
 /* Free the memory space back to heap */
 static void

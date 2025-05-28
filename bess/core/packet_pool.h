@@ -73,8 +73,9 @@ class PacketPool {
   virtual bool IsPinned() = 0;
 
  protected:
-  static const size_t kDefaultCapacity = (1 << 18) - 1;  // 256k - 1
-  // static const size_t kDefaultCapacity = (1 << 16) - 1;  // 64k - 1
+  static const size_t kDefaultCapacity = 1 << 20;  // 1m
+  // static const size_t kDefaultCapacity = 1 << 18;  // 256k
+  // static const size_t kDefaultCapacity = 1 << 16;  // 64k
   // static const size_t kDefaultCapacity = 2048;
   static const size_t kMaxCacheSize = 512;               // per-core cache size
 

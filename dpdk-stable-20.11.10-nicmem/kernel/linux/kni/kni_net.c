@@ -147,6 +147,7 @@ kni_net_process_request(struct net_device *dev, struct rte_kni_request *req)
 	ret_val = wait_event_interruptible_timeout(kni->wq,
 			kni_fifo_count(kni->resp_q), 3 * HZ);
 	if (signal_pending(current) || ret_val <= 0) {
+		pr_err("%s: wait_event_interruptible timeout\n", __func__);
 		ret = -ETIME;
 		goto fail;
 	}
@@ -690,6 +691,77 @@ kni_net_change_mtu(struct net_device *dev, int new_mtu)
 	return (ret == 0) ? req.result : ret;
 }
 
+static size_t
+kni_nlmsg_size(void)
+{
+	return NLMSG_ALIGN(sizeof(struct ifaddrmsg))
+		+ nla_total_size(4) /* IFA_ADDRESS */
+		+ nla_total_size(4) /* IFA_LOCAL */
+		+ nla_total_size(4) /* IFA_BROADCAST */
+		+ nla_total_size(IFNAMSIZ) /* IFA_LABEL */
+		+ nla_total_size(4) /* IFA_FLAGS */
+		+ nla_total_size(sizeof(struct ifa_cacheinfo)); /* IFA_CACHEINFO */
+}
+
+static void
+kni_net_set_rx_mode(struct net_device *dev)
+{
+	/*
+	 * send event to notify user (DPDK KNI app) that multicast list changed,
+	 * so that it can monitor multicast join/leave and set HW mc-addrs to
+	 * kni dev accordinglly.
+	 *
+	 * this event is just an notification, we do not save any mc-addr here
+	 * (so attribute space for us). user kni app should get maddrs after
+	 * receive this notification.
+	 *
+	 * I was expecting kernel send some rtnl event for multicast join/leave,
+	 * but it doesn't. By checking the call-chain of SIOCADDMULTI (ip maddr,
+	 * manages only hardware multicast) and IP_ADD_MEMBERSHIP (ip_mc_join_group,
+	 * used to for IPv4 multicast), no rtnl event sent.
+	 *
+	 * so as workaround, modify kni driver here to send RTM_NEWADDR.
+	 * it may not suitalbe to use this event for mcast, but that should works.
+	 * hope that won't affect other listener to this event.
+	 *
+	 * previous solution was using rte_kni_request to pass hw-maddr list to user.
+	 * it "works" for times but finally memory corruption found, which is
+	 * not easy to address (lock was added and reviewed). That's why we use
+	 * netlink event instead.
+	 */
+	struct sk_buff *skb;
+	struct net *net = dev_net(dev);
+	struct nlmsghdr *nlh;
+	struct ifaddrmsg *ifm;
+
+	skb = nlmsg_new(kni_nlmsg_size(), GFP_ATOMIC);
+	if (!skb)
+		return;
+
+	/* no other event for us ? */
+	nlh = nlmsg_put(skb, 0, 0, RTM_NEWADDR, sizeof(*ifm), 0);
+	if (!nlh) {
+		kfree_skb(skb);
+		return;
+	}
+
+	/* just send an notification so no other info */
+	ifm = nlmsg_data(nlh);
+	memset(ifm, 0, sizeof(*ifm));
+	ifm->ifa_family = AF_UNSPEC;
+	ifm->ifa_prefixlen = 0;
+	ifm->ifa_flags = 0;
+	ifm->ifa_scope = RT_SCOPE_NOWHERE;
+	ifm->ifa_index = 0;
+
+	nlmsg_end(skb, nlh);
+
+	/* other group ? */
+	pr_debug("%s: rx-mode/multicast-list changed\n", __func__);
+	rtnl_notify(skb, net, 0, RTNLGRP_NOTIFY, NULL, GFP_ATOMIC);
+	return;
+}
+
 static void
 kni_net_change_rx_flags(struct net_device *netdev, int flags)
 {
@@ -791,6 +863,7 @@ kni_net_set_mac(struct net_device *netdev, void *p)
 
 	ret = kni_net_process_request(netdev, &req);
 
+	pr_info("%s request returns %d!\n", __func__, ret);
 	return (ret == 0 ? req.result : ret);
 }
 
@@ -822,6 +895,7 @@ static const struct net_device_ops kni_net_netdev_ops = {
 	.ndo_change_rx_flags = kni_net_change_rx_flags,
 	.ndo_start_xmit = kni_net_tx,
 	.ndo_change_mtu = kni_net_change_mtu,
+	.ndo_set_rx_mode = kni_net_set_rx_mode,
 	.ndo_tx_timeout = kni_net_tx_timeout,
 	.ndo_set_mac_address = kni_net_set_mac,
 #ifdef HAVE_CHANGE_CARRIER_CB

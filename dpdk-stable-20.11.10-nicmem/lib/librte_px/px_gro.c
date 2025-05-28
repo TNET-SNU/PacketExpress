@@ -74,19 +74,19 @@ compare_seq(struct rte_mbuf *pkt1,
             struct rte_mbuf *pkt2)
 {
     uint32_t seq1 = ntohl(*get_tcp_seq(pkt1));
-    uint16_t datalen1 = get_data_len(pkt1);
+    uint32_t datalen1 = get_data_len(pkt1);
     uint32_t end1 = seq1 + datalen1;
     uint32_t seq2 = ntohl(*get_tcp_seq(pkt2));
-    uint16_t datalen2 = get_data_len(pkt2);
+    uint32_t datalen2 = get_data_len(pkt2);
     uint32_t end2 = seq2 + datalen2;
 
     /* append or pre-pend the new packet */
-    if (end1 == seq2)
+    if (likely(end1 == seq2))
     {
         return 1;
     }
 
-    if (end2 == seq1)
+    if (likely(end2 == seq1))
     {
         return 2;
     }
@@ -126,22 +126,22 @@ compare_ipid(struct rte_mbuf *pkt1,
     /* append or pre-pend the new packet */
     if (is_nicmem(pkt1))
     {
-        if ((id1 + (pkt1->nb_segs / 2)) == id2)
+        if (likely((id1 + (pkt1->nb_segs / 2)) == id2))
         {
             return 1;
         }
-        if ((id2 + (pkt2->nb_segs / 2)) == id1)
+        if (likely((id2 + (pkt2->nb_segs / 2)) == id1))
         {
             return 2;
         }
     }
     else
     {
-        if ((id1 + pkt1->nb_segs) == id2)
+        if (likely((id1 + pkt1->nb_segs) == id2))
         {
             return 1;
         }
-        if ((id2 + pkt2->nb_segs) == id1)
+        if (likely((id2 + pkt2->nb_segs) == id1))
         {
             return 2;
         }
@@ -156,12 +156,12 @@ check_seq_backup(struct rte_mbuf *pkt1,
                  struct rte_mbuf *pkt2)
 {
     uint32_t seq1 = ntohl(*get_tcp_seq(pkt1));
-    uint16_t datalen1 = get_data_len(pkt1);
+    uint32_t datalen1 = get_data_len(pkt1);
     uint32_t seq2 = ntohl(*get_tcp_seq(pkt2));
-    uint16_t datalen2 = get_data_len(pkt2);
+    uint32_t datalen2 = get_data_len(pkt2);
 
     /* append or pre-pend the new packet */
-    if (seq1 < seq2)
+    if (SEQ_LT(seq1, seq2))
     {
         if ((seq1 + datalen1) == seq2)
         {
@@ -171,7 +171,7 @@ check_seq_backup(struct rte_mbuf *pkt1,
         /* in-order */
         return 2;
     }
-    if (seq1 > seq2)
+    if (SEQ_GT(seq1, seq2))
     {
         if ((seq2 + datalen2) == seq1)
         {
@@ -183,7 +183,7 @@ check_seq_backup(struct rte_mbuf *pkt1,
     }
 
     /* retransmission in a same batch */
-    if (datalen1 < datalen2)
+    if (SEQ_LT(datalen1, datalen2))
     {
         /* latter is longer, remove the original */
         return -3;
@@ -1719,14 +1719,14 @@ void px_parse_batch(uint16_t port_id,
 #if SEMANTIC_TEST
                 if (is_uplink(pkt))
                 {
-                    update_mss(mss_ptr, 0);
+                    update_mss(mss_ptr, 0, 0);
                 }
                 else
                 {
-                    update_mss(mss_ptr, 1);
+                    update_mss(mss_ptr, 0, 1);
                 }
 #else
-                update_mss(mss_ptr, 1);
+                update_mss(mss_ptr, 0, 1);
 #endif
             }
         }
@@ -2218,7 +2218,7 @@ px_core(struct px_ctx *pctx,
     struct px_stall *stall;
     struct px_item *item;
     uint32_t reverse_rss;
-    uint16_t cnt = 0, inner_qid, outer_qid, *mss_ptr;
+    uint16_t cnt = 0, inner_qid, outer_qid, segsz = 0, *mss_ptr;
     uint8_t tcp_flags = 0;
     int i;
     struct px_rule *rule = TAILQ_FIRST(&pctx->rule_set.rules);
@@ -2294,14 +2294,6 @@ px_core(struct px_ctx *pctx,
                         reverse_rss = rte_softrss((uint32_t *)&reverse_key_le,
                                                   sizeof(struct four_tuple) >> 2,
                                                   g_rss_key);
-                        // if (tcp_flags & RTE_TCP_ACK_FLAG)
-                        // {
-                        //     printf("[SYNACK] rss: %u, reverse_rss: %u\n", pkt->hash.rss, reverse_rss);
-                        // }
-                        // else
-                        // {
-                        //     printf("[SYN] rss: %u, reverse_rss: %u\n", pkt->hash.rss, reverse_rss);
-                        // }
 
                         /* ToDo: we should consider ReTa */
 
@@ -2317,66 +2309,176 @@ px_core(struct px_ctx *pctx,
                                          &reverse_key,
                                          ntohs(*mss_ptr));
 
-                        // if (tcp_flags & RTE_TCP_ACK_FLAG)
-                        // {
-                        //     hexdump("SYNACK", rte_pktmbuf_mtod(pkt, uint8_t *), pkt->data_len);
-                        // }
-                        // else
-                        // {
-                        //     hexdump("SYN", rte_pktmbuf_mtod(pkt, uint8_t *), pkt->data_len);
-                        // }
                         /* update MSS */
-                        update_mss(mss_ptr, 1);
+                        update_mss(mss_ptr, 0, 1);
                     }
                     /* check FIN/RST */
                     else if (tcp_flags & (RTE_TCP_FIN_FLAG | RTE_TCP_RST_FLAG))
                     {
-                        /* evict if it is incoming */
-                        if (pctx->mss_ctx && !is_px(pkt))
+                        /* get four tuple and reverse four tuple */
+                        key = get_four_tuple(pkt);
+                        reverse_key = (struct four_tuple){
+                            .src_ip = key->dst_ip,
+                            .dst_ip = key->src_ip,
+                            .src_port = key->dst_port,
+                            .dst_port = key->src_port,
+                        };
+                        reverse_key_le = (struct four_tuple){
+                            .src_ip = ntohl(key->dst_ip),
+                            .dst_ip = ntohl(key->src_ip),
+                            .src_port = ntohs(key->src_port),
+                            .dst_port = ntohs(key->dst_port),
+                        };
+                        reverse_rss = rte_softrss((uint32_t *)&reverse_key_le,
+                                                  sizeof(struct four_tuple) >> 2,
+                                                  g_rss_key);
+                        // printf("[FIN/RST] rss: %u, reverse_rss: %u\n", pkt->hash.rss, reverse_rss);
+
+                        /* ToDo: we should consider ReTa */
+
+                        inner_qid = reverse_rss %
+                                    (g_px_dev[pkt->port].num_rxq *
+                                     g_px_dev[pkt->port].num_rxq_incr);
+                        outer_qid = inner_qid / g_px_dev[pkt->port].num_rxq_incr;
+                        new_pctx = &g_pctx[pkt->port][outer_qid];
+
+                        /* evict MSSes from hashtable */
+                        evict_mss_entry(new_pctx->mss_ctx,
+                                        reverse_rss,
+                                        &reverse_key);
+                    }
+                    /* simple ACK packet */
+                    else
+                    {
+                        /* get four tuple */
+                        key = get_four_tuple(pkt);
+
+                        /* search MSS of this flow */
+                        search_mss_entry(pctx->mss_ctx,
+                                         pkt->hash.rss,
+                                         key,
+                                         &segsz);
+                        if (segsz)
                         {
-                            /* get four tuple and reverse four tuple */
-                            key = get_four_tuple(pkt);
-                            reverse_key = (struct four_tuple){
-                                .src_ip = key->dst_ip,
-                                .dst_ip = key->src_ip,
-                                .src_port = key->dst_port,
-                                .dst_port = key->src_port,
-                            };
-                            reverse_key_le = (struct four_tuple){
-                                .src_ip = ntohl(key->dst_ip),
-                                .dst_ip = ntohl(key->src_ip),
-                                .src_port = ntohs(key->src_port),
-                                .dst_port = ntohs(key->dst_port),
-                            };
-                            reverse_rss = rte_softrss((uint32_t *)&reverse_key_le,
-                                                      sizeof(struct four_tuple) >> 2,
-                                                      g_rss_key);
-                            // printf("[FIN/RST] rss: %u, reverse_rss: %u\n", pkt->hash.rss, reverse_rss);
-
-                            /* ToDo: we should consider ReTa */
-
-                            inner_qid = reverse_rss %
-                                        (g_px_dev[pkt->port].num_rxq *
-                                         g_px_dev[pkt->port].num_rxq_incr);
-                            outer_qid = inner_qid / g_px_dev[pkt->port].num_rxq_incr;
-                            new_pctx = &g_pctx[pkt->port][outer_qid];
-
-                            /* evict MSSes from hashtable */
-                            evict_mss_entry(new_pctx->mss_ctx,
-                                            reverse_rss,
-                                            &reverse_key);
+                            /* subtract TCP option length */
+                            segsz -= pkt->l4_len - sizeof(struct rte_tcp_hdr);
                         }
+                        else
+                        {
+                            segsz = (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len) *
+                                    ((DEFAULT_iMTU - pkt->l3_len - pkt->l4_len) /
+                                     (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len));
+                        }
+
+                        /* update TCP header */
+                        update_tcp(pkt, segsz);
                     }
                 }
                 /* if packet is from inside */
                 else
                 {
+                    /* check SYN/SYNACK */
                     if (tcp_flags & RTE_TCP_SYN_FLAG)
                     {
                         /* mss parsing */
                         mss_ptr = get_tcp_mss(pkt);
+                        if (!mss_ptr)
+                        {
+                            fprintf(stderr, "[Err] no MSS field\n");
+                            /* push back */
+                            pkts[cnt++] = pkt;
+                            continue;
+                        }
+
+                        /* get four tuple */
+                        key = get_four_tuple(pkt);
+
+                        /* search MSS of this flow */
+                        search_mss_entry(pctx->mss_ctx,
+                                         pkt->hash.rss,
+                                         key,
+                                         &segsz);
+                        if (!segsz)
+                        {
+                            segsz = DEFAULT_eMSS;
+                        }
+
                         /* update MSS */
-                        update_mss(mss_ptr, 0);
+                        update_mss(mss_ptr, segsz, 0);
+                    }
+                    /* check FIN/RST */
+                    else if (tcp_flags & (RTE_TCP_FIN_FLAG | RTE_TCP_RST_FLAG))
+                    {
+                        /* get four tuple and reverse four tuple */
+                        key = get_four_tuple(pkt);
+                        reverse_key = (struct four_tuple){
+                            .src_ip = key->dst_ip,
+                            .dst_ip = key->src_ip,
+                            .src_port = key->dst_port,
+                            .dst_port = key->src_port,
+                        };
+                        reverse_key_le = (struct four_tuple){
+                            .src_ip = ntohl(key->dst_ip),
+                            .dst_ip = ntohl(key->src_ip),
+                            .src_port = ntohs(key->src_port),
+                            .dst_port = ntohs(key->dst_port),
+                        };
+                        reverse_rss = rte_softrss((uint32_t *)&reverse_key_le,
+                                                  sizeof(struct four_tuple) >> 2,
+                                                  g_rss_key);
+                        // printf("[FIN/RST] rss: %u, reverse_rss: %u\n", pkt->hash.rss, reverse_rss);
+
+                        /* ToDo: we should consider ReTa */
+
+                        inner_qid = reverse_rss %
+                                    (g_px_dev[pkt->port].num_rxq *
+                                     g_px_dev[pkt->port].num_rxq_incr);
+                        outer_qid = inner_qid / g_px_dev[pkt->port].num_rxq_incr;
+                        new_pctx = &g_pctx[pkt->port][outer_qid];
+
+                        /* evict MSSes from hashtable */
+                        evict_mss_entry(new_pctx->mss_ctx,
+                                        reverse_rss,
+                                        &reverse_key);
+                    }
+                    /* simple ACK packet */
+                    else
+                    {
+                        /* get four tuple */
+                        key = get_four_tuple(pkt);
+
+                        /* search MSS of this flow */
+                        search_mss_entry(pctx->mss_ctx,
+                                         pkt->hash.rss,
+                                         key,
+                                         &segsz);
+                        if (segsz)
+                        {
+                            /* subtract TCP option length */
+                            segsz -= pkt->l4_len - sizeof(struct rte_tcp_hdr);
+                        }
+                        else
+                        {
+#if SEMANTIC_TEST
+                            if (is_px(pkt))
+                            {
+                                segsz = (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len);
+                            }
+                            else
+                            {
+                                segsz = (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len) *
+                                        ((DEFAULT_iMTU - pkt->l3_len - pkt->l4_len) /
+                                         (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len));
+                            }
+#else
+                            segsz = (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len) *
+                                    ((DEFAULT_iMTU - pkt->l3_len - pkt->l4_len) /
+                                     (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len));
+#endif
+                        }
+
+                        /* update MSS */
+                        update_tcp(pkt, segsz);
                     }
                 }
             }
@@ -2854,7 +2956,7 @@ int px_eth_dev_configure(uint16_t port_id,
         ret = px_nicmem_configure(&g_px_dev[port_id].nm_ctx,
                                   port_id,
                                   eth_conf->rxmode.max_lro_pkt_size,
-                                  num_nicmem);
+                                  num_nicmem * num_rxq);
         if (ret)
         {
             rte_exit(EXIT_FAILURE, "px_nicmem_configure failed: %d\n", ret);
@@ -3021,7 +3123,7 @@ rx_and_px_gro(uint16_t port_id,
 
     if (g_px_dev[port_id].timeout_ns)
     {
-        clock_gettime(TIME_FLAG, &pctx->now_ns);
+        px_clock_gettime(TIME_FLAG, &pctx->now_ns);
     }
 
     /* RX and GRO for every latent queues */
@@ -3089,7 +3191,7 @@ rx_and_px_gro_delayed(uint16_t port_id,
 
     if (g_px_dev[port_id].timeout_ns)
     {
-        clock_gettime(TIME_FLAG, &pctx->now_ns);
+        px_clock_gettime(TIME_FLAG, &pctx->now_ns);
     }
 
     /* RX and GRO for every latent queues */

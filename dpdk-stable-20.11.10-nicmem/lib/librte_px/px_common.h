@@ -43,7 +43,7 @@ extern "C"
 #define DEFAULT_iMTU 9000
 
 #define PX_MEASURE_STATS 1
-#define PX_MEASURE_PER_QUEUE_STAT 1
+#define PX_MEASURE_PER_QUEUE_STAT 0
 #define PX_MEASURE_DIST 0
 #define PX_MEASURE_DELAY 1
 
@@ -54,30 +54,60 @@ extern "C"
 #define PX_MAX_QUEUE_INCREASE (RTE_MAX_QUEUES_PER_PORT / MAX_CORE_NUM)
 #define PX_MAX_PKT_BURST 64
 
+#define CLOCK_CPU_TIMESTAMP 100
+#define CLOCK_NIC_TIMESTAMP 101
 // #define TIME_FLAG (CLOCK_REALTIME)
-#define TIME_FLAG (CLOCK_MONOTONIC)
+// #define TIME_FLAG (CLOCK_MONOTONIC)
+#define TIME_FLAG (CLOCK_CPU_TIMESTAMP)
+// #define TIME_FLAG (CLOCK_NIC_TIMESTAMP)
 #define E9 (long)1e9
 #define E6 (long)1e6
 #define E3 (long)1e3
 
 #define PX_MARK_ON_TOS 0x01
 
-#define CPU_FREQUENCY_HZ 3.5e9
-
 #define MAX(a, b) ((a > b) ? a : b)
 #define MIN(a, b) ((a > b) ? b : a)
 
+/*----------------------------------------------------------------------------*/
+static inline int
+px_clock_gettime(clockid_t clk_id, struct timespec *ts)
+{
+    if (clk_id == CLOCK_CPU_TIMESTAMP)
+    {
+
+        uint64_t tsc = rte_rdtsc();
+        uint64_t tsc_hz = rte_get_tsc_hz();
+
+        // 초, 나노초 단위로 변환
+        ts->tv_sec = tsc / tsc_hz;
+        ts->tv_nsec = (tsc % tsc_hz) * E9 / tsc_hz;
+
+        return 0;
+    }
+    if (clk_id == CLOCK_MONOTONIC)
+    {
+        clock_gettime(CLOCK_MONOTONIC, ts);
+        return 0;
+    }
+    if (clk_id == CLOCK_REALTIME)
+    {
+        clock_gettime(CLOCK_REALTIME, ts);
+        return 0;
+    }
+}
+/*----------------------------------------------------------------------------*/
 #ifdef RTE_FLOW_MEASURE_DELAY
 #define MEASURE(name, cmd)                                              \
     do                                                                  \
     {                                                                   \
         struct timespec _start1, _start2, _end1, _end2;                 \
         long _time1, _time2;                                            \
-        clock_gettime(TIME_FLAG, &_start1);                             \
-        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &_start2);               \
+        px_clock_gettime(TIME_FLAG, &_start1);                             \
+        px_clock_gettime(CLOCK_THREAD_CPUTIME_ID, &_start2);               \
         cmd;                                                            \
-        clock_gettime(TIME_FLAG, &_end1);                               \
-        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &_end2);                 \
+        px_clock_gettime(TIME_FLAG, &_end1);                               \
+        px_clock_gettime(CLOCK_THREAD_CPUTIME_ID, &_end2);                 \
         _time1 = (_end1.tv_sec - _start1.tv_sec) * E9 +                 \
                  (_end1.tv_nsec - _start1.tv_nsec);                     \
         _time2 = (_end2.tv_sec - _start2.tv_sec) * E9 +                 \
@@ -94,6 +124,17 @@ extern "C"
         cmd;               \
     } while (/*CONSTCOND*/ 0);
 #endif
+/*----------------------------------------------------------------------------*/
+#define SEQ_LT(a, b) ((int32_t)((a) - (b)) < 0)
+#define SEQ_LEQ(a, b) ((int32_t)((a) - (b)) <= 0)
+#define SEQ_GT(a, b) ((int32_t)((a) - (b)) > 0)
+#define SEQ_GEQ(a, b) ((int32_t)((a) - (b)) >= 0)
+/*----------------------------------------------------------------------------*/
+static inline uint32_t
+tcp_seq_diff(uint32_t a, uint32_t b)
+{
+    return (uint32_t)((int32_t)(a - b));
+}
 /*----------------------------------------------------------------------------*/
 struct four_tuple
 {
@@ -132,7 +173,7 @@ busy_wait_for(unsigned int nsecs)
 static inline int
 get_num_cpus(void)
 {
-	return sysconf(_SC_NPROCESSORS_ONLN);
+    return sysconf(_SC_NPROCESSORS_ONLN);
 }
 /*----------------------------------------------------------------------------*/
 static inline struct rte_mbuf *
@@ -382,7 +423,7 @@ is_dtb(struct rte_mbuf *pkt)
     {
         return 1;
     }
-    
+
     return 0;
 }
 /*----------------------------------------------------------------------------*/

@@ -100,11 +100,12 @@ CFLAGS += -D NICMEM=1
 
 # Choose one of below
 
-# To use hairpin offload, make sure to use DPDK version 22.11
 CFLAGS += -D NUM_HAIRPIN_Q=0
 # CFLAGS += -D NUM_HAIRPIN_Q=1
 
 # (not supported yet) if want to use rte_flow_async API, use below
+# To use rte_flow_async API, make sure to use DPDK version 22.11
+
 # CFLAGS += -D RTE_FLOW_ASYNC_API=1
 
 # CFLAGS += -D RTE_FLOW_MEASURE_DELAY=1

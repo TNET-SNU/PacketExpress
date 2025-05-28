@@ -34,8 +34,6 @@
 #include <rte_gro.h>
 /*----------------------------------------------------------------------------*/
 /* Essential macros */
-#define MAX_SOCKETS			2
-
 #if USE_LRO
 #define MBUF_DATA_SIZE		65024
 #elif JUMBO_FRAME
@@ -61,7 +59,7 @@
 static uint16_t nb_rxd = RTE_TEST_RX_DESC_DEFAULT;
 static uint16_t nb_txd = RTE_TEST_TX_DESC_DEFAULT;
 /*----------------------------------------------------------------------------*/
-static struct rte_mempool *pktmbuf_pool[MAX_SOCKETS] = {NULL};
+static struct rte_mempool *pktmbuf_pool[RTE_MAX_NUMA_NODES] = {NULL};
 static uint8_t cpu_qid_map[RTE_MAX_ETHPORTS][MAX_CPUS] = {{0}};
 
 static uint8_t g_key[] = {
@@ -232,7 +230,7 @@ dpdk_send_pkts(struct mtcp_thread_context *ctxt, int nif)
 		UNUSED(mtcp);
 #endif
 
-#if USE_CGRO || USE_LRO || USE_DGRO
+#if !USE_CGRO && (USE_LRO || USE_DGRO)
 		px_setup_tso_burst(nif, qid, dpc->wmbufs[nif].m_table, dpc->wmbufs[nif].len);
 #endif
 		ret = rte_eth_tx_burst(nif, qid, dpc->wmbufs[nif].m_table, dpc->wmbufs[nif].len);
@@ -480,10 +478,6 @@ dpdk_load_module_upper_half(void)
 			"-n", 
 			mem_channels,
 			"--proc-type=primary",
-			// "-a",
-			// "0000:18:00.0"
-			// "-a",
-			// "0000:18:00.1"
 	};
 	const int argc = 7;
 	// const int argc = 9;
@@ -591,7 +585,11 @@ dpdk_load_module_lower_half(void)
 #else
 									   1,
 #endif
-									   NICMEM ? 32768 - 1 : 0,
+#if NICMEM
+									   nb_rxd,
+#else
+									   0,
+#endif
 #if USE_CGRO
 									   STALL_TIMEOUT_NS,
 #else
@@ -599,7 +597,15 @@ dpdk_load_module_lower_half(void)
 #endif
 									   NUM_HAIRPIN_Q,
 									   NUM_HAIRPIN_Q,
-									   &port_conf);
+									   &port_conf,
+									   NULL,
+									   0,
+#if USE_OPTOUT
+									   1
+#else
+									   0
+#endif
+									   );
 #else
 			ret = rte_eth_dev_configure(portid,
 										num_queue,

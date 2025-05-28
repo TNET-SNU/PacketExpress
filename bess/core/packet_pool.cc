@@ -71,7 +71,7 @@ PacketPool::PacketPool(size_t capacity, int socket_id) {
   name_ = "PacketPool" + std::to_string(next_id_++);
   int ret;
 #if NICMEM
-  LOG(INFO) << name_ << " requests for " << capacity << " packets of size " << sizeof(Packet) - SNBUF_DATA + RTE_PKTMBUF_HEADROOM;
+  LOG(INFO) << name_ << " requests for " << capacity << " packets of size " << sizeof(Packet) - SNBUF_DATA + NICMEM_DMA_SIZE;
   pool_ = rte_mempool_create_empty(name_.c_str(), capacity,
                                    sizeof(Packet) - SNBUF_DATA + NICMEM_DMA_SIZE,
                                    capacity > 1024 ? kMaxCacheSize : 0,
@@ -157,7 +157,12 @@ bool PacketPool::AllocBulk(Packet **pkts, size_t count, size_t len) {
 
 void PacketPool::PostPopulate() {
   PoolPrivate priv = {
-      .dpdk_priv = {.mbuf_data_room_size = SNBUF_HEADROOM + SNBUF_DATA,
+      .dpdk_priv = {.mbuf_data_room_size = SNBUF_HEADROOM
+#if NICMEM
+                      + NICMEM_DMA_SIZE,
+#else
+                      + SNBUF_DATA,
+#endif
                     .mbuf_priv_size = SNBUF_RESERVE,
                     .flags = 0},
       .owner = this};

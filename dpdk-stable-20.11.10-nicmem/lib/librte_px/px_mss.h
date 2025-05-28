@@ -88,7 +88,7 @@ xor_hash1(uint32_t rss, uint32_t *data)
 uint16_t *
 get_tcp_mss(struct rte_mbuf *pkt);
 /*----------------------------------------------------------------------------*/
-void update_mss(uint16_t *mss_ptr, int direction);
+void update_mss(uint16_t *mss_ptr, uint16_t new_mss, int direction);
 /*----------------------------------------------------------------------------*/
 void flush_timeout(struct px_mss_ctx *ctx);
 /*----------------------------------------------------------------------------*/

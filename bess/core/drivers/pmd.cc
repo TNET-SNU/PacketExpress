@@ -508,121 +508,6 @@ onload_iperf_ack_flow(uint16_t port_id, uint16_t num_rxq, uint16_t num_rxq_incr)
   return flow;
 }
 /*----------------------------------------------------------------------------*/
-struct rte_flow *
-offload_all_flow(uint16_t port_id, uint16_t num_rxq, uint16_t num_rxq_incr)
-{
-  struct rte_flow *flow = NULL;
-  struct rte_flow_error error;
-  /* Holds the flow attributes. */
-  struct rte_flow_attr attr = {
-      /* set the rule on the main group. */
-      .group = 0,
-      /* give the offload rule the lowest priority (higer value = lower priority) */
-      .priority = 3,
-      /* Rx flow */
-      .ingress = 1,
-      .egress = 0,
-      .transfer = 0};
-
-  /* make pattern */
-  struct rte_flow_item_eth eth_spec = {0};
-  struct rte_flow_item_eth eth_mask = {0};
-  struct rte_flow_item patterns[] = {
-    {.type = RTE_FLOW_ITEM_TYPE_ETH,
-      .spec = &eth_spec,
-      .last = NULL,
-      .mask = &eth_mask},
-    {.type = RTE_FLOW_ITEM_TYPE_END},
-  };
-  eth_spec.type = htons(RTE_ETHER_TYPE_IPV4);
-  eth_mask.type = UINT16_MAX;
-
-  /* make dst and src MAC action */
-  struct rte_flow_action_set_mac modify_src_mac, modify_dst_mac;
-  if (port_id == 0) {
-    memcpy(modify_dst_mac.mac_addr,
-            "\x58\xa2\xe1\xa7\x7c\xc6",
-            sizeof(struct rte_ether_addr));
-    memcpy(modify_src_mac.mac_addr,
-            "\x58\xa2\xe1\xa7\xa8\x46",
-            sizeof(struct rte_ether_addr));
-  }
-  else if (port_id == 1) {
-    memcpy(modify_dst_mac.mac_addr,
-            "\x58\xa2\xe1\xa7\x7c\xd6",
-            sizeof(struct rte_ether_addr));
-    memcpy(modify_src_mac.mac_addr,
-            "\x58\xa2\xe1\xa7\xa9\xbe",
-            sizeof(struct rte_ether_addr));
-  }
-  else if (port_id == 2) {
-    memcpy(modify_dst_mac.mac_addr,
-            "\x58\xa2\xe1\xa7\x7c\xbe",
-            sizeof(struct rte_ether_addr));
-    memcpy(modify_src_mac.mac_addr,
-            "\x58\xa2\xe1\xa7\xa8\xc6",
-            sizeof(struct rte_ether_addr));
-  }
-  else if (port_id == 3) {
-    memcpy(modify_dst_mac.mac_addr,
-            "\x58\xa2\xe1\xa7\xa9\x8e",
-            sizeof(struct rte_ether_addr));
-    memcpy(modify_src_mac.mac_addr,
-            "\xa0\x88\xc2\xd7\x81\x0e",
-            sizeof(struct rte_ether_addr));
-  }
-  
-  /* make rss action */
-  uint16_t rss_queues[16];
-  for (int i = 0; i < 1; i++)
-  {
-      rss_queues[i] = num_rxq * num_rxq_incr + i;
-  }
-  struct rte_flow_action_rss rss_hairpin;
-  rss_hairpin.func = RTE_ETH_HASH_FUNCTION_DEFAULT;
-  rss_hairpin.level = 0;
-  rss_hairpin.types = ETH_RSS_TCP | ETH_RSS_UDP | ETH_RSS_IP;
-  rss_hairpin.key_len = sizeof(rss_key);
-  rss_hairpin.queue_num = 1;
-  rss_hairpin.key = rss_key;
-  rss_hairpin.queue = rss_queues;
-
-  /* make actions */
-  struct rte_flow_action actions[] = {
-    /* modify src MAC */
-    {.type = RTE_FLOW_ACTION_TYPE_SET_MAC_SRC,
-      .conf = &modify_src_mac},
-    /* modify dst MAC */
-    {.type = RTE_FLOW_ACTION_TYPE_SET_MAC_DST,
-      .conf = &modify_dst_mac},
-    /* deliver to hairpin queue RSS */
-    {.type = RTE_FLOW_ACTION_TYPE_RSS,
-      .conf = &rss_hairpin},
-    {.type = RTE_FLOW_ACTION_TYPE_END}
-  };
-
-  /* create main traffic rule */
-#define VALIDATE_FLOW_RULE 1
-#if VALIDATE_FLOW_RULE
-  if (rte_flow_validate(port_id, &attr, patterns, actions, &error) < 0)
-  {
-      fprintf(stderr, "rte_flow_validate() failed for port %d. "
-                      "Error type: %d, Error msg: %s\n",
-              port_id, error.type, error.message);
-      return NULL;
-  }
-#endif
-
-  flow = px_latent_flow_create(port_id, &attr, patterns, actions, &error);
-  if (!flow) {
-    fprintf(stderr, "px_latent_flow_create() failed for port %d. "
-                    "Error type: %d, Error msg: %s\n",
-            port_id, error.type, error.message);
-  }
-
-  return flow;
-}
-/*----------------------------------------------------------------------------*/
 CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
 
   dpdk_port_t ret_port_id = DPDK_PORT_UNKNOWN;
@@ -704,7 +589,11 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
 #else
                              1,
 #endif
-                             NICMEM ? 32768 - 1 : 0,
+#if NICMEM
+                             queue_size[PACKET_DIR_INC],
+#else
+                             0,
+#endif
 #if USE_CGRO
                              STALL_TIMEOUT_NS,
 #else
@@ -712,7 +601,15 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
 #endif
                              NUM_HAIRPIN_Q,
                              NUM_HAIRPIN_Q,
-                             &eth_conf);
+                             &eth_conf,
+                             NULL,
+                             0,
+#if USE_OPTOUT
+                             1
+#else
+                             0
+#endif
+                             );
 #else
   ret = rte_eth_dev_configure(ret_port_id,
                               num_rxq,
@@ -911,17 +808,6 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
     if (px_add_rule(dpdk_port_id_, qid, patterns, 2, actions, 2) < 0)
       return CommandFailure(ENOMEM, "px_add_rule failed");
   }
-#define TEST_SMALL_FLOW_TREX 0
-#if TEST_SMALL_FLOW_TREX
-  if (offload_all_flow(ret_port_id, num_rxq, NUM_LATENT_RXQ) == NULL)
-    return CommandFailure(ENOMEM, "offload_all_flow failed");
-  if (onload_iperf_flow(ret_port_id, num_rxq, NUM_LATENT_RXQ) == NULL)
-    return CommandFailure(ENOMEM, "onload_iperf_flow failed");
-  if (onload_iperf_ack_flow(ret_port_id, num_rxq, NUM_LATENT_RXQ) == NULL)
-    return CommandFailure(ENOMEM, "onload_iperf_ack_flow failed");
-  if (rte_eth_dev_set_mtu(ret_port_id, 9978) < 0)
-    return CommandFailure(ENOMEM, "rte_eth_dev_set_mtu failed");
-#endif
 #elif NUM_HAIRPIN_Q
   if (hp_context_init(get_num_cpus() - 1,
                       PER_CORE_HOST_CACHE_SIZE,
@@ -929,6 +815,12 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
   {
     return CommandFailure(ENOMEM, "hp_context_init failed");
   }
+#endif
+#if USE_OPTOUT
+  if (onload_iperf_flow(ret_port_id, num_rxq, NUM_LATENT_RXQ) == NULL)
+    return CommandFailure(ENOMEM, "onload_iperf_flow failed");
+  if (onload_iperf_ack_flow(ret_port_id, num_rxq, NUM_LATENT_RXQ) == NULL)
+    return CommandFailure(ENOMEM, "onload_iperf_ack_flow failed");
 #endif
   if (rte_eth_dev_set_mtu(ret_port_id, 9978) < 0)
       return CommandFailure(ENOMEM, "rte_eth_dev_set_mtu failed");
