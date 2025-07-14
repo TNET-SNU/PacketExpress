@@ -19,7 +19,7 @@ For details, please refer to prerequisites of BESS, DPDK (data plane) and UPF-EP
 
 ## Building PX library on DPDK
 Clients and servers' ARP tables should be set up correctly.
-1. To set root directory, run below to set root directory.
+1. To set root directory, run below.
    ```Bash
    export rootdir=`pwd`
    ```
