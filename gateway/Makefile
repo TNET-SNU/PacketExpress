@@ -44,8 +44,8 @@ CFLAGS += -D USE_LRO=1
 # 3. CUSTOM GRO on, no stall
 # CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
 
-# 4. CUSTOM GRO on, stall 50us
-CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=16 -D STALL_TIMEOUT_NS=144000 -D USE_LINK=0
+# 4. CUSTOM GRO on, stall 72us
+CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=16 -D STALL_TIMEOUT_NS=170000 -D USE_LINK=0
 
 # 6. CUSTOM GRO + LINKING
 # CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=1
@@ -53,8 +53,8 @@ CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=16 -D STALL_TIMEOUT_NS=144000 -D USE_L
 ################################################################################
 
 # To use nicmem, make sure to use DPDK version 20.11
-CFLAGS += -D NICMEM=0
-# CFLAGS += -D NICMEM=1
+# CFLAGS += -D NICMEM=0
+CFLAGS += -D NICMEM=1
 
 ################################################################################
 

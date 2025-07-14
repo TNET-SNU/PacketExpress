@@ -3,16 +3,16 @@ This repository provides the implementation of PacketExpress library and its app
 Most of the main logic is implemented as a independent DPDK library. Take a look.
 
 ## Prerequisites
-Use Ubuntu 18.04.
+Use Ubuntu 22.04.
 
    ```Bash
    sudo apt-get install gcc g++ make autoconf automake curl meson pkgconf git unzip ca-certificates apt-transport-https \
-                        iproute2 iptables iputils-ping tcpdump python python3-pip libtool protobuf-compiler-grpc \
+                        iproute2 iptables iputils-ping tcpdump python-is-python3 python-pip libtool protobuf-compiler-grpc \
                         libprotobuf-dev libgrpc++-dev libzmq3-dev libjsoncpp-dev libgoogle-glog0v5 libgoogle-glog-dev \
                         libzmq5 libunwind-dev liblzma-dev libpcap-dev libssl-dev libnuma-dev libgflags-dev \
                         libgraph-easy-perl libgtest-dev libc-ares-dev libbenchmark-dev libelf-dev \
-                        libdwarf-dev zlib1g-dev
-   pip3 install ninja protobuf==3.19.6 grpcio scapy flask iptools mitogen psutil pyroute2==0.8.1 pyelftools meson
+                        libdwarf-dev zlib1g-dev python3-pyelftools
+   pip install ninja protobuf==3.19.6 grpcio scapy flask iptools mitogen psutil pyroute2==0.8.1 meson
    ```
 
 For details, please refer to prerequisites of BESS, DPDK (data plane) and UPF-EPC (control plane).

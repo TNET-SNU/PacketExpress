@@ -83,7 +83,7 @@ void update_mss(uint16_t *mss_ptr, uint16_t new_mss, int direction)
 uint8_t *
 bloom_init(void)
 {
-    uint8_t *filter = (uint8_t *)rte_malloc("filter", UINT16_MAX + 1, 0);
+    uint8_t *filter = (uint8_t *)calloc(UINT16_MAX + 1, 1);
     if (!filter)
     {
         fprintf(stderr, "bloom_init: rte_malloc failed\n");
@@ -95,7 +95,7 @@ bloom_init(void)
 /*----------------------------------------------------------------------------*/
 void bloom_destroy(uint8_t *filter)
 {
-    rte_free(filter);
+    free(filter);
 }
 /*----------------------------------------------------------------------------*/
 int bloom_search(uint8_t *filter,

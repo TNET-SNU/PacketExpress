@@ -38,9 +38,13 @@ struct px_stat
     uint64_t data_pkt_cnt_in_batch;
     uint64_t batch_cnt;
 
+    uint64_t payload_bytes_cnt;
+
 #if PX_MEASURE_DELAY
     /* sum of packets' delay in microsecond */
-    uint64_t delay_us;
+    // uint64_t delay_us;
+    /* sum of packets' delay in nanosecond */
+    uint64_t delay_ns;
 #endif
 
 #if PX_MEASURE_DIST

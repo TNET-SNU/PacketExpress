@@ -14,12 +14,12 @@ rootdir=$workdir/../..
 
 # reset bess daemon and run up4
 cd $rootdir/bess/bessctl
-# python3 bessctl daemon reset
-python3 bessctl run up4-one-arm
+# python bessctl daemon reset
+python bessctl run up4-one-arm
 
 # run route control
 cd $rootdir/bess
-python3 route_control_one_arm.py -i "${ifaces[@]}"
+python route_control_one_arm.py -i "${ifaces[@]}"
 
 # insert rules
 cd $rootdir/upf-epc/pfcpiface

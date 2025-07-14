@@ -46,8 +46,10 @@ void px_update_stats(uint16_t port_id,
 #if PX_MEASURE_DELAY
             if (now_ns)
             {
-                stat->delay_us +=
-                    get_usec_diff(now_ns, get_timestamp_from_headroom(pkt));
+                // stat->delay_us +=
+                //     get_usec_diff(now_ns, get_timestamp_from_headroom(pkt));
+                stat->delay_ns +=
+                    get_nsec_diff(now_ns, get_timestamp_from_headroom(pkt));
             }
 #endif
             stat->data_pkt_cnt++;
@@ -97,14 +99,16 @@ void px_print_stats(int args)
             printf(" |-[P%2d][Q%2d] "
                    "%5lu Gbps, %5lu Kpps, "
 #if PX_MEASURE_DELAY
-                   "Avg delay: %5lu us, "
+                   //    "Avg delay: %5lu us, "
+                   "Avg delay: %5lu ns, "
 #endif
                    "Avg pkt size: %5lu, Avg segs/pkt: %5lu, "
                    "Avg batch size: %5lu, Num of pkts: %5lu\n",
                    port_id, queue_id,
                    iter->bytes_cnt * 8 / E9, iter->pkt_cnt / E3,
 #if PX_MEASURE_DELAY
-                   iter->data_pkt_cnt ? iter->delay_us / iter->data_pkt_cnt : 0,
+                   //    iter->data_pkt_cnt ? iter->delay_us / iter->data_pkt_cnt : 0,
+                   iter->data_pkt_cnt ? iter->delay_ns / iter->data_pkt_cnt : 0,
 #endif
                    iter->data_pkt_cnt ? iter->data_bytes_cnt / iter->data_pkt_cnt : 0,
                    iter->data_pkt_cnt ? iter->data_pkt_segs_cnt / iter->data_pkt_cnt : 0,
@@ -127,7 +131,8 @@ void px_print_stats(int args)
             total.pkt_cnt += iter->pkt_cnt;
             total.bytes_cnt += iter->bytes_cnt;
 #if PX_MEASURE_DELAY
-            total.delay_us += iter->delay_us;
+            // total.delay_us += iter->delay_us;
+            total.delay_ns += iter->delay_ns;
 #endif
             total.data_bytes_cnt += iter->data_bytes_cnt;
             total.data_pkt_cnt += iter->data_pkt_cnt;
@@ -142,13 +147,15 @@ void px_print_stats(int args)
     printf("[   TOTAL   ] "
            "%5lu Gbps, %5lu Kpps, "
 #if PX_MEASURE_DELAY
-           "Avg delay: %5lu us, "
+           //    "Avg delay: %5lu us, "
+           "Avg delay: %5lu ns, "
 #endif
            "Avg pkt size: %5lu, Avg segs/pkt: %5lu, "
            "Avg batch size: %5lu, Num of pkts: %5lu\n\n",
            total.bytes_cnt * 8 / E9, total.pkt_cnt / E3,
 #if PX_MEASURE_DELAY
-           total.data_pkt_cnt ? total.delay_us / total.data_pkt_cnt : 0,
+           //    total.data_pkt_cnt ? total.delay_us / total.data_pkt_cnt : 0,
+           total.data_pkt_cnt ? total.delay_ns / total.data_pkt_cnt : 0,
 #endif
            total.data_pkt_cnt ? total.data_bytes_cnt / total.data_pkt_cnt : 0,
            total.data_pkt_cnt ? total.data_pkt_segs_cnt / total.data_pkt_cnt : 0,

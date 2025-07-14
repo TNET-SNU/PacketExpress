@@ -35,10 +35,10 @@ static struct px_arp_entry g_arp_table[] = {
     {"10.3.90.1", "58:a2:e1:a7:a8:c6"}, // rapids1.eth2
     {"10.4.90.1", "a0:88:c2:d7:81:0e"}, // rapids1.eth3
 
-    {"10.1.95.1", "58:a2:e1:a7:7c:c6"}, // rapids0.eth0
-    {"10.2.95.1", "58:a2:e1:a7:7c:d6"}, // rapids0.eth1
-    {"10.3.95.1", "58:a2:e1:a7:7c:be"}, // rapids0.eth2
-    {"10.4.95.1", "58:a2:e1:a7:a9:8e"}, // rapids0.eth3
+    {"10.1.95.1", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
+    {"10.2.95.1", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
+    {"10.3.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
+    {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
 };
 /*----------------------------------------------------------------------------*/
 /* Check if TCP option fields equal. */
@@ -120,31 +120,36 @@ static inline uint32_t
 compare_ipid(struct rte_mbuf *pkt1,
              struct rte_mbuf *pkt2)
 {
+    struct rte_mbuf *seg;
+    uint16_t diff1 = 0;
+    uint16_t diff2 = 0;
     uint16_t id1 = ntohs(*get_ip_id(pkt1));
     uint16_t id2 = ntohs(*get_ip_id(pkt2));
 
-    /* append or pre-pend the new packet */
-    if (is_nicmem(pkt1))
+    // printf("nb_segs: pkt1 %d, pkt2 %d\n", pkt1->nb_segs, pkt2->nb_segs);
+    // printf("compare_ipid: pkt1 id %d, pkt2 id %d\n", id1, id2);
+
+    /* count how many UDP packets are merged to pkt1 */
+    for (seg = pkt1; seg != NULL; seg = seg->next)
     {
-        if (likely((id1 + (pkt1->nb_segs / 2)) == id2))
-        {
-            return 1;
-        }
-        if (likely((id2 + (pkt2->nb_segs / 2)) == id1))
-        {
-            return 2;
-        }
+        diff1 += !is_nicmem(seg);
     }
-    else
+    // printf("diff1: %d\n", diff1);
+    /* append or pre-pend the new packet */
+    if (likely((id1 + diff1) == id2))
     {
-        if (likely((id1 + pkt1->nb_segs) == id2))
-        {
-            return 1;
-        }
-        if (likely((id2 + pkt2->nb_segs) == id1))
-        {
-            return 2;
-        }
+        return 1;
+    }
+
+    /* count how many UDP packets are merged to pkt2 */
+    for (seg = pkt2; seg != NULL; seg = seg->next)
+    {
+        diff2 += !is_nicmem(seg);
+    }
+    // printf("diff2: %d\n", diff2);
+    if (likely((id2 + diff2) == id1))
+    {
+        return 2;
     }
 
     return 0;
@@ -593,33 +598,6 @@ embed_px_hdr3(struct rte_mbuf *pkt)
     *(uint16_t *)pxh = htons(seglen);
 }
 /*----------------------------------------------------------------------------*/
-/*
- * if packets are merged or concatenated,
- * update total_length in ip header
- * no need when TSO setup, since TSO will update it automatically
- */
-static inline void
-update_iplen(struct rte_mbuf *pkt)
-{
-    uint16_t *iplen = get_ip_len(pkt);
-    *iplen = htons(pkt->pkt_len - pkt->l2_len);
-}
-/*----------------------------------------------------------------------------*/
-static inline void
-update_ipid(struct rte_mbuf *pkt, uint16_t new_id)
-{
-    uint16_t *ip_id = get_ip_id(pkt);
-    *ip_id = htons(new_id);
-}
-/*----------------------------------------------------------------------------*/
-static inline void
-update_udplen(struct rte_mbuf *pkt)
-{
-    uint16_t *udplen;
-    udplen = get_udp_len(pkt);
-    *udplen = htons(pkt->pkt_len - pkt->l2_len - pkt->l3_len);
-}
-/*----------------------------------------------------------------------------*/
 static inline void
 update_udp(struct rte_mbuf *pkt)
 {
@@ -1005,6 +983,7 @@ separate_edge_seg(struct px_ctx *pctx,
     /* make edge_head segment */
     if (is_nicmem(edge))
     {
+        // printf("separate_edge_seg: nicmem packet\n");
         /* destroy the chain to next mbuf first */
         prev->next = NULL;
         if (is_decaped(prev))
@@ -1038,6 +1017,7 @@ separate_edge_seg(struct px_ctx *pctx,
     }
     else
     {
+        // printf("separate_edge_seg: not nicmem packet\n");
         if (seg_idx)
         {
             /*
@@ -1103,7 +1083,8 @@ static inline void
 handle_incomplete(struct px_ctx *pctx,
                   struct rte_mbuf *firstseg,
                   struct rte_mbuf *lastseg,
-                  struct timespec *timestamp)
+                  struct timespec *timestamp,
+                  uint16_t orig_segsz)
 {
     unsigned int diff;
 
@@ -1112,16 +1093,20 @@ handle_incomplete(struct px_ctx *pctx,
         clear_link(firstseg);
     }
 
-    /* if stall count is marginal */
+    /*
+     * if payload len is not multiple of eMSS
+     * it is the end of cwnd or end of content
+     */
+    if (orig_segsz &&
+        (get_data_len(firstseg) % orig_segsz))
+    {
+        goto Enqueue;
+    }
+
     diff = get_nsec_diff(&pctx->now_ns, timestamp);
     /* if stall nsec is marginal */
     if (diff < g_px_dev[pctx->port_id].timeout_ns)
     {
-        // printf("stall time is marginal, diff: %u, limit: %u\n"
-        //        "now_ns: %lu, %lu, timestamp: %lu, %lu\n",
-        //        diff, g_px_dev[pctx->port_id].timeout_ns,
-        //        pctx->now_ns.tv_sec, pctx->now_ns.tv_nsec,
-        //        timestamp->tv_sec, timestamp->tv_nsec);
         /* can stall, so insert to stalled item array */
         if (insert_stall(pctx,
                          firstseg,
@@ -1135,11 +1120,6 @@ handle_incomplete(struct px_ctx *pctx,
     }
 
 Enqueue:
-    // printf("stall time is too long, diff: %u, limit: %u\n"
-    //        "now_ns: %lu, %lu, timestamp: %lu, %lu\n",
-    //        diff, g_px_dev[pctx->port_id].timeout_ns,
-    //        pctx->now_ns.tv_sec, pctx->now_ns.tv_nsec,
-    //        timestamp->tv_sec, timestamp->tv_nsec);
     /* give up merge and enqueue to stall ring */
     if (is_udp(firstseg))
     {
@@ -1240,10 +1220,7 @@ assemble_udp(struct px_ctx *pctx,
     merged_item = cur_item;
 
     /* update timestamp of merged item */
-    if (timeout_ns)
-    {
-        update_timestamp(&merged_item->timestamp, timestamp);
-    }
+    update_timestamp(&merged_item->timestamp, timestamp);
 
     /*
      * to solve C -> A -> B (or A -> C -> B) issue,
@@ -1269,10 +1246,7 @@ assemble_udp(struct px_ctx *pctx,
     }
 
     /* update timestamp of merged item */
-    if (timeout_ns)
-    {
-        update_timestamp(&cur_item->timestamp, timestamp);
-    }
+    update_timestamp(&cur_item->timestamp, timestamp);
 
     /* merged again; remove current item because it is merged to prior item */
     prev_item->next_item_idx = cur_item->next_item_idx;
@@ -1368,10 +1342,7 @@ assemble_tcp(struct px_ctx *pctx,
     merged_item = cur_item;
 
     /* update timestamp of merged item */
-    if (timeout_ns)
-    {
-        update_timestamp(&merged_item->timestamp, timestamp);
-    }
+    update_timestamp(&merged_item->timestamp, timestamp);
 
     /*
      * to solve C -> A -> B (or A -> C -> B) issue,
@@ -1416,10 +1387,7 @@ assemble_tcp(struct px_ctx *pctx,
     }
 
     /* update timestamp of merged item */
-    if (timeout_ns)
-    {
-        update_timestamp(&merged_item->timestamp, timestamp);
-    }
+    update_timestamp(&merged_item->timestamp, timestamp);
 
     /* merged again; remove current item because it is merged to prior item */
     prev_item->next_item_idx = cur_item->next_item_idx;
@@ -1469,6 +1437,12 @@ parse_for_udp_gro(struct rte_mbuf *pkt)
         return -1;
     }
 
+    // if (pkt->next && is_nicmem(pkt->next))
+    // {
+    //     printf("is nicmem, pkt->buf_addr: %p, pkt->next->buf_addr: %p\n",
+    //            pkt->buf_addr, pkt->next->buf_addr);
+    // }
+
     return 0;
 }
 /*----------------------------------------------------------------------------*/
@@ -1485,6 +1459,9 @@ parse_for_tcp_gro(struct rte_mbuf *pkt,
 
     /* only process ACK packet */
     *tcp_flags = tcp_hdr->tcp_flags;
+    // if ((*tcp_flags != RTE_TCP_ACK_FLAG) &&
+    //     (*tcp_flags != (RTE_TCP_ACK_FLAG | RTE_TCP_PSH_FLAG)) &&
+    //     (*tcp_flags != (RTE_TCP_ACK_FLAG | RTE_TCP_PSH_FLAG | RTE_TCP_FIN_FLAG)))
     if ((*tcp_flags != RTE_TCP_ACK_FLAG) &&
         (*tcp_flags != (RTE_TCP_ACK_FLAG | RTE_TCP_PSH_FLAG)))
     {
@@ -1508,6 +1485,12 @@ parse_for_tcp_gro(struct rte_mbuf *pkt,
     //            pkt->next->pkt_len, pkt->next->data_len, pkt->next->nb_segs);
     //     // hexdump("TCP", rte_pktmbuf_mtod(pkt->next, uint8_t *), pkt->next->data_len);
     //     printf("buf_addr: %p, iova: %p\n", pkt->next->buf_addr, pkt->next->buf_iova);
+    // }
+
+    // if (pkt->next && is_nicmem(pkt->next))
+    // {
+    //     printf("is nicmem, pkt->buf_addr: %p, pkt->next->buf_addr: %p\n",
+    //            pkt->buf_addr, pkt->next->buf_addr);
     // }
 
     return 0;
@@ -1673,6 +1656,10 @@ parse_packet(struct px_ctx *pctx,
         return -1;
     }
 
+    /*
+     * ToDo: GRO for under 128B packets.
+     * despite 1B payload, it should be handled by TCP-GRO to avoid OoO.
+     */
     /* if nicmem is on, try GRO for packets larger than nicmem DMA size (128B) */
     if (g_px_dev[pctx->port_id].nm_ctx.num_nicmem > 0)
     {
@@ -1757,7 +1744,7 @@ void px_setup_tso_burst(uint16_t port_id,
 #if SEMANTIC_TEST
         if (is_uplink(pkt))
         {
-            segsz = (DEFAULT_iMTU - pkt->l3_len - pkt->l4_len);
+            segsz = (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len);
         }
         else
         {
@@ -1918,11 +1905,13 @@ link_and_flush(struct px_ctx *pctx,
     struct rte_mbuf *tmp, *start_pkt, *prev_pkt, *cur_pkt, *edge;
     struct px_flow *cur_flow;
     struct px_item *cur_item;
-    uint16_t item_idx, segsz, last_segsz, idx = 0;
+    uint16_t item_idx, segsz, orig_segsz, last_segsz, idx = 0;
     uint16_t *start_id, id_diff;
+    int stall_this_flow;
 
     for (int i = 0; i < pctx->flow_num; i++)
     {
+        stall_this_flow = 0;
         cur_flow = &pctx->flows[i];
 
         /* remove bucket of this flow */
@@ -1972,6 +1961,7 @@ link_and_flush(struct px_ctx *pctx,
             {
                 if (segsz)
                 {
+                    orig_segsz = get_data_len(cur_pkt);
                     /* subtract TCP option length */
                     segsz -= cur_pkt->l4_len - sizeof(struct rte_tcp_hdr);
                 }
@@ -1980,18 +1970,21 @@ link_and_flush(struct px_ctx *pctx,
 #if SEMANTIC_TEST
                     if (is_px(cur_pkt))
                     {
+                        orig_segsz = get_data_len(cur_pkt);
                         segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len);
                     }
                     else
                     {
-                        segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len) *
+                        orig_segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len);
+                        segsz = orig_segsz *
                                 ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
-                                 (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len));
+                                 orig_segsz);
                     }
 #else
-                    segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len) *
+                    orig_segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len);
+                    segsz = orig_segsz *
                             ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
-                             (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len));
+                             orig_segsz);
 #endif
                 }
 
@@ -2002,6 +1995,17 @@ link_and_flush(struct px_ctx *pctx,
                 if (g_px_dev[pctx->port_id].timeout_ns)
 #endif
                 {
+                    /* check if previous packet is stalled */
+                    if (stall_this_flow)
+                    {
+                        update_tcp(cur_pkt, segsz);
+                        handle_incomplete(pctx,
+                                          cur_pkt,
+                                          cur_item->lastseg,
+                                          &cur_item->timestamp,
+                                          orig_segsz);
+                        continue;
+                    }
                     /* check if current packet should be stalled */
                     if (get_data_len(cur_pkt) < segsz)
                     {
@@ -2013,7 +2017,9 @@ link_and_flush(struct px_ctx *pctx,
                         handle_incomplete(pctx,
                                           cur_pkt,
                                           cur_item->lastseg,
-                                          &cur_item->timestamp);
+                                          &cur_item->timestamp,
+                                          orig_segsz);
+                        stall_this_flow = 1;
                         continue;
                     }
 
@@ -2031,7 +2037,9 @@ link_and_flush(struct px_ctx *pctx,
                         handle_incomplete(pctx,
                                           edge,
                                           rte_pktmbuf_lastseg(edge),
-                                          &cur_item->timestamp);
+                                          &cur_item->timestamp,
+                                          orig_segsz);
+                        stall_this_flow = 1;
                     }
                 }
                 // printf("segsz: %d\n", segsz);
@@ -2039,26 +2047,53 @@ link_and_flush(struct px_ctx *pctx,
             }
             else if (is_udp(cur_pkt))
             {
-                if (!segsz)
+                if (segsz)
+                {
+                    orig_segsz = get_data_len(cur_pkt);
+                }
+                else
                 {
 #if SEMANTIC_TEST
                     /* if outgoing packet */
                     if (is_px(cur_pkt))
                     {
+                        orig_segsz = get_data_len(cur_pkt);
                         /* ToDo: Get the eMTU size from the PX header */
                         segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len);
                     }
                     /* if incoming packet */
                     else
                     {
-                        segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len) *
+                        // if (g_px_dev[pctx->port_id].nm_ctx.num_nicmem > 0)
+                        if (!cur_pkt->next || !is_nicmem(cur_pkt->next))
+                        {
+                            // printf("is not nicmem\n");
+                            orig_segsz = cur_pkt->data_len - get_hdr_len(cur_pkt);
+                        }
+                        else
+                        {
+                            orig_segsz = cur_pkt->data_len + cur_pkt->next->data_len - get_hdr_len(cur_pkt);
+                        }
+                        segsz = orig_segsz *
                                 ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
-                                 (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len));
+                                 orig_segsz);
+                        // printf("orig_segsz: %d, data_len: %d, next->data_len: %d, segsz: %d\n",
+                        //        orig_segsz, cur_pkt->data_len, cur_pkt->next->data_len, segsz);
                     }
 #else
-                    segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len) *
+                    if (!cur_pkt->next || !is_nicmem(cur_pkt->next))
+                    {
+                        orig_segsz = cur_pkt->data_len;
+                    }
+                    else
+                    {
+                        orig_segsz = cur_pkt->data_len + cur_pkt->next->data_len;
+                    }
+                    segsz = orig_segsz *
                             ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
-                             (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len));
+                             orig_segsz);
+                    // printf("orig_segsz: %d, data_len: %d, next->data_len: %d, segsz: %d\n",
+                    //        orig_segsz, cur_pkt->data_len, cur_pkt->next->data_len, segsz);
 #endif
                 }
                 /* check if delayed merging needed and if is from outside */
@@ -2068,6 +2103,16 @@ link_and_flush(struct px_ctx *pctx,
                 if (g_px_dev[pctx->port_id].timeout_ns)
 #endif
                 {
+                    if (stall_this_flow)
+                    {
+                        /* check if previous packet is stalled */
+                        handle_incomplete(pctx,
+                                          cur_pkt,
+                                          cur_item->lastseg,
+                                          &cur_item->timestamp,
+                                          orig_segsz);
+                        continue;
+                    }
                     /* check if current packet should be stalled */
                     if (get_data_len(cur_pkt) < segsz)
                     {
@@ -2078,7 +2123,9 @@ link_and_flush(struct px_ctx *pctx,
                         handle_incomplete(pctx,
                                           cur_pkt,
                                           cur_item->lastseg,
-                                          &cur_item->timestamp);
+                                          &cur_item->timestamp,
+                                          orig_segsz);
+                        stall_this_flow = 1;
                         continue;
                     }
                     // printf("get_data_len(cur_pkt): %d, segsz: %d\n", get_data_len(cur_pkt), segsz);
@@ -2308,6 +2355,7 @@ px_core(struct px_ctx *pctx,
                                          reverse_rss,
                                          &reverse_key,
                                          ntohs(*mss_ptr));
+                        printf("mss: %u\n", ntohs(*mss_ptr));
 
                         /* update MSS */
                         update_mss(mss_ptr, 0, 1);
@@ -2956,7 +3004,7 @@ int px_eth_dev_configure(uint16_t port_id,
         ret = px_nicmem_configure(&g_px_dev[port_id].nm_ctx,
                                   port_id,
                                   eth_conf->rxmode.max_lro_pkt_size,
-                                  num_nicmem * num_rxq);
+                                  num_nicmem * num_rxq * num_rxq_incr);
         if (ret)
         {
             rte_exit(EXIT_FAILURE, "px_nicmem_configure failed: %d\n", ret);
@@ -3044,8 +3092,9 @@ int px_eth_rx_queue_setup(uint16_t port_id,
 
     g_px_dev[port_id].nb_rx_desc[rx_queue_id] = nb_rx_desc;
 
-    inner_nb_rx_desc = nb_rx_desc / num_rxq_incr;
-    inner_nb_rx_desc = (inner_nb_rx_desc < 64) ? 64 : (inner_nb_rx_desc);
+    // inner_nb_rx_desc = nb_rx_desc / num_rxq_incr;
+    // inner_nb_rx_desc = (inner_nb_rx_desc < 64) ? 64 : (inner_nb_rx_desc);
+    inner_nb_rx_desc = nb_rx_desc;
 
     for (i = 0; i < num_rxq_incr; i++)
     {
@@ -3120,12 +3169,6 @@ rx_and_px_gro(uint16_t port_id,
     uint16_t recv = 0, total = 0;
     uint16_t rxq_incr = g_px_dev[port_id].num_rxq_incr;
     uint16_t inner_qid;
-
-    if (g_px_dev[port_id].timeout_ns)
-    {
-        px_clock_gettime(TIME_FLAG, &pctx->now_ns);
-    }
-
     /* RX and GRO for every latent queues */
 #if SHARE_QUEUE
     /** since we made latent queues to DMA to the same SW RX queue,
@@ -3145,6 +3188,8 @@ rx_and_px_gro(uint16_t port_id,
                             inner_qid,
                             rx_pkts + total,
                             nb_pkts - total);
+
+    px_clock_gettime(TIME_FLAG, &pctx->now_ns);
 #if PX_MEASURE_DELAY
     px_set_timestamp_batch(rx_pkts + total, recv, &pctx->now_ns);
 #endif
@@ -3189,11 +3234,6 @@ rx_and_px_gro_delayed(uint16_t port_id,
     uint16_t inner_qid;
     int i;
 
-    if (g_px_dev[port_id].timeout_ns)
-    {
-        px_clock_gettime(TIME_FLAG, &pctx->now_ns);
-    }
-
     /* RX and GRO for every latent queues */
     for (i = 0; i < rxq_incr; i++)
     {
@@ -3207,10 +3247,12 @@ rx_and_px_gro_delayed(uint16_t port_id,
                                     inner_qid,
                                     rx_pkts + total_mq + total_sq,
                                     nb_pkts - total_mq - total_sq);
-            // }
+            px_clock_gettime(TIME_FLAG, &pctx->now_ns);
 #if PX_MEASURE_DELAY
             px_set_timestamp_batch(rx_pkts + total_mq + total_sq, recv, &pctx->now_ns);
 #endif
+            // }
+
             if (!recv)
             {
                 break;

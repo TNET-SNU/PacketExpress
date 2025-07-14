@@ -56,10 +56,12 @@ extern "C"
 
 #define CLOCK_CPU_TIMESTAMP 100
 #define CLOCK_NIC_TIMESTAMP 101
+
 // #define TIME_FLAG (CLOCK_REALTIME)
 // #define TIME_FLAG (CLOCK_MONOTONIC)
 #define TIME_FLAG (CLOCK_CPU_TIMESTAMP)
 // #define TIME_FLAG (CLOCK_NIC_TIMESTAMP)
+
 #define E9 (long)1e9
 #define E6 (long)1e6
 #define E3 (long)1e3
@@ -70,7 +72,7 @@ extern "C"
 #define MIN(a, b) ((a > b) ? b : a)
 
 /*----------------------------------------------------------------------------*/
-static inline int
+static inline void
 px_clock_gettime(clockid_t clk_id, struct timespec *ts)
 {
     if (clk_id == CLOCK_CPU_TIMESTAMP)
@@ -79,21 +81,21 @@ px_clock_gettime(clockid_t clk_id, struct timespec *ts)
         uint64_t tsc = rte_rdtsc();
         uint64_t tsc_hz = rte_get_tsc_hz();
 
-        // 초, 나노초 단위로 변환
+        /* translate to timespec */
         ts->tv_sec = tsc / tsc_hz;
         ts->tv_nsec = (tsc % tsc_hz) * E9 / tsc_hz;
 
-        return 0;
+        return;
     }
     if (clk_id == CLOCK_MONOTONIC)
     {
         clock_gettime(CLOCK_MONOTONIC, ts);
-        return 0;
+        return;
     }
     if (clk_id == CLOCK_REALTIME)
     {
         clock_gettime(CLOCK_REALTIME, ts);
-        return 0;
+        return;
     }
 }
 /*----------------------------------------------------------------------------*/
@@ -103,11 +105,11 @@ px_clock_gettime(clockid_t clk_id, struct timespec *ts)
     {                                                                   \
         struct timespec _start1, _start2, _end1, _end2;                 \
         long _time1, _time2;                                            \
-        px_clock_gettime(TIME_FLAG, &_start1);                             \
-        px_clock_gettime(CLOCK_THREAD_CPUTIME_ID, &_start2);               \
+        px_clock_gettime(TIME_FLAG, &_start1);                          \
+        px_clock_gettime(CLOCK_THREAD_CPUTIME_ID, &_start2);            \
         cmd;                                                            \
-        px_clock_gettime(TIME_FLAG, &_end1);                               \
-        px_clock_gettime(CLOCK_THREAD_CPUTIME_ID, &_end2);                 \
+        px_clock_gettime(TIME_FLAG, &_end1);                            \
+        px_clock_gettime(CLOCK_THREAD_CPUTIME_ID, &_end2);              \
         _time1 = (_end1.tv_sec - _start1.tv_sec) * E9 +                 \
                  (_end1.tv_nsec - _start1.tv_nsec);                     \
         _time2 = (_end2.tv_sec - _start2.tv_sec) * E9 +                 \
@@ -125,15 +127,64 @@ px_clock_gettime(clockid_t clk_id, struct timespec *ts)
     } while (/*CONSTCOND*/ 0);
 #endif
 /*----------------------------------------------------------------------------*/
-#define SEQ_LT(a, b) ((int32_t)((a) - (b)) < 0)
-#define SEQ_LEQ(a, b) ((int32_t)((a) - (b)) <= 0)
-#define SEQ_GT(a, b) ((int32_t)((a) - (b)) > 0)
-#define SEQ_GEQ(a, b) ((int32_t)((a) - (b)) >= 0)
+static inline bool
+SEQ_LT(uint32_t a, uint32_t b)
+{
+    return (int32_t)(a - b) < 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline bool
+SEQ_LEQ(uint32_t a, uint32_t b)
+{
+    return (int32_t)(a - b) <= 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline bool
+SEQ_GT(uint32_t a, uint32_t b)
+{
+    return (int32_t)(a - b) > 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline bool
+SEQ_GEQ(uint32_t a, uint32_t b)
+{
+    return (int32_t)(a - b) >= 0;
+}
 /*----------------------------------------------------------------------------*/
 static inline uint32_t
-tcp_seq_diff(uint32_t a, uint32_t b)
+SEQ_DIFF(uint32_t a, uint32_t b)
 {
     return (uint32_t)((int32_t)(a - b));
+}
+/*----------------------------------------------------------------------------*/
+static inline bool
+ID_LT(uint16_t a, uint16_t b)
+{
+    return (int16_t)(a - b) < 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline bool
+ID_LEQ(uint16_t a, uint16_t b)
+{
+    return (int16_t)(a - b) <= 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline bool
+ID_GT(uint16_t a, uint16_t b)
+{
+    return (int16_t)(a - b) > 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline bool
+ID_GEQ(uint16_t a, uint16_t b)
+{
+    return (int16_t)(a - b) >= 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline uint16_t
+ID_DIFF(uint16_t a, uint16_t b)
+{
+    return (uint16_t)((int16_t)(a - b));
 }
 /*----------------------------------------------------------------------------*/
 struct four_tuple
@@ -226,6 +277,25 @@ get_eth_type(struct rte_mbuf *pkt)
 {
     return rte_pktmbuf_mtod_offset(pkt, uint16_t *,
                                    RTE_ETHER_ADDR_LEN * 2);
+}
+/*----------------------------------------------------------------------------*/
+static inline uint8_t *
+get_ip_ver_ihlen(struct rte_mbuf *pkt)
+{
+    return rte_pktmbuf_mtod_offset(pkt, uint8_t *,
+                                   pkt->l2_len);
+}
+/*----------------------------------------------------------------------------*/
+static inline uint8_t 
+get_ip_version(struct rte_mbuf *pkt)
+{
+    return *get_ip_ver_ihlen(pkt) & 0xf0;
+}
+/*----------------------------------------------------------------------------*/
+static inline uint8_t 
+get_ip_ihlen(struct rte_mbuf *pkt)
+{
+    return (*get_ip_ver_ihlen(pkt) & 0x0f) << 2; // ihlen in bytes
 }
 /*----------------------------------------------------------------------------*/
 static inline uint8_t *
@@ -361,6 +431,12 @@ get_tcp_doff(struct rte_mbuf *pkt)
                                        sizeof(uint16_t) * 2 +
                                        sizeof(uint32_t) +
                                        sizeof(uint32_t));
+}
+/*----------------------------------------------------------------------------*/
+static inline uint8_t
+get_tcp_thlen(struct rte_mbuf *pkt)
+{
+    return (*get_tcp_doff(pkt) >> 4) << 2;
 }
 /*----------------------------------------------------------------------------*/
 static inline uint8_t *
@@ -544,6 +620,33 @@ unmark_px(struct rte_mbuf *pkt)
 {
     uint8_t *tos = get_ip_tos(pkt);
     return *tos &= ~PX_MARK_ON_TOS;
+}
+/*----------------------------------------------------------------------------*/
+/*
+ * if packets are merged or concatenated,
+ * update total_length in ip header
+ * no need when TSO setup, since TSO will update it automatically
+ */
+static inline void
+update_iplen(struct rte_mbuf *pkt)
+{
+    uint16_t *iplen = get_ip_len(pkt);
+    *iplen = htons(pkt->pkt_len - pkt->l2_len);
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+update_ipid(struct rte_mbuf *pkt, uint16_t new_id)
+{
+    uint16_t *ip_id = get_ip_id(pkt);
+    *ip_id = htons(new_id);
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+update_udplen(struct rte_mbuf *pkt)
+{
+    uint16_t *udplen;
+    udplen = get_udp_len(pkt);
+    *udplen = htons(pkt->pkt_len - pkt->l2_len - pkt->l3_len);
 }
 /*----------------------------------------------------------------------------*/
 static inline void

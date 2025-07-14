@@ -28,7 +28,6 @@
 #include <rte_spinlock.h>
 #include <rte_eal_memconfig.h>
 #include <rte_mbuf_core.h>
-#include <rte_thread.h>
 #include <rte_lcore.h>
 #include "px_gro.h"
 #include "px_common.h"
@@ -36,27 +35,35 @@
 /* Essential macros */
 #if USE_LRO
 #define MBUF_DATA_SIZE 65024
-#elif JUMBO_FRAME
-#define MBUF_DATA_SIZE 9024
 #else
-#define MBUF_DATA_SIZE RTE_ETHER_MAX_LEN
+#define MBUF_DATA_SIZE 9024
 #endif
 
-#define MBUF_SIZE (MBUF_DATA_SIZE + sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM)
-#define NB_MBUF 262143
-// #define RX_IDLE_ENABLE			1
-#define RX_IDLE_TIMEOUT 1 /* in micro-seconds */
-#define RX_IDLE_THRESH 64
+#define NB_MBUF 1048575
 #define MAX_PKT_BURST 64
 
 /*
  * Configurable number of RX/TX ring descriptors
  */
-#define RTE_TEST_RX_DESC_DEFAULT /* 65536 */ 32768 /* 16384 */ /* 8192 */ /* 4096 */ /* 2048 */ /* 1024 */ /* 512 */ /* 256 */
-#define RTE_TEST_TX_DESC_DEFAULT /* 8192 */ /* 4096 */ /* 2048 */ 1024 /* 512 */ /* 256 */
+// #define RTE_TEST_RX_DESC_DEFAULT 65536
+// #define RTE_TEST_RX_DESC_DEFAULT 32768
+// #define RTE_TEST_RX_DESC_DEFAULT 16384
+// #define RTE_TEST_RX_DESC_DEFAULT 8192
+// #define RTE_TEST_RX_DESC_DEFAULT 4096
+// #define RTE_TEST_RX_DESC_DEFAULT 2048
+#define RTE_TEST_RX_DESC_DEFAULT 1024
+
+// #define RTE_TEST_TX_DESC_DEFAULT 65536
+// #define RTE_TEST_TX_DESC_DEFAULT 32768
+// #define RTE_TEST_TX_DESC_DEFAULT 16384
+#define RTE_TEST_TX_DESC_DEFAULT 8192
+// #define RTE_TEST_TX_DESC_DEFAULT 4096
+// #define RTE_TEST_TX_DESC_DEFAULT 2048
+// #define RTE_TEST_TX_DESC_DEFAULT 1024
 
 static uint16_t nb_rxd = RTE_TEST_RX_DESC_DEFAULT;
 static uint16_t nb_txd = RTE_TEST_TX_DESC_DEFAULT;
+static uint32_t nb_mbuf = NB_MBUF;
 /*----------------------------------------------------------------------------*/
 /* ARP table structures */
 struct arp_entry
@@ -88,10 +95,10 @@ const struct
     {"10.3.90.1", "58:a2:e1:a7:a8:c6"}, // rapids1.eth2
     {"10.4.90.1", "a0:88:c2:d7:81:0e"}, // rapids1.eth3
 
-    {"10.1.95.1", "58:a2:e1:a7:7c:c6"}, // rapids0.eth0
-    {"10.2.95.1", "58:a2:e1:a7:7c:d6"}, // rapids0.eth1
-    {"10.3.95.1", "58:a2:e1:a7:7c:be"}, // rapids0.eth2
-    {"10.4.95.1", "58:a2:e1:a7:a9:8e"}, // rapids0.eth3
+    {"10.1.95.1", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
+    {"10.2.95.1", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
+    {"10.3.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
+    {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
 };
 /*----------------------------------------------------------------------------*/
 /* global information for port configuration */
@@ -100,15 +107,17 @@ static uint16_t g_num_sockets = 1;
 static uint16_t g_num_cores = 1;
 static uint16_t g_num_ports = 0;
 static struct rte_ether_addr port_mac[RTE_MAX_ETHPORTS] = {{{0}}};
-static struct rte_mempool *g_pktmbuf_pool[RTE_MAX_LCORE] = {NULL};
+// static struct rte_mempool *g_pktmbuf_pool[RTE_MAX_LCORE] = {NULL};
+static struct rte_mempool *g_pktmbuf_pool[RTE_MAX_NUMA_NODES] = {NULL};
 static struct rte_eth_dev_info g_dev_info[RTE_MAX_ETHPORTS];
 /*----------------------------------------------------------------------------*/
 /* string MAC to binary MAC */
 int parse_mac(const char *mac_str, struct rte_ether_addr *mac)
 {
     return sscanf(mac_str, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
-                  &mac->addr_bytes[0], &mac->addr_bytes[1], &mac->addr_bytes[2],
-                  &mac->addr_bytes[3], &mac->addr_bytes[4], &mac->addr_bytes[5]) == 6
+                  &mac->addr_bytes[0], &mac->addr_bytes[1],
+                  &mac->addr_bytes[2], &mac->addr_bytes[3],
+                  &mac->addr_bytes[4], &mac->addr_bytes[5]) == 6
                ? 0
                : -1;
 }
@@ -208,7 +217,6 @@ check_all_ports_link_status(uint8_t port_num, uint32_t port_mask)
     }
 }
 /*----------------------------------------------------------------------------*/
-// 포트 초기화
 static int
 port_init(uint16_t portid, uint16_t num_queue)
 {
@@ -218,8 +226,8 @@ port_init(uint16_t portid, uint16_t num_queue)
     struct rte_eth_fc_conf fc_conf; /* for Ethernet flow control settings */
     rte_eth_dev_info_get(portid, &g_dev_info[portid]);
 
-    printf("max_rx_queues: %u\n", g_dev_info[portid].max_rx_queues);
-    printf("max_tx_queues: %u\n", g_dev_info[portid].max_tx_queues);
+    // printf("max_rx_queues: %u\n", g_dev_info[portid].max_rx_queues);
+    // printf("max_tx_queues: %u\n", g_dev_info[portid].max_tx_queues);
 
     /* re-adjust rss_hf */
     port_conf = px_eth_conf(portid, NULL, NULL, 0, MBUF_DATA_SIZE,
@@ -295,14 +303,23 @@ port_init(uint16_t portid, uint16_t num_queue)
         sid = rte_lcore_to_socket_id(queue_id);
 
         /* init RX queue on each port per CPU */
+// #if (USE_CGRO || NICMEM || NUM_HAIRPIN_Q)
+//         ret = px_eth_rx_queue_setup(portid, queue_id, nb_rxd, sid,
+//                                     &g_dev_info[portid].default_rxconf,
+//                                     g_pktmbuf_pool[queue_id]);
+// #else
+//         ret = rte_eth_rx_queue_setup(portid, queue_id, nb_rxd, sid,
+//                                      &g_dev_info[portid].default_rxconf,
+//                                      g_pktmbuf_pool[queue_id]);
+// #endif
 #if (USE_CGRO || NICMEM || NUM_HAIRPIN_Q)
         ret = px_eth_rx_queue_setup(portid, queue_id, nb_rxd, sid,
                                     &g_dev_info[portid].default_rxconf,
-                                    g_pktmbuf_pool[queue_id]);
+                                    g_pktmbuf_pool[sid]);
 #else
         ret = rte_eth_rx_queue_setup(portid, queue_id, nb_rxd, sid,
                                      &g_dev_info[portid].default_rxconf,
-                                     g_pktmbuf_pool[queue_id]);
+                                     g_pktmbuf_pool[sid]);
 #endif
         if (ret < 0)
         {
@@ -374,7 +391,7 @@ port_init(uint16_t portid, uint16_t num_queue)
         rte_exit(EXIT_FAILURE, "Failed to get flow control info!\n");
     }
 
-/* and just disable the rx/tx flow control */
+    /* and just disable the rx/tx flow control */
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
     fc_conf.mode = RTE_FC_NONE;
 #else
@@ -393,12 +410,23 @@ port_init(uint16_t portid, uint16_t num_queue)
 /*----------------------------------------------------------------------------*/
 void lcore_main(void)
 {
+    struct rte_mbuf *rmbufs[RTE_MAX_ETHPORTS][MAX_PKT_BURST] = {{NULL}};
+    struct rte_mbuf *wmbufs[RTE_MAX_ETHPORTS][MAX_PKT_BURST] = {{NULL}};
+    struct rte_mbuf *m;
+    struct rte_ether_hdr *eth_hdr;
+    struct rte_ipv4_hdr *ip_hdr;
     uint32_t qid = rte_lcore_id();
     uint16_t port_id;
-    uint16_t nb_rx[RTE_MAX_ETHPORTS];
-    uint16_t nb_tx[RTE_MAX_ETHPORTS];
-    struct rte_mbuf *rmbufs[RTE_MAX_ETHPORTS][MAX_PKT_BURST];
-    struct rte_mbuf *wmbufs[RTE_MAX_ETHPORTS][MAX_PKT_BURST];
+    uint16_t nb_rx[RTE_MAX_ETHPORTS] = {0};
+    uint16_t nb_tx[RTE_MAX_ETHPORTS] = {0};
+    int ret, i;
+#if USE_DGRO
+    struct rte_gro_param gro_param = {
+        .gro_types = RTE_GRO_TCP_IPV4,
+        .max_flow_num = MAX_PKT_BURST,
+        .max_item_per_flow = MAX_PKT_BURST,
+        .socket_id = rte_lcore_to_socket_id(qid)};
+#endif
 
     while (!g_shutdown)
     {
@@ -413,32 +441,27 @@ void lcore_main(void)
             px_parse_batch(port_id, qid, rmbufs[port_id], nb_rx[port_id], !JUMBO_FRAME);
 #endif
 #if USE_DGRO
-            struct rte_gro_param gro_param = {
-                .gro_types = RTE_GRO_TCP_IPV4,
-                .max_flow_num = MAX_PKT_BURST,
-                .max_item_per_flow = MAX_PKT_BURST,
-                .socket_id = rte_eth_dev_socket_id(port_id)};
             nb_rx[port_id] = rte_gro_reassemble_burst(rmbufs[port_id], nb_rx[port_id], &gro_param);
 #endif
             px_update_stats(port_id, qid, rmbufs[port_id], nb_rx[port_id], NULL);
 #endif
-            for (int i = 0; i < nb_rx[port_id]; i++)
+            for (i = 0; i < nb_rx[port_id]; i++)
             {
-                struct rte_mbuf *m = rmbufs[port_id][i];
+                m = rmbufs[port_id][i];
 
-                struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
+                eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
                 if (eth_hdr->ether_type != rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4))
                 {
                     rte_pktmbuf_free(m);
                     continue;
                 }
 
-                struct rte_ipv4_hdr *ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
+                ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
 
                 /* modify DST MAC */
                 if (lookup_dst_mac(ip_hdr->dst_addr, &eth_hdr->d_addr) < 0)
                 {
-                    // Unknown dst IP
+                    /* Unknown dst IP */
                     rte_pktmbuf_free(m);
                     continue;
                 }
@@ -454,15 +477,18 @@ void lcore_main(void)
 #if !USE_CGRO && (USE_LRO || USE_DGRO)
             px_setup_tso_burst(port_id, qid, wmbufs[port_id], nb_tx[port_id]);
 #endif
-            int ret = rte_eth_tx_burst(port_id, qid,
-                                       wmbufs[port_id], nb_tx[port_id]);
+            ret = rte_eth_tx_burst(port_id, qid,
+                                   wmbufs[port_id], nb_tx[port_id]);
             if (ret < nb_tx[port_id])
             {
+                printf("Port %d: Sent %d packets, but only %d were sent successfully.\n",
+                       port_id, nb_tx[port_id], ret);
                 /* Free the mbufs that were not sent */
                 rte_pktmbuf_free_bulk(wmbufs[port_id] + ret,
                                       nb_tx[port_id] - ret);
             }
-            nb_tx[port_id] = 0; // Reset after sending
+            /* Reset after sending */
+            nb_tx[port_id] = 0;
         }
     }
 }
@@ -477,9 +503,9 @@ void handle_sigint(int sig)
 int main(int argc, char **argv)
 {
     uint16_t core_id, port_id, sid;
+    int i, rc, ret, opt;
 
-    // core 개수 파싱
-    int opt;
+    /* parse options */
     while ((opt = getopt(argc, argv, "c:")) != -1)
     {
         if (opt == 'c')
@@ -503,29 +529,38 @@ int main(int argc, char **argv)
     rte_log_set_level(RTE_LOGTYPE_MEMPOOL, 0);
     rte_log_set_level(RTE_LOG_WARNING, 0);
 
-    int ret;
     char mem_channels[5];
-    char lcores_arg[256] = "--lcores=";
+    char lcores_arg[256];
+    char socket_mem_arg[64];
 
-    // --lcores=0@0,1@1,... 생성
-    for (int i = 0; i < g_num_cores; i++)
+    /* --lcores=0@0,1@1,... */
+    strcpy(lcores_arg, "--lcores=");
+    for (i = 0; i < g_num_cores; i++)
     {
         char buf[32];
         sprintf(buf, "%d@%d", i, i);
         strcat(lcores_arg, buf);
         if (i != g_num_cores - 1)
+        {
             strcat(lcores_arg, ",");
+        }
     }
-    sprintf(mem_channels, "%d", 8); // NUMA socket 당 memory channel
 
-    // EAL 인자 구성
+    /* --socket-mem=65536,65536 (can be adapted dynamically) */
+    sprintf(socket_mem_arg, "--socket-mem=%d,%d", 65536, 65536); // 64GB per NUMA node
+
+    /* --n=8 per NUMA node */
+    sprintf(mem_channels, "%d", 8);
+
+    /* EAL configuration */
     char *eal_args[] = {
-        "pxgw",
-        "--iova-mode=va",
-        lcores_arg,
-        "-n",
-        mem_channels,
-        "--proc-type=primary",
+        strdup("pxgw"),
+        strdup("--iova-mode=va"),
+        strdup(lcores_arg),
+        strdup("-n"),
+        strdup(mem_channels),
+        strdup("--proc-type=primary"),
+        strdup(socket_mem_arg),
     };
     int eal_argc = sizeof(eal_args) / sizeof(eal_args[0]);
 
@@ -535,48 +570,78 @@ int main(int argc, char **argv)
     {
         rte_exit(EXIT_FAILURE, "Invalid EAL args\n");
     }
-    // printf("EAL arguments:\n");
-    // for (int i = 0; i < eal_argc; i++)
-    // {
-    //     printf("  eal_args[%d] = %s\n", i, eal_args[i]);
-    // }
+    printf("EAL arguments:\n");
+    for (i = 0; i < eal_argc; i++)
+    {
+        printf("  eal_args[%d] = %s\n", i, eal_args[i]);
+    }
+
     g_num_sockets = rte_socket_count();
     g_num_ports = rte_eth_dev_count_avail();
 
-    // printf("socket_count: %u\n", g_num_sockets);
-    // printf("lcore_count: %u\n", rte_lcore_count());
-    // printf("device_count: %u\n", g_num_ports);
+    printf("socket_count: %u\n", g_num_sockets);
+    printf("lcore_count: %u\n", rte_lcore_count());
+    printf("device_count: %u\n", g_num_ports);
 
     g_arp_table_size = sizeof(g_entries) / sizeof(g_entries[0]);
-    for (int i = 0; i < g_arp_table_size; i++)
+    for (i = 0; i < g_arp_table_size; i++)
     {
         g_arp_table[i].ip = parse_ip(g_entries[i].ip);
         if (parse_mac(g_entries[i].mac, &g_arp_table[i].mac) < 0)
+        {
             rte_exit(EXIT_FAILURE, "Invalid MAC format: %s\n", g_entries[i].mac);
+        }
     }
 
-    // mbuf pool 생성
-    for (core_id = 0; core_id < g_num_cores; core_id++)
+    /* mbuf pool creation */
+//     for (core_id = 0; core_id < g_num_cores; core_id++)
+//     {
+//         char name[20];
+//         sid = rte_lcore_to_socket_id(core_id);
+//         sprintf(name, "mempool-%d", core_id);
+//         g_pktmbuf_pool[core_id] =
+//             rte_mempool_create(name, nb_mbuf / g_num_cores,
+// #if NICMEM
+//                                NICMEM_DMA_SIZE + sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM,
+// #else
+//                                MBUF_DATA_SIZE + sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM,
+// #endif
+//                                RTE_MEMPOOL_CACHE_MAX_SIZE,
+//                                sizeof(struct rte_pktmbuf_pool_private),
+//                                rte_pktmbuf_pool_init, NULL,
+//                                rte_pktmbuf_init, NULL,
+//                                sid, MEMPOOL_F_SP_PUT | MEMPOOL_F_SC_GET);
+//         if (!g_pktmbuf_pool[core_id])
+//         {
+//             rte_exit(EXIT_FAILURE,
+//                      "Cannot init data mbuf pool in sid: %d\n", sid);
+//         }
+//     }
+
+    for (sid = 0; sid < g_num_sockets; sid++)
     {
         char name[20];
-        sid = rte_lcore_to_socket_id(core_id);
-        sprintf(name, "mempool-%d", core_id);
-        if (!(g_pktmbuf_pool[core_id] =
-                  rte_mempool_create(name, NB_MBUF,
+        sprintf(name, "mempool-%d", sid);
+        g_pktmbuf_pool[sid] =
+            rte_mempool_create(name, nb_mbuf,
 #if NICMEM
-                                     MBUF_SIZE - MBUF_DATA_SIZE + NICMEM_DMA_SIZE,
+                               NICMEM_DMA_SIZE + sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM,
 #else
-                                     MBUF_SIZE,
+                               MBUF_DATA_SIZE + sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM,
 #endif
-                                     RTE_MEMPOOL_CACHE_MAX_SIZE,
-                                     sizeof(struct rte_pktmbuf_pool_private),
-                                     rte_pktmbuf_pool_init, NULL,
-                                     rte_pktmbuf_init, NULL,
-                                     sid, MEMPOOL_F_SP_PUT | MEMPOOL_F_SC_GET)))
+                               RTE_MEMPOOL_CACHE_MAX_SIZE,
+                               sizeof(struct rte_pktmbuf_pool_private),
+                               rte_pktmbuf_pool_init, NULL,
+                               rte_pktmbuf_init, NULL,
+                               sid, 0);
+        if (!g_pktmbuf_pool[sid])
+        {
             rte_exit(EXIT_FAILURE,
                      "Cannot init data mbuf pool in sid: %d\n", sid);
+        }
     }
 
+    /* initialize ports */
     for (port_id = 0; port_id < g_num_ports; port_id++)
     {
         if (port_init(port_id, g_num_cores) < 0)
@@ -585,21 +650,27 @@ int main(int argc, char **argv)
         }
     }
 
+    /* check all ports */
     check_all_ports_link_status(g_num_ports, 0xFFFFFFFF);
 
+    /* register signal handler for graceful shutdown */
     struct sigaction sa;
     sa.sa_handler = handle_sigint;
     sa.sa_flags = 0;
     sigemptyset(&sa.sa_mask);
     sigaction(SIGINT, &sa, NULL);
 
-    // 코어별 launch
+#if !USE_CGRO
+    px_start_print_thread(1);
+#endif
+
+    /* launch lcore main on each worker core */
     g_shutdown = 0;
     RTE_LCORE_FOREACH_WORKER(core_id)
     {
         if (core_id < g_num_cores)
         {
-            int rc = rte_eal_remote_launch((lcore_function_t *)lcore_main, NULL, core_id);
+            rc = rte_eal_remote_launch((lcore_function_t *)lcore_main, NULL, core_id);
             if (rc != 0)
             {
                 printf("Failed to launch lcore %u, return code: %d\n", core_id, rc);
@@ -607,15 +678,21 @@ int main(int argc, char **argv)
         }
     }
 
-    lcore_main(); // 메인 코어에서 lcore_main 실행
+    /* main core also runs lcore_main */
+    lcore_main();
 
-    // worker 코어 종료 대기 (join)
+    /* wait for all worker cores to finish */
     RTE_LCORE_FOREACH_WORKER(core_id)
     {
         if (core_id < g_num_cores)
         {
             rte_eal_wait_lcore(core_id);
         }
+    }
+
+    for (i = 0; i < eal_argc; i++)
+    {
+        free(eal_args[i]);
     }
 }
 /*----------------------------------------------------------------------------*/

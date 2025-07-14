@@ -229,6 +229,9 @@ merge_two_tcp4_packets(struct gro_tcp4_item *item,
 	if (unlikely(pkt_head->pkt_len - l2_len + pkt_tail->pkt_len -
 				hdr_len > MAX_IPV4_PKT_LENGTH))
 		return 0;
+	// if (unlikely(pkt_head->pkt_len - l2_len + pkt_tail->pkt_len -
+	// 			hdr_len > 9000))
+	// 	return 0;
 
 	/* remove the packet header for the tail packet */
 	rte_pktmbuf_adj(pkt_tail, hdr_len);

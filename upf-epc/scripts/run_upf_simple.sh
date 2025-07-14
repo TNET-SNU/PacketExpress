@@ -11,9 +11,9 @@ rootdir=$workdir/../..
 
 # reset bess daemon and run up4
 cd $rootdir/bess/bessctl
-# python3 bessctl daemon reset
-python3 bessctl run up4-simple
+# python bessctl daemon reset
+python bessctl run up4-simple
 
 # run route control
 cd $rootdir/bess
-python3 route_control.py -i "${ifaces[@]}" --access "${access_ifaces[@]}" --core "${core_ifaces[@]}"
+python route_control.py -i "${ifaces[@]}" --access "${access_ifaces[@]}" --core "${core_ifaces[@]}"

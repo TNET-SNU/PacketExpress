@@ -126,7 +126,7 @@ CXXFLAGS += -D JUMBO_FRAME=0
 # Choose one of below
 
 # 1. LRO on
-# CXXFLAGS += -D USE_LRO=1
+CXXFLAGS += -D USE_LRO=1
 
 # 2. LRO off
 # CXXFLAGS += -D USE_LRO=0
@@ -145,7 +145,7 @@ CXXFLAGS += -D JUMBO_FRAME=0
 # CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
 
 # 4. CUSTOM GRO on, stall 72us
-# CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=16 -D STALL_TIMEOUT_NS=72000 -D USE_LINK=0
+CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=72000 -D USE_LINK=0
 
 # 6. CUSTOM GRO + LINKING
 # CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=1
@@ -163,8 +163,8 @@ CXXFLAGS += -D JUMBO_FRAME=0
 ################################################################################
 
 # To use nicmem, make sure to use DPDK version 20.11
-CXXFLAGS += -D NICMEM=0
-# CXXFLAGS += -D NICMEM=1
+# CXXFLAGS += -D NICMEM=0
+CXXFLAGS += -D NICMEM=1
 
 ################################################################################
 

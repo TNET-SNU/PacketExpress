@@ -15,7 +15,7 @@ int px_nicmem_free(struct px_nicmem_ctx *nm_ctx)
 
     if (nm_ctx->emem_array)
     {
-        rte_free(nm_ctx->emem_array);
+        free(nm_ctx->emem_array);
         nm_ctx->emem_array = NULL;
     }
 
@@ -109,8 +109,7 @@ int px_nicmem_configure(struct px_nicmem_ctx *nm_ctx,
     num_elt_per_emem = emem.buf_len / emem.elt_size;
     num_emem = (num_nicmem + num_elt_per_emem - 1) / num_elt_per_emem;
     fprintf(stderr, "[port %d] Num of external memory: %d\n", port_id, num_emem);
-    emem_array = rte_malloc("extmem",
-                            num_emem * sizeof(struct rte_pktmbuf_extmem), 0);
+    emem_array = calloc(num_emem, sizeof(struct rte_pktmbuf_extmem));
     if (!emem_array)
     {
         fprintf(stderr, "[port %d] Failed to allocate emem_array on host\n", port_id);
