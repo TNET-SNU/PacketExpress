@@ -5,13 +5,12 @@ Most of the main logic is implemented as a independent DPDK library. Take a look
 ## Prerequisites
 Use Ubuntu 22.04.
    ```Bash
-   sudo apt-get install gcc g++ make autoconf automake curl meson pkgconf git unzip ca-certificates apt-transport-https \
-                        iproute2 iptables iputils-ping tcpdump python-is-python3 python3-pip libtool protobuf-compiler-grpc \
-                        libprotobuf-dev libgrpc++-dev libzmq3-dev libjsoncpp-dev libgoogle-glog0v5 libgoogle-glog-dev \
-                        libzmq5 libunwind-dev liblzma-dev libpcap-dev libssl-dev libnuma-dev libgflags-dev \
-                        libgraph-easy-perl libgtest-dev libc-ares-dev libbenchmark-dev libelf-dev \
-                        libdwarf-dev zlib1g-dev python3-pyelftools
-   pip install ninja protobuf==3.19.6 grpcio scapy flask iptools mitogen psutil pyroute2==0.8.1 meson
+   sudo apt install gcc g++ make autoconf automake curl meson ninja pkgconf git unzip ca-certificates apt-transport-https \
+                  iproute2 iptables iputils-ping tcpdump python-is-python3 python3-pip python3-pyelftools golang-go protobuf-compiler-grpc \
+                  libtool libprotobuf-dev libgrpc++-dev libzmq3-dev libjsoncpp-dev libgoogle-glog0v5 libgoogle-glog-dev libzmq5 \
+                  libunwind-dev liblzma-dev libpcap-dev libssl-dev libnuma-dev libgflags-dev libgraph-easy-perl libgtest-dev \
+                  libc-ares-dev libbenchmark-dev libelf-dev libdwarf-dev zlib1g-dev 
+   pip install protobuf==3.19.6 grpcio scapy flask iptools mitogen psutil pyroute2==0.8.1
    ```
 For details, please refer to prerequisites of BESS, DPDK (data plane) and UPF-EPC (control plane).
 
