@@ -18,51 +18,35 @@ Use Ubuntu 22.04.
 For details, please refer to prerequisites of BESS, DPDK (data plane) and UPF-EPC (control plane).
 
 ## Building PX library on DPDK
-1. Go to dpdk-stable-22.11.10-nicmem.
+Clients and servers' ARP tables should be set up correctly.
+1. To set root directory, run below to set root directory.
    ```Bash
-   cd dpdk-stable-22.11.10-nicmem
+   export rootdir=`pwd`
    ```
-2. Make build directory.
+2. Go to dpdk-stable-22.11.10-nicmem.
+   ```Bash
+   cd $rootdir/dpdk-stable-22.11.10-nicmem
+   ```
+3. Make build directory.
    ```Bash
    meson build
    ```
-3. Build DPDK on build directory. PX library will be built as well.
+4. Build DPDK on build directory. PX library will be built as well.
    ```Bash
    cd build
    ninja
    ```
-4. (optional) If you want to install DPDK system wide, install it.
+5. (optional) If you want to install DPDK system wide, install it.
    ```Bash
    sudo ninja install
    ```
 
-## Building PX Gateway or PX UPF
-Both are implemented as modular network functions on BESS. So, just build BESS.
-1. Configure bess/core/Makefile to turn on LRO and GRO.
-2. Modify BDF codes of PCIe devices in bess/core/dpdk.cc
-3. To set root directory, run below on root.
-   ```Bash
-   export rootdir=`pwd`
-   ```
-5. Run below for data plane (It will build and install DPDK in bess/deps/, and run "make -j" on bess/core/)
-   ```Bash
-   cd $rootdir/bess
-   ./build.py
-6. Run below for control plane
-   ```Bash
-   cd $rootdir/upf-epc/pfcpiface
-   go build
-   ```
-
-## Configuring and Building PX GW
-Clients and servers' ARP tables should be set up correctly.
+## Configuring and building PX GW
 1. Move to gateway directory and build pxgw.
    ```Bash
    cd $rootdir/gateway
    ```
-
 2. Modify the ARP table in pxgw.c to make it fit to your environment.
-
 3. Build pxgw.
    ```Bash
    make -j
@@ -74,21 +58,31 @@ Clients and servers' ARP tables should be set up correctly.
    ```
    You can configure the number of worker cores using -c option.
 
-
-## Configuring and Building PX UPF
-Clients and servers' ARP tables should be set up correctly.
-1. (Optional) If you want hairpin setup, modify upf-epc/scripts/hairpin_setup.sh and run it. It makes the firmwares to prepare hairpin setup. Note that hairpin_setup.sh requires sudo.
+## Configuring and building PX UPF
+Our prototype UPF is implemented as modular network functions on BESS. So, build BESS first.
+1. Configure bess/core/Makefile to turn on LRO and GRO.
+2. Modify BDF codes of PCIe devices in bess/core/dpdk.cc
+4. Run below for data plane (It will build and install DPDK in bess/deps/, and run "make -j" on bess/core/)
+   ```Bash
+   cd $rootdir/bess
+   ./build.py
+5. Run below for control plane
+   ```Bash
+   cd $rootdir/upf-epc/pfcpiface
+   go build
+   ```
+6. (Optional) If you want hairpin setup, modify upf-epc/scripts/hairpin_setup.sh and run it. It makes the firmwares to prepare hairpin setup. Note that hairpin_setup.sh requires sudo.
    ```Bash
    cd $rootdir/upf-epc/scripts
    sudo ./hairpin_setup.sh
    ```
-3. Modify upf-epc/scripts/setup_interfaces.sh to your testbed environment and run it. It manually adjusts routing table and ARP table in kernel. Note that setup_interfaces.sh requires sudo.
+7. Modify upf-epc/scripts/setup_interfaces.sh to your testbed environment and run it. It manually adjusts routing table and ARP table in kernel. Note that setup_interfaces.sh requires sudo.
    ```Bash
    cd $rootdir/upf-epc/scripts
    sudo ./setup_interfaces_one_arm.sh
    ```
-4. Configure bess/bessctl/conf/upf.json
-5. (Optional) If you need, adjust rules by modifying upf-epc/pfcpiface/grpcsim.go. You should re-build the go binary by running below after modification.
+8. Configure bess/bessctl/conf/upf.json
+9. (Optional) If you need, adjust rules by modifying upf-epc/pfcpiface/grpcsim.go. You should re-build the go binary by running below after modification.
    ```Bash
    cd $rootdir/upf-epc/pfcpiface
    go build
@@ -118,7 +112,7 @@ Clients and servers' ARP tables should be set up correctly.
     ./bessctl monitor port
     ```
     
-## Configuring and Building PX NAT
+## Configuring and building PX NAT
 Clients and servers' ARP tables should be set up correctly.
 Our NAT is implemented as an application on mOS, which transparently monitors TCP states of endpoints. Build mOS first.
 1. Move to mOS directory and build mOS. Note that this mOS supports only DPDK for underlying IO engine.
@@ -141,7 +135,7 @@ Our NAT is implemented as an application on mOS, which transparently monitors TC
 1.conf is a simple configuration for running PX NAT on single core. If you want to use more than 1 core, just use one of 2.conf, ..., 32.conf after configuring them for your environment.
 
 
-## Configuring and Building PX L4LB
+## Configuring and building PX L4LB
 Clients and servers' ARP tables should be set up correctly.
 For L4LB, we use DPVS, which is a DPDK implementation of IPVS. IPVS provides many basic features such as NAT and LB.
    ```Bash
