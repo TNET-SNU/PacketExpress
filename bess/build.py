@@ -382,9 +382,9 @@ def build_kmod():
 
 
 def build_all():
-    #build_dpdk()
+    # build_dpdk() # manually build dpdk
     build_bess()
-    build_kmod()
+    # build_kmod() # do not need kernel module for now
     print('Done.')
 
 
