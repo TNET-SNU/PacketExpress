@@ -4,7 +4,6 @@ Most of the main logic is implemented as a independent DPDK library. Take a look
 
 ## Prerequisites
 Use Ubuntu 22.04.
-
    ```Bash
    sudo apt-get install gcc g++ make autoconf automake curl meson pkgconf git unzip ca-certificates apt-transport-https \
                         iproute2 iptables iputils-ping tcpdump python-is-python3 python3-pip libtool protobuf-compiler-grpc \
@@ -14,7 +13,6 @@ Use Ubuntu 22.04.
                         libdwarf-dev zlib1g-dev python3-pyelftools
    pip install ninja protobuf==3.19.6 grpcio scapy flask iptools mitogen psutil pyroute2==0.8.1 meson
    ```
-
 For details, please refer to prerequisites of BESS, DPDK (data plane) and UPF-EPC (control plane).
 
 ## Building PX library on DPDK
@@ -92,7 +90,7 @@ Our prototype UPF is implemented as modular network functions on BESS. So, build
 1. Run below to run BESS daemon in first terminal.
    ```Bash
    cd $rootdir/bess/core
-   ./bessd -f -m 8192
+   sudo ./bessd -f
    ```
 2. Run below to insert UP4 pipeline to BESS daemon in second terminal. It runs UP4 pipeline and run route_control.py which attaches modules for L3 routing and L2 switching to the UPF main pipeline. Also, it inserts the rules you made in step 5 to UPF main pipelines.
    ```Bash
@@ -107,10 +105,10 @@ Our prototype UPF is implemented as modular network functions on BESS. So, build
 4. Access your machine via web browser with port 8000.
 5. Check whether all the modules (especially, QueueOut) are correctly attached to the main pipeline.
 6. You can check port stats by running below.
-    ```Bash
-    cd $rootdir/bess/bessctl
-    ./bessctl monitor port
-    ```
+   ```Bash
+   cd $rootdir/bess/bessctl
+   ./bessctl monitor port
+   ```
     
 ## Configuring and building PX NAT
 Clients and servers' ARP tables should be set up correctly.
@@ -134,7 +132,6 @@ Our NAT is implemented as an application on mOS, which transparently monitors TC
    ```
 1.conf is a simple configuration for running PX NAT on single core. If you want to use more than 1 core, just use one of 2.conf, ..., 32.conf after configuring them for your environment.
 
-
 ## Configuring and building PX L4LB
 Clients and servers' ARP tables should be set up correctly.
 For L4LB, we use DPVS, which is a DPDK implementation of IPVS. IPVS provides many basic features such as NAT and LB.
@@ -150,14 +147,12 @@ For L4LB, we use DPVS, which is a DPDK implementation of IPVS. IPVS provides man
    sudo ./src/dpvs -c conf/1.conf
    ```
 Again, you should make your own configuration for DPVS.
-
 2. Then, open new ssh session and run dpip. We provide an all-in-one script named setup.sh.
    ```Bash
    cd $rootdir/dpvs/bin
    sudo ./setup.sh
    ```
 You should configure setup.sh as well.
-
 
 ## Where's the main logic for dynamic MTU translation?
 See dpdk-stable-20.11.1/lib/px/px_gro.c and px_gro.h.
