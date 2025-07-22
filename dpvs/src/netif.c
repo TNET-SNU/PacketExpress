@@ -1801,7 +1801,7 @@ static inline uint16_t netif_rx_burst(portid_t pid, struct netif_queue_conf *qco
 #else
         nrx = rte_eth_rx_burst(pid, qconf->id, qconf->mbufs, NETIF_MAX_PKT_BURST);
 #if (USE_LRO || USE_DGRO)
-        px_parse_batch(pid, qconf->id, qconf->mbufs, nrx, !JUMBO_FRAME);
+        px_parse_batch(pid, qconf->id, qconf->mbufs, nrx, !JUMBO_FRAME, 1);
 #endif
 #if USE_DGRO
         struct rte_gro_param gro_param = {
@@ -4013,6 +4013,11 @@ int netif_port_start(struct netif_port *port)
                                  0,
 #endif
 #if USE_CGRO || USE_DGRO
+                                 1,
+#else
+                                 0,
+#endif
+#if STALL_TIMEOUT_NS
                                  1,
 #else
                                  0,

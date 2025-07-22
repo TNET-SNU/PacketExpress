@@ -57,7 +57,7 @@ struct px_mss_ctx
 };
 struct flow_mss_entry
 {
-    uint16_t mss;
+    uint32_t mss;
     time_t last_update;
 };
 /*----------------------------------------------------------------------------*/
@@ -95,7 +95,7 @@ void flush_timeout(struct px_mss_ctx *ctx);
 int search_mss_entry(struct px_mss_ctx *ctx,
                      uint32_t rss,
                      struct four_tuple *key,
-                     uint16_t *mss);
+                     uint32_t *mss);
 /*----------------------------------------------------------------------------*/
 uint8_t *bloom_init(void);
 /*----------------------------------------------------------------------------*/
@@ -121,7 +121,7 @@ int destroy_mss_ctx(struct px_mss_ctx *ctx);
 int insert_mss_entry(struct px_mss_ctx *ctx,
                      uint32_t rss,
                      struct four_tuple *key,
-                     uint16_t mss);
+                     uint32_t mss);
 /*----------------------------------------------------------------------------*/
 int evict_mss_entry(struct px_mss_ctx *ctx,
                     uint32_t rss,

@@ -78,14 +78,14 @@ for ((i = 0; i < num_nhmacddrs; i++)); do
 	ip neighbor add "${nhipaddrs[$i]}" lladdr "${nhmacaddrs[$i]}" dev "${ifaces[$i * $num_ifaces / $num_nhmacddrs]}"
 done
 
-sudo ip route add 10.1.95.1/32 via 10.1.95.1 dev eth0 metric 100
-sudo ip neigh add 10.1.95.1 dev eth0 lladdr 58:a2:e1:a7:7c:c6
+sudo ip route add 10.1.90.1/32 via 10.1.90.1 dev eth0 metric 100
+sudo ip neigh add 10.1.90.1 dev eth0 lladdr 58:a2:e1:a7:a8:46
 
-sudo ip route add 10.2.95.1/32 via 10.2.95.1 dev eth1 metric 100
-sudo ip neigh add 10.2.95.1 dev eth0 lladdr 58:a2:e1:a7:7c:d6
+sudo ip route add 10.2.90.1/32 via 10.2.90.1 dev eth1 metric 100
+sudo ip neigh add 10.2.90.1 dev eth1 lladdr 58:a2:e1:a7:a9:be
 
-sudo ip route add 10.3.95.1/32 via 10.3.95.1 dev eth2 metric 100
-sudo ip neigh add 10.3.95.1 dev eth0 lladdr 58:a2:e1:a7:7c:be
+sudo ip route add 10.3.90.1/32 via 10.3.90.1 dev eth2 metric 100
+sudo ip neigh add 10.3.90.1 dev eth2 lladdr 58:a2:e1:a7:a8:c6
 
-sudo ip route add 10.4.95.1/32 via 10.4.95.1 dev eth3 metric 100
-sudo ip neigh add 10.4.95.1 dev eth0 lladdr 58:a2:e1:a7:a9:8e
+sudo ip route add 10.4.90.1/32 via 10.4.90.1 dev eth3 metric 100
+sudo ip neigh add 10.4.90.1 dev eth3 lladdr a0:88:c2:d7:81:0e

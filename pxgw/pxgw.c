@@ -28,36 +28,27 @@
 #include <rte_spinlock.h>
 #include <rte_eal_memconfig.h>
 #include <rte_mbuf_core.h>
+#include <rte_thread.h>
 #include <rte_lcore.h>
 #include "px_gro.h"
 #include "px_common.h"
 /*----------------------------------------------------------------------------*/
 /* Essential macros */
-#if USE_LRO
-#define MBUF_DATA_SIZE 65024
-#else
-#define MBUF_DATA_SIZE 9024
-#endif
-
-#define NB_MBUF 1048575
+#define MBUF_DATA_SIZE (65536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM)
+// #define MBUF_DATA_SIZE 9024
+#define NB_MBUF ((2 * 1024 * 1024) - 1)
 #define MAX_PKT_BURST 64
 
 /*
  * Configurable number of RX/TX ring descriptors
  */
-// #define RTE_TEST_RX_DESC_DEFAULT 65536
-// #define RTE_TEST_RX_DESC_DEFAULT 32768
-// #define RTE_TEST_RX_DESC_DEFAULT 16384
 // #define RTE_TEST_RX_DESC_DEFAULT 8192
-// #define RTE_TEST_RX_DESC_DEFAULT 4096
+#define RTE_TEST_RX_DESC_DEFAULT 4096
 // #define RTE_TEST_RX_DESC_DEFAULT 2048
-#define RTE_TEST_RX_DESC_DEFAULT 1024
+// #define RTE_TEST_RX_DESC_DEFAULT 1024
 
-// #define RTE_TEST_TX_DESC_DEFAULT 65536
-// #define RTE_TEST_TX_DESC_DEFAULT 32768
-// #define RTE_TEST_TX_DESC_DEFAULT 16384
-#define RTE_TEST_TX_DESC_DEFAULT 8192
-// #define RTE_TEST_TX_DESC_DEFAULT 4096
+// #define RTE_TEST_TX_DESC_DEFAULT 8192
+#define RTE_TEST_TX_DESC_DEFAULT 4096
 // #define RTE_TEST_TX_DESC_DEFAULT 2048
 // #define RTE_TEST_TX_DESC_DEFAULT 1024
 
@@ -66,20 +57,11 @@ static uint16_t nb_txd = RTE_TEST_TX_DESC_DEFAULT;
 static uint32_t nb_mbuf = NB_MBUF;
 /*----------------------------------------------------------------------------*/
 /* ARP table structures */
-struct arp_entry
-{
-    uint32_t ip; // Network byte order
-    struct rte_ether_addr mac;
-};
-#define MAX_ARP_ENTRIES 32
-static struct arp_entry g_arp_table[MAX_ARP_ENTRIES];
+static struct px_arp_ctx *g_arp_ctx;
 static int g_arp_table_size = 0;
 /*----------------------------------------------------------------------------*/
 /* static ARP table configuration */
-const struct
-{
-    const char *ip, *mac;
-} g_entries[] = {
+const struct px_arp_entry g_arp_entries[] = {
     {"10.1.90.2", "58:a2:e1:a7:a9:ee"}, // stream1
     {"10.2.90.2", "a0:88:c2:d6:9e:32"}, // stream3
     {"10.3.90.2", "58:a2:e1:a7:a9:fe"}, // stream5
@@ -107,44 +89,8 @@ static uint16_t g_num_sockets = 1;
 static uint16_t g_num_cores = 1;
 static uint16_t g_num_ports = 0;
 static struct rte_ether_addr port_mac[RTE_MAX_ETHPORTS] = {{{0}}};
-// static struct rte_mempool *g_pktmbuf_pool[RTE_MAX_LCORE] = {NULL};
-static struct rte_mempool *g_pktmbuf_pool[RTE_MAX_NUMA_NODES] = {NULL};
+static struct rte_mempool *g_pktmbuf_pool[RTE_MAX_LCORE] = {NULL};
 static struct rte_eth_dev_info g_dev_info[RTE_MAX_ETHPORTS];
-/*----------------------------------------------------------------------------*/
-/* string MAC to binary MAC */
-int parse_mac(const char *mac_str, struct rte_ether_addr *mac)
-{
-    return sscanf(mac_str, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
-                  &mac->addr_bytes[0], &mac->addr_bytes[1],
-                  &mac->addr_bytes[2], &mac->addr_bytes[3],
-                  &mac->addr_bytes[4], &mac->addr_bytes[5]) == 6
-               ? 0
-               : -1;
-}
-/*----------------------------------------------------------------------------*/
-/* string IP to uint32_t IP */
-uint32_t parse_ip(const char *ip_str)
-{
-    struct in_addr addr;
-    inet_aton(ip_str, &addr);
-
-    return addr.s_addr;
-}
-/*----------------------------------------------------------------------------*/
-/* dst IP to dst MAC */
-int lookup_dst_mac(uint32_t dst_ip, struct rte_ether_addr *mac)
-{
-    for (int i = 0; i < g_arp_table_size; i++)
-    {
-        if (g_arp_table[i].ip == dst_ip)
-        {
-            *mac = g_arp_table[i].mac;
-            return 0;
-        }
-    }
-
-    return -1;
-}
 /*----------------------------------------------------------------------------*/
 static void
 check_all_ports_link_status(uint8_t port_num, uint32_t port_mask)
@@ -226,8 +172,26 @@ port_init(uint16_t portid, uint16_t num_queue)
     struct rte_eth_fc_conf fc_conf; /* for Ethernet flow control settings */
     rte_eth_dev_info_get(portid, &g_dev_info[portid]);
 
-    // printf("max_rx_queues: %u\n", g_dev_info[portid].max_rx_queues);
-    // printf("max_tx_queues: %u\n", g_dev_info[portid].max_tx_queues);
+    printf("max_rx_queues: %u\n", g_dev_info[portid].max_rx_queues);
+    printf("max_tx_queues: %u\n", g_dev_info[portid].max_tx_queues);
+    printf("rx_desc_lim.nb_max: %u\n", g_dev_info[portid].rx_desc_lim.nb_max);
+    printf("rx_desc_lim.nb_min: %u\n", g_dev_info[portid].rx_desc_lim.nb_min);
+    printf("rx_desc_lim.nb_align: %u\n", g_dev_info[portid].rx_desc_lim.nb_align);
+    printf("rx_desc_lim.nb_seg_max: %u\n", g_dev_info[portid].rx_desc_lim.nb_seg_max);
+    printf("rx_desc_lim.nb_mtu_seg_max: %u\n", g_dev_info[portid].rx_desc_lim.nb_mtu_seg_max);
+    printf("tx_desc_lim.nb_max: %u\n", g_dev_info[portid].tx_desc_lim.nb_max);
+    printf("tx_desc_lim.nb_min: %u\n", g_dev_info[portid].tx_desc_lim.nb_min);
+    printf("tx_desc_lim.nb_align: %u\n", g_dev_info[portid].tx_desc_lim.nb_align);
+    printf("tx_desc_lim.nb_seg_max: %u\n", g_dev_info[portid].tx_desc_lim.nb_seg_max);
+    printf("tx_desc_lim.nb_mtu_seg_max: %u\n", g_dev_info[portid].tx_desc_lim.nb_mtu_seg_max);
+    printf("min_mtu: %u\n", g_dev_info[portid].min_mtu);
+    printf("max_mtu: %u\n", g_dev_info[portid].max_mtu);
+    printf("reta_size: %u\n", g_dev_info[portid].reta_size);
+    printf("rx_offload_capa: 0x%08lx\n", g_dev_info[portid].rx_offload_capa);
+    printf("tx_offload_capa: 0x%08lx\n", g_dev_info[portid].tx_offload_capa);
+    printf("flow_type_rss_offloads: 0x%08lx\n", g_dev_info[portid].flow_type_rss_offloads);
+    printf("rx_queue_offload_capa: 0x%08lx\n", g_dev_info[portid].rx_queue_offload_capa);
+    printf("tx_queue_offload_capa: 0x%08lx\n", g_dev_info[portid].tx_queue_offload_capa);
 
     /* re-adjust rss_hf */
     port_conf = px_eth_conf(portid, NULL, NULL, 0, MBUF_DATA_SIZE,
@@ -237,6 +201,11 @@ port_init(uint16_t portid, uint16_t num_queue)
                             0,
 #endif
 #if USE_CGRO || USE_DGRO
+                            1,
+#else
+                            0,
+#endif
+#if STALL_TIMEOUT_NS
                             1,
 #else
                             0,
@@ -273,8 +242,8 @@ port_init(uint16_t portid, uint16_t num_queue)
                                NUM_HAIRPIN_Q,
                                NUM_HAIRPIN_Q,
                                &port_conf,
-                               NULL,
-                               0,
+                               g_arp_entries,
+                               g_arp_table_size,
 #if USE_OPTOUT
                                1
 #else
@@ -303,23 +272,14 @@ port_init(uint16_t portid, uint16_t num_queue)
         sid = rte_lcore_to_socket_id(queue_id);
 
         /* init RX queue on each port per CPU */
-// #if (USE_CGRO || NICMEM || NUM_HAIRPIN_Q)
-//         ret = px_eth_rx_queue_setup(portid, queue_id, nb_rxd, sid,
-//                                     &g_dev_info[portid].default_rxconf,
-//                                     g_pktmbuf_pool[queue_id]);
-// #else
-//         ret = rte_eth_rx_queue_setup(portid, queue_id, nb_rxd, sid,
-//                                      &g_dev_info[portid].default_rxconf,
-//                                      g_pktmbuf_pool[queue_id]);
-// #endif
 #if (USE_CGRO || NICMEM || NUM_HAIRPIN_Q)
         ret = px_eth_rx_queue_setup(portid, queue_id, nb_rxd, sid,
                                     &g_dev_info[portid].default_rxconf,
-                                    g_pktmbuf_pool[sid]);
+                                    g_pktmbuf_pool[queue_id]);
 #else
         ret = rte_eth_rx_queue_setup(portid, queue_id, nb_rxd, sid,
                                      &g_dev_info[portid].default_rxconf,
-                                     g_pktmbuf_pool[sid]);
+                                     g_pktmbuf_pool[queue_id]);
 #endif
         if (ret < 0)
         {
@@ -413,6 +373,7 @@ void lcore_main(void)
     struct rte_mbuf *rmbufs[RTE_MAX_ETHPORTS][MAX_PKT_BURST] = {{NULL}};
     struct rte_mbuf *wmbufs[RTE_MAX_ETHPORTS][MAX_PKT_BURST] = {{NULL}};
     struct rte_mbuf *m;
+    struct rte_ether_addr *dst_mac;
     struct rte_ether_hdr *eth_hdr;
     struct rte_ipv4_hdr *ip_hdr;
     uint32_t qid = rte_lcore_id();
@@ -438,7 +399,7 @@ void lcore_main(void)
 #else
             nb_rx[port_id] = rte_eth_rx_burst(port_id, qid, rmbufs[port_id], MAX_PKT_BURST);
 #if (USE_LRO || USE_DGRO)
-            px_parse_batch(port_id, qid, rmbufs[port_id], nb_rx[port_id], !JUMBO_FRAME);
+            px_parse_batch(port_id, qid, rmbufs[port_id], nb_rx[port_id], !JUMBO_FRAME, 1);
 #endif
 #if USE_DGRO
             nb_rx[port_id] = rte_gro_reassemble_burst(rmbufs[port_id], nb_rx[port_id], &gro_param);
@@ -459,12 +420,14 @@ void lcore_main(void)
                 ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
 
                 /* modify DST MAC */
-                if (lookup_dst_mac(ip_hdr->dst_addr, &eth_hdr->d_addr) < 0)
+                dst_mac = px_search_arp(g_arp_ctx, ip_hdr->dst_addr);
+                if (!dst_mac)
                 {
                     /* Unknown dst IP */
                     rte_pktmbuf_free(m);
                     continue;
                 }
+                eth_hdr->d_addr = *dst_mac;
 
                 /* modify SRC MAC */
                 eth_hdr->s_addr = port_mac[port_id];
@@ -484,8 +447,10 @@ void lcore_main(void)
                 printf("Port %d: Sent %d packets, but only %d were sent successfully.\n",
                        port_id, nb_tx[port_id], ret);
                 /* Free the mbufs that were not sent */
-                rte_pktmbuf_free_bulk(wmbufs[port_id] + ret,
-                                      nb_tx[port_id] - ret);
+                for (i = ret; i < nb_tx[port_id]; i++)
+                {
+                    rte_pktmbuf_free(wmbufs[port_id][i]);
+                }
             }
             /* Reset after sending */
             nb_tx[port_id] = 0;
@@ -547,7 +512,7 @@ int main(int argc, char **argv)
     }
 
     /* --socket-mem=65536,65536 (can be adapted dynamically) */
-    sprintf(socket_mem_arg, "--socket-mem=%d,%d", 65536, 65536); // 64GB per NUMA node
+    sprintf(socket_mem_arg, "--socket-mem=%d,%d", 65536, 65536); // 32GB per NUMA node
 
     /* --n=8 per NUMA node */
     sprintf(mem_channels, "%d", 8);
@@ -579,51 +544,21 @@ int main(int argc, char **argv)
     g_num_sockets = rte_socket_count();
     g_num_ports = rte_eth_dev_count_avail();
 
-    printf("socket_count: %u\n", g_num_sockets);
-    printf("lcore_count: %u\n", rte_lcore_count());
-    printf("device_count: %u\n", g_num_ports);
+    // printf("socket_count: %u\n", g_num_sockets);
+    // printf("lcore_count: %u\n", rte_lcore_count());
+    // printf("device_count: %u\n", g_num_ports);
 
-    g_arp_table_size = sizeof(g_entries) / sizeof(g_entries[0]);
-    for (i = 0; i < g_arp_table_size; i++)
-    {
-        g_arp_table[i].ip = parse_ip(g_entries[i].ip);
-        if (parse_mac(g_entries[i].mac, &g_arp_table[i].mac) < 0)
-        {
-            rte_exit(EXIT_FAILURE, "Invalid MAC format: %s\n", g_entries[i].mac);
-        }
-    }
+    g_arp_table_size = sizeof(g_arp_entries) / sizeof(g_arp_entries[0]);
+    g_arp_ctx = px_init_arp(g_arp_entries, g_arp_table_size);
 
     /* mbuf pool creation */
-//     for (core_id = 0; core_id < g_num_cores; core_id++)
-//     {
-//         char name[20];
-//         sid = rte_lcore_to_socket_id(core_id);
-//         sprintf(name, "mempool-%d", core_id);
-//         g_pktmbuf_pool[core_id] =
-//             rte_mempool_create(name, nb_mbuf / g_num_cores,
-// #if NICMEM
-//                                NICMEM_DMA_SIZE + sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM,
-// #else
-//                                MBUF_DATA_SIZE + sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM,
-// #endif
-//                                RTE_MEMPOOL_CACHE_MAX_SIZE,
-//                                sizeof(struct rte_pktmbuf_pool_private),
-//                                rte_pktmbuf_pool_init, NULL,
-//                                rte_pktmbuf_init, NULL,
-//                                sid, MEMPOOL_F_SP_PUT | MEMPOOL_F_SC_GET);
-//         if (!g_pktmbuf_pool[core_id])
-//         {
-//             rte_exit(EXIT_FAILURE,
-//                      "Cannot init data mbuf pool in sid: %d\n", sid);
-//         }
-//     }
-
-    for (sid = 0; sid < g_num_sockets; sid++)
+    for (core_id = 0; core_id < g_num_cores; core_id++)
     {
         char name[20];
-        sprintf(name, "mempool-%d", sid);
-        g_pktmbuf_pool[sid] =
-            rte_mempool_create(name, nb_mbuf,
+        sid = rte_lcore_to_socket_id(core_id);
+        sprintf(name, "mempool-%d", core_id);
+        g_pktmbuf_pool[core_id] =
+            rte_mempool_create(name, nb_mbuf / g_num_cores,
 #if NICMEM
                                NICMEM_DMA_SIZE + sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM,
 #else
@@ -633,8 +568,8 @@ int main(int argc, char **argv)
                                sizeof(struct rte_pktmbuf_pool_private),
                                rte_pktmbuf_pool_init, NULL,
                                rte_pktmbuf_init, NULL,
-                               sid, 0);
-        if (!g_pktmbuf_pool[sid])
+                               sid, MEMPOOL_F_SP_PUT | MEMPOOL_F_SC_GET);
+        if (!g_pktmbuf_pool[core_id])
         {
             rte_exit(EXIT_FAILURE,
                      "Cannot init data mbuf pool in sid: %d\n", sid);
@@ -689,6 +624,9 @@ int main(int argc, char **argv)
             rte_eal_wait_lcore(core_id);
         }
     }
+
+    /* cleanup */
+    px_free_arp(g_arp_ctx);
 
     for (i = 0; i < eal_argc; i++)
     {

@@ -288,7 +288,7 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 	ret = rte_eth_rx_burst((uint8_t)ifidx, qid,
 			dpc->rmbufs[ifidx].m_table, MAX_PKT_BURST);
 #if (USE_LRO || USE_DGRO)
-	px_parse_batch(ifidx, qid, dpc->rmbufs[ifidx].m_table, ret, !JUMBO_FRAME);
+	px_parse_batch(ifidx, qid, dpc->rmbufs[ifidx].m_table, ret, !JUMBO_FRAME, 1);
 #endif
 #if USE_DGRO
 	struct rte_gro_param gro_param = {
@@ -562,6 +562,11 @@ dpdk_load_module_lower_half(void)
 									1,
 #else
 									0,
+#endif
+#if STALL_TIMEOUT_NS
+                        			1,
+#else
+                        			0,
 #endif
 #if NICMEM
 									1

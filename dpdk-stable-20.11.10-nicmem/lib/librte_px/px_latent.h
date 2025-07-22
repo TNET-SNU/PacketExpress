@@ -12,13 +12,19 @@ extern "C"
 #define PX_FLOW_MAX_ACTIONS 10
 #define PX_FLOW_MAX_RETA_SIZE 512
 #define PX_RETA_GROUP_NUM (PX_FLOW_MAX_RETA_SIZE / RTE_RETA_GROUP_SIZE)
-#define RETA_CONF_SIZE  (ETH_RSS_RETA_SIZE_512 / RTE_RETA_GROUP_SIZE)
+#define RETA_CONF_SIZE (ETH_RSS_RETA_SIZE_512 / RTE_RETA_GROUP_SIZE)
 /*----------------------------------------------------------------------------*/
-void
-px_latent_rxq_configure(uint16_t port_id, int num_rxq, int num_rxq_incr);
+void px_latent_rxq_configure(uint16_t port_id, int num_rxq, int num_rxq_incr);
+/*----------------------------------------------------------------------------*/
+int
+px_flow_validate(uint16_t port_id,
+                        const struct rte_flow_attr *attr,
+                        const struct rte_flow_item pattern[],
+                        const struct rte_flow_action actions[],
+                        struct rte_flow_error *error);
 /*----------------------------------------------------------------------------*/
 struct rte_flow *
-px_latent_flow_create(uint16_t port_id,
+px_flow_create(uint16_t port_id,
                       const struct rte_flow_attr *attr,
                       const struct rte_flow_item pattern[],
                       const struct rte_flow_action actions[],

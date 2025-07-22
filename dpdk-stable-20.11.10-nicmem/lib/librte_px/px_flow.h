@@ -71,7 +71,7 @@ struct px_hairpin_ctx
     struct rte_ether_addr mac;
 
     /* ARP table context */
-    struct px_arp_ctx *actx;
+    struct px_arp_ctx *arp_ctx;
 
     /* below are for e-switch offloading using rte_flow */
 #if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0) && RTE_FLOW_ASYNC_API
@@ -81,14 +81,22 @@ struct px_hairpin_ctx
     struct rte_flow *offload_flow_ack[1 << 16];
     struct rte_flow_template_table *template_table_offload[MAX_TEMPLATE_TABLE_NUM];
 #endif
-    /* below are action rules which are shared by many flows */
-    struct rte_flow_action_count count_hairpin;
-    struct rte_flow_action_rss rss_hairpin;
 
     /* below are for hairpin management */
+    uint16_t num_rxq;
+    uint16_t num_txq;
+    uint16_t num_rxq_incr;
+    struct rte_flow_action_count ctr;
+    struct rte_flow_action_rss rss;
+    uint16_t rss_queues[RTE_MAX_QUEUES_PER_PORT];
+    struct rte_flow *common_onload_rule[4]; // TCP SYN|FIN|RST and ICMP
+
     uint16_t hp_num_rxq;
     uint16_t hp_num_txq;
-    uint16_t hp_rss_queues[16];
+    struct rte_flow_action_count hp_ctr;
+    struct rte_flow_action_rss hp_rss;
+    uint16_t hp_rss_queues[RTE_MAX_QUEUES_PER_PORT];
+    struct rte_flow *common_offload_rule[MAX_ARP_TABLE_SIZE];
 };
 /*----------------------------------------------------------------------------*/
 int hp_ctx_init(uint16_t port_id,

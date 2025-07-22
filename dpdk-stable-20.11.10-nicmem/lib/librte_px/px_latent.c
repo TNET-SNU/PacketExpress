@@ -12,8 +12,72 @@ void px_latent_rxq_configure(uint16_t port_id, int num_rxq, int num_rxq_incr)
 /**
  * ToDo: Make px_action and px_queue dynamic
  */
+int
+px_flow_validate(uint16_t port_id,
+                        const struct rte_flow_attr *attr,
+                        const struct rte_flow_item pattern[],
+                        const struct rte_flow_action actions[],
+                        struct rte_flow_error *error)
+{
+    struct rte_flow_action px_action[PX_FLOW_MAX_ACTIONS];
+    struct rte_flow_action_queue px_queue[PX_FLOW_MAX_ACTIONS];
+    const struct rte_flow_action_queue *temp;
+    uint16_t queue_idx;
+    int i = 0, j = 0;
+    static int inner_idx = 0;
+    if (unlikely(g_num_rxq_incr[port_id] == 0))
+    {
+        printf("please configure device first using px_latent_rxq_configure\n");
+        return -1;
+    }
+    if (attr->ingress == 0)
+    {
+        return rte_flow_validate(port_id, attr, pattern, actions, error);
+    }
+    while (i < PX_FLOW_MAX_ACTIONS)
+    {
+        px_action[i] = actions[i];
+        if (px_action[i].type == RTE_FLOW_ACTION_TYPE_END)
+        {
+            break;
+        }
+        if (px_action[i].type == RTE_FLOW_ACTION_TYPE_VOID)
+        {
+            continue;
+        }
+        if (px_action[i].type == RTE_FLOW_ACTION_TYPE_QUEUE)
+        {
+            temp = (const struct rte_flow_action_queue *)px_action[i].conf;
+            queue_idx = temp->index;
+            px_queue[j].index = queue_idx * g_num_rxq_incr[port_id] +
+                                (inner_idx++ % g_num_rxq_incr[port_id]);
+
+            // printf("adjusted qid: %u --> %u\n",
+            //        queue_idx,
+            //        px_queue[j].index);
+
+            px_action[i].conf = &px_queue[j];
+            if (++j >= PX_FLOW_MAX_ACTIONS)
+            {
+                printf("px_flow_create: too many queue actions\n");
+                break;
+            }
+        }
+        if (++i >= PX_FLOW_MAX_ACTIONS)
+        {
+            printf("px_flow_create: too many actions\n");
+            break;
+        }
+    }
+
+    return rte_flow_validate(port_id, attr, pattern, px_action, error);
+}
+/*----------------------------------------------------------------------------*/
+/**
+ * ToDo: Make px_action and px_queue dynamic
+ */
 struct rte_flow *
-px_latent_flow_create(uint16_t port_id,
+px_flow_create(uint16_t port_id,
                       const struct rte_flow_attr *attr,
                       const struct rte_flow_item pattern[],
                       const struct rte_flow_action actions[],
@@ -59,13 +123,13 @@ px_latent_flow_create(uint16_t port_id,
             px_action[i].conf = &px_queue[j];
             if (++j >= PX_FLOW_MAX_ACTIONS)
             {
-                printf("px_latent_flow_create: too many queue actions\n");
+                printf("px_flow_create: too many queue actions\n");
                 break;
             }
         }
         if (++i >= PX_FLOW_MAX_ACTIONS)
         {
-            printf("px_latent_flow_create: too many actions\n");
+            printf("px_flow_create: too many actions\n");
             break;
         }
     }

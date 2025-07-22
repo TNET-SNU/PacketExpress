@@ -12,6 +12,8 @@ extern "C"
 {
 #endif
 /*----------------------------------------------------------------------------*/
+#define MAX_ARP_TABLE_SIZE 1024
+/*----------------------------------------------------------------------------*/
 struct px_arp_entry
 {
     /* string */
@@ -23,9 +25,6 @@ struct px_arp_bin
     /* binary */
     uint32_t ip;
     struct rte_ether_addr mac;
-
-    /* rte_flow handle */
-    struct rte_flow *flow;
 };
 struct px_arp_ctx
 {
@@ -34,14 +33,14 @@ struct px_arp_ctx
 };
 /*----------------------------------------------------------------------------*/
 struct px_arp_ctx *
-px_init_arp_table(struct px_arp_entry *arp_table,
-                  int table_size);
+px_init_arp(struct px_arp_entry *arp_table,
+            int table_size);
 /*----------------------------------------------------------------------------*/
-void free_arp_table(struct px_arp_ctx *actx);
+void px_free_arp(struct px_arp_ctx *arp_ctx);
 /*----------------------------------------------------------------------------*/
 struct rte_ether_addr *
-find_mac_in_arp(struct px_arp_ctx *actx,
-                uint32_t ip_dst);
+px_search_arp(struct px_arp_ctx *arp_ctx,
+              uint32_t ip_dst);
 /*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 }

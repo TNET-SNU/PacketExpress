@@ -247,6 +247,15 @@ merge_tcp(struct px_item *cur_item,
         return 0;
     }
 #endif
+#if LIMIT_NB_SEGS
+    /* ToDo: 40 is only for CX7. Replace 40 to device specific value */
+    if (unlikely(pkt_head->nb_segs + pkt_tail->nb_segs > 40))
+    {
+        // printf("pkt_head->nb_segs: %d, pkt_tail->nb_segs: %d\n",
+        //        pkt_head->nb_segs, pkt_tail->nb_segs);
+        return 0;
+    }
+#endif
 
     /* remove the packet header of tail packet */
     if (!rte_pktmbuf_adj(pkt_tail, get_hdr_len(pkt_tail)))
@@ -287,7 +296,8 @@ merge_udp(struct px_item *cur_item,
           struct rte_mbuf *lastseg)
 {
     struct rte_mbuf *orig_pkt;
-    uint16_t orig_datalen, new_datalen, orig_seglen, new_seglen, new_hdrlen;
+    uint32_t orig_datalen, new_datalen, orig_seglen, new_seglen;
+    uint16_t new_hdrlen;
 
     orig_pkt = cur_item->firstseg;
 
@@ -918,7 +928,6 @@ insert_stall(struct px_ctx *pctx,
     stall = &pctx->stalls[pctx->latent_id];
     if (stall->num >= pctx->array_size)
     {
-        fprintf(stderr, "stall table overflow\n");
         return -1;
     }
     cur_stall = &stall->items[stall->num];
@@ -939,11 +948,11 @@ insert_stall(struct px_ctx *pctx,
 static inline struct rte_mbuf *
 separate_edge_seg(struct px_ctx *pctx,
                   struct rte_mbuf *pkt,
-                  uint16_t last_segsz)
+                  uint32_t last_segsz)
 {
     struct rte_mempool *clone_pool = g_clone_pool[pctx->socket_id];
     struct rte_mbuf *edge = pkt, *edge_tail = NULL, *edge_head;
-    struct rte_mbuf *prev = NULL, *next;
+    struct rte_mbuf *hdr = pkt, *prev = NULL, *next;
     uint32_t hdr_size = get_hdr_len(pkt);
     uint32_t target_size = pkt->pkt_len - last_segsz;
     uint32_t seq_diff, trim_size = 0, pkt_size = 0;
@@ -953,7 +962,7 @@ separate_edge_seg(struct px_ctx *pctx,
     for (seg_idx = 0; seg_idx < pkt->nb_segs; seg_idx++)
     {
         pkt_size += edge->data_len;
-        if (pkt_size > target_size)
+        if (pkt_size >= target_size)
         {
             trim_size = pkt_size - target_size;
             break;
@@ -965,25 +974,33 @@ separate_edge_seg(struct px_ctx *pctx,
     assert(seg_idx < pkt->nb_segs);
     assert(trim_size <= last_segsz);
 
-    /* trim edge segment */
-    edge->data_len -= trim_size;
     next = edge->next;
     edge->next = NULL;
 
-    /* make edge_tail segment */
-    edge_tail = rte_pktmbuf_clone(edge, clone_pool);
-    if (!edge_tail)
+    if (!trim_size)
     {
-        goto err;
+        /* already separated */
+        edge_tail = next;
     }
-    edge_tail->data_off += edge->data_len;
-    edge_tail->data_len = trim_size;
-    edge_tail->next = next;
+    else
+    {
+        /* trim edge segment */
+        edge->data_len -= trim_size;
+
+        /* make edge_tail segment */
+        edge_tail = rte_pktmbuf_clone(edge, clone_pool);
+        if (!edge_tail)
+        {
+            goto err;
+        }
+        edge_tail->data_off += edge->data_len;
+        edge_tail->data_len = trim_size;
+        edge_tail->next = next;
+    }
 
     /* make edge_head segment */
     if (is_nicmem(edge))
     {
-        // printf("separate_edge_seg: nicmem packet\n");
         /* destroy the chain to next mbuf first */
         prev->next = NULL;
         if (is_decaped(prev))
@@ -1010,6 +1027,7 @@ separate_edge_seg(struct px_ctx *pctx,
             seq_diff = prev->data_len - hdr_size + edge->data_len;
 #if PX_MEASURE_DELAY
             copy_timestamp(edge_head, pkt);
+            // put_timestamp_to_headroom(edge_head, &pctx->now_ns);
 #endif
         }
         /* restore the chain to next mbuf */
@@ -1017,48 +1035,47 @@ separate_edge_seg(struct px_ctx *pctx,
     }
     else
     {
-        // printf("separate_edge_seg: not nicmem packet\n");
-        if (seg_idx)
+        /*
+         * edge header is valid when transmitted
+         * so, we cannot modify header fields without deep copy
+         */
+        edge_head = rte_pktmbuf_copy(hdr, clone_pool, 0, hdr_size);
+        if (!edge_head)
         {
-            /*
-             * edge header is not valid when transmitted
-             * so, we can modify header fields without deep copy
-             */
-            edge_head = rte_pktmbuf_clone(edge, clone_pool);
-            if (!edge_head)
-            {
-                goto err;
-            }
-            edge_head->data_off -= hdr_size;
-            seq_diff = edge->data_len;
+            goto err;
         }
-        else
-        {
-            /*
-             * edge header is valid when transmitted
-             * so, we cannot modify header fields without deep copy
-             */
-            edge_head = rte_pktmbuf_copy(edge, clone_pool, 0, hdr_size);
-            if (!edge_head)
-            {
-                goto err;
-            }
-            seq_diff = edge->data_len - hdr_size;
+
+        /* get sequence difference */
+        seq_diff = target_size - hdr_size;
 #if PX_MEASURE_DELAY
-            copy_timestamp(edge_head, pkt);
+        copy_timestamp(edge_head, pkt);
+        // put_timestamp_to_headroom(edge_head, &pctx->now_ns);
 #endif
-        }
     }
 
+    unmark_decaped(edge_head);
+    mark_decaped(edge_tail);
     edge_head->data_len = hdr_size;
     edge_head->next = edge_tail;
     edge_head->pkt_len = hdr_size + last_segsz;
-    edge_head->nb_segs = pkt->nb_segs - seg_idx + 1;
+    if (!trim_size)
+    {
+        edge_head->nb_segs = pkt->nb_segs - seg_idx;
+    }
+    else
+    {
+        edge_head->nb_segs = pkt->nb_segs - (seg_idx - 1);
+    }
+
+    /* update header (e.g., TCP seq, IP len) */
     update_seq(edge_head, seq_diff);
+    update_iplen(edge_head);
+    update_ipid(edge_head, ntohs(*get_ip_id(edge_head)) + 2);
 
     /* setup first segment */
     pkt->pkt_len = target_size;
     pkt->nb_segs = seg_idx + 1;
+    update_iplen(pkt);
 
     return edge_head;
 
@@ -1079,12 +1096,143 @@ err:
     return NULL;
 }
 /*----------------------------------------------------------------------------*/
-static inline void
+/*
+ * Determine if the current packet should be stalled
+ * based on the time difference and the original segment size
+ */
+static inline int
+is_stall_needed(struct px_ctx *pctx,
+                struct rte_mbuf *cur_pkt,
+                unsigned int diff,
+                uint32_t orig_segsz,
+                uint32_t target_segsz,
+                int print)
+{
+#if ADAPTIVE_TIMEOUT
+    /* below is for 95% reception rate */
+    static const float timeout_factor_95[] = {
+        00.00f, // no need to stall
+        03.00f, // missing_segs = 1
+        04.74f, // missing_segs = 2
+        06.30f, // missing_segs = 3
+        07.75f, // missing_segs = 4
+        09.15f, // missing_segs = 5
+        10.51f, // missing_segs = 6
+        11.84f, // missing_segs = 7
+        13.15f, // missing_segs = 8
+        14.43f, // missing_segs = 9
+        15.71f, // missing_segs = 10
+        16.96f, // missing_segs = 11
+        18.21f, // missing_segs = 12
+        19.44f, // missing_segs = 13
+        20.67f, // missing_segs = 14
+        21.89f, // missing_segs = 15
+        23.10f, // missing_segs = 16
+        24.31f, // missing_segs = 17
+        25.51f, // missing_segs = 18
+        26.71f, // missing_segs = 19
+        27.90f, // missing_segs = 20
+    };
+    /* below is for 99% reception rate */
+    static const float timeout_factor_99[] = {
+        00.00f, // no need to stall
+        04.61f, // missing_segs = 1
+        06.64f, // missing_segs = 2
+        08.41f, // missing_segs = 3
+        10.05f, // missing_segs = 4
+        11.60f, // missing_segs = 5
+        13.06f, // missing_segs = 6
+        14.45f, // missing_segs = 7
+        15.79f, // missing_segs = 8
+        17.11f, // missing_segs = 9
+        18.42f, // missing_segs = 10
+        19.69f, // missing_segs = 11
+        20.96f, // missing_segs = 12
+        22.21f, // missing_segs = 13
+        23.45f, // missing_segs = 14
+        24.67f, // missing_segs = 15
+        25.89f, // missing_segs = 16
+        27.09f, // missing_segs = 17
+        28.29f, // missing_segs = 18
+        29.48f, // missing_segs = 19
+        30.66f, // missing_segs = 20
+    };
+    /* below is for 99.9% reception rate */
+    static const float timeout_factor_999[] = {
+        00.00f, // no need to stall
+        06.91f, // missing_segs = 1
+        09.88f, // missing_segs = 2
+        11.26f, // missing_segs = 3
+        13.11f, // missing_segs = 4
+        14.85f, // missing_segs = 5
+        16.50f, // missing_segs = 6
+        18.08f, // missing_segs = 7
+        19.60f, // missing_segs = 8
+        21.07f, // missing_segs = 9
+        22.51f, // missing_segs = 10
+        23.91f, // missing_segs = 11
+        25.28f, // missing_segs = 12
+        26.62f, // missing_segs = 13
+        27.94f, // missing_segs = 14
+        29.24f, // missing_segs = 15
+        30.52f, // missing_segs = 16
+        31.78f, // missing_segs = 17
+        33.02f, // missing_segs = 18
+        34.25f, // missing_segs = 19
+        35.47f, // missing_segs = 20
+    };
+
+    /* choose one of below */
+    // static const float *timeout_factor = timeout_factor_95;
+    // static const float *timeout_factor = timeout_factor_99;
+    static const float *timeout_factor = timeout_factor_999;
+
+    uint32_t max_seg_nb = target_segsz / orig_segsz;
+    if ((max_seg_nb == 0) || (get_data_len(cur_pkt) >= target_segsz))
+    {
+        /* no need to stall */
+        return 0;
+    }
+
+    uint32_t missing_segs = (target_segsz - get_data_len(cur_pkt)) / orig_segsz;
+    if (missing_segs >= 21)
+    {
+        /* to avoid seg fault due to nicmem, dump only first segment */
+        rte_exit(EXIT_FAILURE, "Missing_segs is too large. "
+                               "It might be due to overflow. "
+                               "Please do debug.\n");
+        return 0;
+    }
+
+    float factor = timeout_factor[missing_segs];
+#else
+    float factor = 1.0f; // Default factor for non-adaptive timeout
+#endif
+    unsigned int timeout_ns = g_px_dev[pctx->port_id].timeout_ns * factor;
+    if (print)
+    {
+        printf("max_seg_nb: %u, missing_segs: %u, "
+               "orig_segsz: %u, target_segsz: %u, "
+               "diff: %u, timeout_ns: %u\n",
+               max_seg_nb, missing_segs,
+               orig_segsz, target_segsz,
+               diff, timeout_ns);
+    }
+
+    return diff < timeout_ns;
+}
+/*----------------------------------------------------------------------------*/
+/*
+ * Returns 1 if the packet is stalled, 0 if not stalled.
+ */
+static inline int
 handle_incomplete(struct px_ctx *pctx,
                   struct rte_mbuf *firstseg,
                   struct rte_mbuf *lastseg,
                   struct timespec *timestamp,
-                  uint16_t orig_segsz)
+                  uint32_t orig_segsz,
+                  uint32_t target_segsz,
+                  int force)
 {
     unsigned int diff;
 
@@ -1093,19 +1241,34 @@ handle_incomplete(struct px_ctx *pctx,
         clear_link(firstseg);
     }
 
+    if (force)
+    {
+        /* insert to stalled item array */
+        if (insert_stall(pctx,
+                         firstseg,
+                         lastseg,
+                         timestamp) < 0)
+        {
+            fprintf(stderr, "stall table overflow\n");
+            goto Enqueue;
+        }
+
+        return 1; // stalled
+    }
+
     /*
      * if payload len is not multiple of eMSS
      * it is the end of cwnd or end of content
      */
-    if (orig_segsz &&
-        (get_data_len(firstseg) % orig_segsz))
+    assert(orig_segsz > 0);
+    if (get_data_len(firstseg) % orig_segsz)
     {
         goto Enqueue;
     }
 
     diff = get_nsec_diff(&pctx->now_ns, timestamp);
     /* if stall nsec is marginal */
-    if (diff < g_px_dev[pctx->port_id].timeout_ns)
+    if (is_stall_needed(pctx, firstseg, diff, orig_segsz, target_segsz, 0))
     {
         /* can stall, so insert to stalled item array */
         if (insert_stall(pctx,
@@ -1113,10 +1276,11 @@ handle_incomplete(struct px_ctx *pctx,
                          lastseg,
                          timestamp) < 0)
         {
+            fprintf(stderr, "stall table overflow\n");
             goto Enqueue;
         }
 
-        return;
+        return 1; // stalled
     }
 
 Enqueue:
@@ -1146,6 +1310,8 @@ Enqueue:
         fprintf(stderr, "ring overflow\n");
         rte_pktmbuf_free(firstseg);
     }
+
+    return 0; // not stalled
 }
 /*----------------------------------------------------------------------------*/
 /*
@@ -1162,7 +1328,6 @@ assemble_udp(struct px_ctx *pctx,
     struct px_item *cur_item, *prev_item, *merged_item;
     struct px_flow *cur_flow;
     uint16_t bucket_idx, start_flow_idx;
-    unsigned int timeout_ns = g_px_dev[pctx->port_id].timeout_ns;
     uint32_t cmp;
     struct px_rule *rule = TAILQ_FIRST(&pctx->rule_set.rules);
 
@@ -1266,7 +1431,6 @@ assemble_tcp(struct px_ctx *pctx,
     struct px_item *cur_item, *prev_item, *merged_item;
     struct px_flow *cur_flow;
     uint16_t bucket_idx, start_flow_idx;
-    unsigned int timeout_ns = g_px_dev[pctx->port_id].timeout_ns;
     uint32_t cmp;
     struct px_rule *rule = TAILQ_FIRST(&pctx->rule_set.rules);
 
@@ -1502,16 +1666,16 @@ parse_for_tcp_gro(struct rte_mbuf *pkt,
  * Returns -1, if this packet is (unlikely) not supported format.
  */
 /*----------------------------------------------------------------------------*/
-static inline int
-parse_packet(struct px_ctx *pctx,
-             struct rte_mbuf *pkt,
-             uint8_t *tcp_flags)
+int px_parse_packet(struct px_ctx *pctx,
+                    struct rte_mbuf *pkt,
+                    uint8_t *tcp_flags,
+                    int hwcsum)
 {
     struct px_ctx *new_pctx;
     struct rte_ipv4_hdr *ipv4_hdr;
     struct four_tuple *key, reverse_key, reverse_key_le;
     uint32_t real_pkt_len, reverse_rss;
-    uint16_t nh_mtu, inner_qid, outer_qid;
+    uint16_t nh_mtu, inner_qid, outer_qid, l4port;
     int ret;
 
 #if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0)
@@ -1544,6 +1708,15 @@ parse_packet(struct px_ctx *pctx,
         return -1;
     }
 
+    /* check if checksum correct */
+    ret = px_verify_ipv4_cksum(pkt, hwcsum);
+    if (ret < 0)
+    {
+        fprintf(stderr, "Invalid IPv4 checksum, ret: %d\n", ret);
+        *tcp_flags = 0;
+        return -1;
+    }
+
     /* trim the tail padding bytes */
     real_pkt_len = rte_be_to_cpu_16(ipv4_hdr->total_length) + pkt->l2_len;
     if (pkt->pkt_len > real_pkt_len)
@@ -1551,13 +1724,27 @@ parse_packet(struct px_ctx *pctx,
         rte_pktmbuf_trim(pkt, pkt->pkt_len - real_pkt_len);
     }
 
+    // /* parse HW timestamp */
+    // uint64_t rx_timestamp = 0;
+    // get_rx_hw_timestamp(pkt, &rx_timestamp);
+    // printf("[port %d] RX HW timestamp: %lu\n", pctx->port_id, rx_timestamp);
+
     /* parse L4 */
     if (is_tcp(pkt))
     {
+        /* check if checksum correct */
+        ret = px_verify_tcp_cksum(pkt, hwcsum);
+        if (ret < 0)
+        {
+            fprintf(stderr, "Invalid TCP checksum, ret: %d\n", ret);
+            *tcp_flags = 0;
+            return -1;
+        }
+
         /* target for offloading */
         if (g_px_dev[pctx->port_id].hp_ctx.hp_num_rxq)
         {
-            put_4tuple_to_headroom(pkt);
+            insert_4tuple(pkt);
         }
         ret = parse_for_tcp_gro(pkt, tcp_flags);
 
@@ -1572,10 +1759,36 @@ parse_packet(struct px_ctx *pctx,
     }
     else if (is_udp(pkt))
     {
+        /* check if checksum correct */
+        ret = px_verify_udp_cksum(pkt, hwcsum);
+        if (ret < 0)
+        {
+            fprintf(stderr, "Invalid UDP checksum, ret: %d\n", ret);
+            *tcp_flags = 0;
+            return -1;
+        }
+
+        /* for UDP, filter traffic under 1024 port */
+        l4port = ntohs(*get_src_port(pkt));
+        if (l4port < 1024)
+        {
+            /* not target flow */
+            *tcp_flags = 0;
+            return -1;
+        }
+
+        l4port = ntohs(*get_dst_port(pkt));
+        if (l4port < 1024)
+        {
+            /* not target flow */
+            *tcp_flags = 0;
+            return -1;
+        }
+
         /* target for offloading */
         if (g_px_dev[pctx->port_id].hp_ctx.hp_num_rxq)
         {
-            put_4tuple_to_headroom(pkt);
+            insert_4tuple(pkt);
         }
         *tcp_flags = 0;
 
@@ -1588,7 +1801,6 @@ parse_packet(struct px_ctx *pctx,
         if (is_uplink(pkt))
         {
             mark_px(pkt);
-            // return -1;
         }
 
         /* use below when stop UDP GRO */
@@ -1596,6 +1808,15 @@ parse_packet(struct px_ctx *pctx,
     }
     else if (pctx->mss_ctx && is_icmp(pkt))
     {
+        /* check if checksum correct */
+        ret = px_verify_icmp_cksum(pkt);
+        if (ret < 0)
+        {
+            fprintf(stderr, "Invalid ICMP checksum, ret: %d\n", ret);
+            *tcp_flags = 0;
+            return -1;
+        }
+
         /* non-target for offloading */
         *tcp_flags = 0;
         if (is_dtb(pkt) && is_downlink(pkt))
@@ -1677,7 +1898,8 @@ void px_parse_batch(uint16_t port_id,
                     uint16_t queue_id,
                     struct rte_mbuf **pkts,
                     uint16_t nb_pkts,
-                    int trans_mtu)
+                    int trans_mtu,
+                    int hwcsum)
 {
     struct rte_mbuf *pkt;
     uint16_t *mss_ptr;
@@ -1685,7 +1907,8 @@ void px_parse_batch(uint16_t port_id,
     for (int i = 0; i < nb_pkts; i++)
     {
         pkt = pkts[i];
-        if (parse_packet(&g_pctx[port_id][queue_id], pkt, &tcp_flags) < 0)
+        if (px_parse_packet(&g_pctx[port_id][queue_id],
+                            pkt, &tcp_flags, hwcsum) < 0)
         {
             /* it cannot be TCP-GROed */
             if (!trans_mtu)
@@ -1905,12 +2128,14 @@ link_and_flush(struct px_ctx *pctx,
     struct rte_mbuf *tmp, *start_pkt, *prev_pkt, *cur_pkt, *edge;
     struct px_flow *cur_flow;
     struct px_item *cur_item;
-    uint16_t item_idx, segsz, orig_segsz, last_segsz, idx = 0;
-    uint16_t *start_id, id_diff;
-    int stall_this_flow;
+    uint16_t item_idx, idx = 0, *start_id, id_diff;
+    uint32_t saved_segsz, target_segsz, orig_segsz, last_segsz;
+    int ret, stall_this_flow;
 
     for (int i = 0; i < pctx->flow_num; i++)
     {
+        saved_segsz = 0;
+        target_segsz = 0;
         stall_this_flow = 0;
         cur_flow = &pctx->flows[i];
 
@@ -1937,17 +2162,8 @@ link_and_flush(struct px_ctx *pctx,
                 search_mss_entry(pctx->mss_ctx,
                                  tmp->hash.rss,
                                  get_four_tuple(tmp),
-                                 &segsz);
+                                 &saved_segsz);
             }
-            /* if incoming packet, use our iMSS */
-            else
-            {
-                segsz = 0;
-            }
-        }
-        else
-        {
-            segsz = 0;
         }
 
         /* process the others after the first item */
@@ -1959,11 +2175,11 @@ link_and_flush(struct px_ctx *pctx,
 
             if (is_tcp(cur_pkt))
             {
-                if (segsz)
+                if (saved_segsz)
                 {
                     orig_segsz = get_data_len(cur_pkt);
                     /* subtract TCP option length */
-                    segsz -= cur_pkt->l4_len - sizeof(struct rte_tcp_hdr);
+                    target_segsz = saved_segsz - (cur_pkt->l4_len - sizeof(struct rte_tcp_hdr));
                 }
                 else
                 {
@@ -1971,25 +2187,26 @@ link_and_flush(struct px_ctx *pctx,
                     if (is_px(cur_pkt))
                     {
                         orig_segsz = get_data_len(cur_pkt);
-                        segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len);
+                        target_segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len);
                     }
                     else
                     {
                         orig_segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len);
-                        segsz = orig_segsz *
-                                ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
-                                 orig_segsz);
+                        target_segsz = orig_segsz *
+                                       ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
+                                        orig_segsz);
                     }
 #else
                     orig_segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len);
-                    segsz = orig_segsz *
-                            ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
-                             orig_segsz);
+                    target_segsz = orig_segsz *
+                                   ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
+                                    orig_segsz);
 #endif
                 }
 
                 /* check if delayed merging needed and if is from outside */
 #if SEMANTIC_TEST
+                /* only for incoming packets */
                 if (g_px_dev[pctx->port_id].timeout_ns && !is_px(cur_pkt))
 #else
                 if (g_px_dev[pctx->port_id].timeout_ns)
@@ -1998,56 +2215,76 @@ link_and_flush(struct px_ctx *pctx,
                     /* check if previous packet is stalled */
                     if (stall_this_flow)
                     {
-                        update_tcp(cur_pkt, segsz);
-                        handle_incomplete(pctx,
-                                          cur_pkt,
-                                          cur_item->lastseg,
-                                          &cur_item->timestamp,
-                                          orig_segsz);
+                        update_tcp(cur_pkt, target_segsz);
+                        ret = handle_incomplete(pctx,
+                                                cur_pkt,
+                                                cur_item->lastseg,
+                                                &cur_item->timestamp,
+                                                orig_segsz,
+                                                target_segsz,
+                                                1);
+                        assert(ret == 1);
                         continue;
                     }
+
                     /* check if current packet should be stalled */
-                    if (get_data_len(cur_pkt) < segsz)
+                    assert(target_segsz >= orig_segsz);
+                    if (get_data_len(cur_pkt) <= target_segsz - orig_segsz)
                     {
                         /*
                          * size of this packet is R < 9K
                          * stall current packet (R) to merge more
                          */
-                        update_tcp(cur_pkt, segsz);
-                        handle_incomplete(pctx,
-                                          cur_pkt,
-                                          cur_item->lastseg,
-                                          &cur_item->timestamp,
-                                          orig_segsz);
-                        stall_this_flow = 1;
+                        update_tcp(cur_pkt, target_segsz);
+                        ret = handle_incomplete(pctx,
+                                                cur_pkt,
+                                                cur_item->lastseg,
+                                                &cur_item->timestamp,
+                                                orig_segsz,
+                                                target_segsz,
+                                                0);
+                        if (ret == 1)
+                        {
+                            stall_this_flow = 1;
+                        }
                         continue;
                     }
 
                     /* check if edge duplication is needed */
-                    last_segsz = get_data_len(cur_pkt) % segsz;
-                    if (last_segsz &&
-                        (edge = separate_edge_seg(pctx, cur_pkt, last_segsz)))
+                    last_segsz = get_data_len(cur_pkt) % target_segsz;
+                    if (last_segsz && last_segsz <= (target_segsz - orig_segsz))
                     {
+                        edge = separate_edge_seg(pctx, cur_pkt, last_segsz);
+                        if (!edge)
+                        {
+                            fprintf(stderr, "Failed to separate edge segment\n");
+                            continue;
+                        }
                         /*
                          * size of this packet is 9K * N + R
                          * flush complete packets (N)
                          * stall duplicated edge (R) to merge more
                          */
-                        update_tcp(edge, segsz);
-                        handle_incomplete(pctx,
-                                          edge,
-                                          rte_pktmbuf_lastseg(edge),
-                                          &cur_item->timestamp,
-                                          orig_segsz);
-                        stall_this_flow = 1;
+                        update_tcp(edge, target_segsz);
+                        ret = handle_incomplete(pctx,
+                                                edge,
+                                                rte_pktmbuf_lastseg(edge),
+                                                &cur_item->timestamp,
+                                                orig_segsz,
+                                                target_segsz,
+                                                0);
+                        if (ret == 1)
+                        {
+                            stall_this_flow = 1;
+                        }
                     }
                 }
-                // printf("segsz: %d\n", segsz);
-                update_tcp(cur_pkt, segsz);
+                // printf("target_segsz: %d\n", target_segsz);
+                update_tcp(cur_pkt, target_segsz);
             }
             else if (is_udp(cur_pkt))
             {
-                if (segsz)
+                if (saved_segsz)
                 {
                     orig_segsz = get_data_len(cur_pkt);
                 }
@@ -2059,7 +2296,7 @@ link_and_flush(struct px_ctx *pctx,
                     {
                         orig_segsz = get_data_len(cur_pkt);
                         /* ToDo: Get the eMTU size from the PX header */
-                        segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len);
+                        target_segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len);
                     }
                     /* if incoming packet */
                     else
@@ -2072,13 +2309,15 @@ link_and_flush(struct px_ctx *pctx,
                         }
                         else
                         {
+                            // printf("is nicmem\n");
                             orig_segsz = cur_pkt->data_len + cur_pkt->next->data_len - get_hdr_len(cur_pkt);
                         }
-                        segsz = orig_segsz *
-                                ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
-                                 orig_segsz);
-                        // printf("orig_segsz: %d, data_len: %d, next->data_len: %d, segsz: %d\n",
-                        //        orig_segsz, cur_pkt->data_len, cur_pkt->next->data_len, segsz);
+                        target_segsz = orig_segsz *
+                                       ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
+                                        orig_segsz);
+                        assert((int)target_segsz <= DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len);
+                        // printf("orig_segsz: %d, data_len: %d, next->data_len: %d, target_segsz: %d\n",
+                        //        orig_segsz, cur_pkt->data_len, cur_pkt->next->data_len, target_segsz);
                     }
 #else
                     if (!cur_pkt->next || !is_nicmem(cur_pkt->next))
@@ -2089,15 +2328,16 @@ link_and_flush(struct px_ctx *pctx,
                     {
                         orig_segsz = cur_pkt->data_len + cur_pkt->next->data_len;
                     }
-                    segsz = orig_segsz *
-                            ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
-                             orig_segsz);
-                    // printf("orig_segsz: %d, data_len: %d, next->data_len: %d, segsz: %d\n",
-                    //        orig_segsz, cur_pkt->data_len, cur_pkt->next->data_len, segsz);
+                    target_segsz = orig_segsz *
+                                   ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
+                                    orig_segsz);
+                    // printf("orig_segsz: %d, data_len: %d, next->data_len: %d, target_segsz: %d\n",
+                    //        orig_segsz, cur_pkt->data_len, cur_pkt->next->data_len, target_segsz);
 #endif
                 }
                 /* check if delayed merging needed and if is from outside */
 #if SEMANTIC_TEST
+                /* only for incoming packets */
                 if (g_px_dev[pctx->port_id].timeout_ns && !is_px(cur_pkt))
 #else
                 if (g_px_dev[pctx->port_id].timeout_ns)
@@ -2110,25 +2350,34 @@ link_and_flush(struct px_ctx *pctx,
                                           cur_pkt,
                                           cur_item->lastseg,
                                           &cur_item->timestamp,
-                                          orig_segsz);
+                                          orig_segsz,
+                                          target_segsz,
+                                          1);
                         continue;
                     }
+
                     /* check if current packet should be stalled */
-                    if (get_data_len(cur_pkt) < segsz)
+                    assert(target_segsz >= orig_segsz);
+                    if (get_data_len(cur_pkt) <= target_segsz - orig_segsz)
                     {
                         /*
                          * size of this packet < 9K
                          * stall current packet to merge more
                          */
-                        handle_incomplete(pctx,
-                                          cur_pkt,
-                                          cur_item->lastseg,
-                                          &cur_item->timestamp,
-                                          orig_segsz);
-                        stall_this_flow = 1;
+                        ret = handle_incomplete(pctx,
+                                                cur_pkt,
+                                                cur_item->lastseg,
+                                                &cur_item->timestamp,
+                                                orig_segsz,
+                                                target_segsz,
+                                                0);
+                        if (ret == 1)
+                        {
+                            stall_this_flow = 1;
+                        }
                         continue;
                     }
-                    // printf("get_data_len(cur_pkt): %d, segsz: %d\n", get_data_len(cur_pkt), segsz);
+                    // printf("get_data_len(cur_pkt): %d, target_segsz: %d\n", get_data_len(cur_pkt), target_segsz);
                 }
                 update_udp(cur_pkt);
 
@@ -2264,8 +2513,8 @@ px_core(struct px_ctx *pctx,
     struct rte_mbuf *pkt;
     struct px_stall *stall;
     struct px_item *item;
-    uint32_t reverse_rss;
-    uint16_t cnt = 0, inner_qid, outer_qid, segsz = 0, *mss_ptr;
+    uint32_t reverse_rss, segsz = 0;
+    uint16_t cnt = 0, inner_qid, outer_qid, *mss_ptr;
     uint8_t tcp_flags = 0;
     int i;
     struct px_rule *rule = TAILQ_FIRST(&pctx->rule_set.rules);
@@ -2281,11 +2530,15 @@ px_core(struct px_ctx *pctx,
             {
                 assemble_tcp(pctx, item->firstseg, item->lastseg,
                              &item->timestamp);
+                // assemble_tcp(pctx, item->firstseg, item->lastseg,
+                //              &pctx->now_ns);
             }
             else if (is_udp(item->firstseg))
             {
                 assemble_udp(pctx, item->firstseg, item->lastseg,
                              &item->timestamp);
+                // assemble_tcp(pctx, item->firstseg, item->lastseg,
+                //              &pctx->now_ns);
             }
         }
         stall->num = 0;
@@ -2297,7 +2550,7 @@ px_core(struct px_ctx *pctx,
         pkt = pkts[i];
 
         /* check packet can be GROed */
-        if (parse_packet(pctx, pkt, &tcp_flags) < 0)
+        if (px_parse_packet(pctx, pkt, &tcp_flags, 1) < 0)
         {
             /* it cannot be GROed */
             if (!rule->dec_act.do_concat && pctx->do_link)
@@ -2789,6 +3042,7 @@ px_eth_conf(uint16_t port_id,
             int pkt_size,
             int is_lro,
             int is_gro,
+            int is_delayed,
             int is_nicmem)
 {
     struct rte_eth_dev_info dev_info;
@@ -2839,11 +3093,18 @@ px_eth_conf(uint16_t port_id,
     {
 #if RTE_VERSION < RTE_VERSION_NUM(20, 11, 10, 99)
         conf->rxmode.offloads |= DEV_RX_OFFLOAD_BUFFER_SPLIT |
+                                 DEV_RX_OFFLOAD_TIMESTAMP |
                                  DEV_RX_OFFLOAD_SCATTER;
 #else
         conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT |
+                                 DEV_RX_OFFLOAD_TIMESTAMP |
                                  DEV_RX_OFFLOAD_SCATTER;
 #endif
+    }
+
+    if (is_delayed)
+    {
+        conf->rxmode.offloads |= DEV_RX_OFFLOAD_TIMESTAMP;
     }
 
     if (rss_key)
@@ -2881,7 +3142,13 @@ px_eth_conf(uint16_t port_id,
     if (is_nicmem)
     {
         conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT |
+                                 RTE_ETH_RX_OFFLOAD_TIMESTAMP |
                                  RTE_ETH_RX_OFFLOAD_SCATTER;
+    }
+
+    if (is_delayed)
+    {
+        conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_TIMESTAMP;
     }
 
     if (rss_key)
@@ -2923,6 +3190,8 @@ int px_eth_dev_configure(uint16_t port_id,
         return ret;
     }
     // printf("px_dev->dev_info.reta_size: %d\n", px_dev->dev_info.reta_size);
+    // printf("min_mtu: %d, max_mtu: %d\n",
+    //        px_dev->dev_info.min_mtu, px_dev->dev_info.max_mtu);
 
     /* setup PX port parameters */
     px_dev->port_id = port_id;
@@ -2951,7 +3220,6 @@ int px_eth_dev_configure(uint16_t port_id,
     // if (ret)
     // {
     //     rte_exit(EXIT_FAILURE, "rte_eth_dev_rss_reta_query failed: %d\n", ret);
-    //     return ret;
     // }
 
     /* configure port */
@@ -2962,7 +3230,19 @@ int px_eth_dev_configure(uint16_t port_id,
     if (ret)
     {
         rte_exit(EXIT_FAILURE, "rte_eth_dev_configure failed: %d\n", ret);
-        return ret;
+    }
+
+    /* configure MTU to iMTU */
+    /*
+     * Figured out 9978 by trial and error.
+     * ToDo: Make it automatically configurable.
+     */
+    // ret = rte_eth_dev_set_mtu(port_id, px_dev->dev_info.max_mtu); // usually 65535
+    // ret = rte_eth_dev_set_mtu(port_id, DEFAULT_iMTU); // usually 9000
+    ret = rte_eth_dev_set_mtu(port_id, 9978);
+    if (ret)
+    {
+        rte_exit(EXIT_FAILURE, "rte_eth_dev_set_mtu failed: %d\n", ret);
     }
 
     /* configure px_flow */
@@ -3008,7 +3288,6 @@ int px_eth_dev_configure(uint16_t port_id,
         if (ret)
         {
             rte_exit(EXIT_FAILURE, "px_nicmem_configure failed: %d\n", ret);
-            return ret;
         }
     }
 
@@ -3023,6 +3302,7 @@ int px_eth_dev_configure(uint16_t port_id,
         ret = px_hairpin_configure(&g_px_dev[port_id].hp_ctx,
                                    port_id,
                                    num_rxq,
+                                   num_txq,
                                    num_rxq_incr,
                                    hp_num_rxq,
                                    hp_num_txq,
@@ -3033,14 +3313,24 @@ int px_eth_dev_configure(uint16_t port_id,
         if (ret)
         {
             rte_exit(EXIT_FAILURE, "px_hairpin_configure failed: %d\n", ret);
-            return ret;
         }
     }
 
     /* thread for stat printing */
-    if (px_start_print_thread(1) < 0)
+    ret = px_start_print_thread(1);
+    if (ret < 0)
     {
-        rte_exit(EXIT_FAILURE, "Error creating stat thread\n");
+        rte_exit(EXIT_FAILURE, "Error creating stat thread: %d\n", ret);
+    }
+
+    /* init RX hardware timestamp if necessary */
+    if (timeout_ns)
+    {
+        ret = init_rx_hw_timestamp();
+        if (ret < 0)
+        {
+            rte_exit(EXIT_FAILURE, "init_rx_hw_timestamp failed: %d\n", ret);
+        }
     }
 
     return ret;
@@ -3092,9 +3382,9 @@ int px_eth_rx_queue_setup(uint16_t port_id,
 
     g_px_dev[port_id].nb_rx_desc[rx_queue_id] = nb_rx_desc;
 
-    // inner_nb_rx_desc = nb_rx_desc / num_rxq_incr;
-    // inner_nb_rx_desc = (inner_nb_rx_desc < 64) ? 64 : (inner_nb_rx_desc);
-    inner_nb_rx_desc = nb_rx_desc;
+    inner_nb_rx_desc = nb_rx_desc / num_rxq_incr;
+    inner_nb_rx_desc = (inner_nb_rx_desc < 256) ? 256 : (inner_nb_rx_desc);
+    // inner_nb_rx_desc = nb_rx_desc;
 
     for (i = 0; i < num_rxq_incr; i++)
     {

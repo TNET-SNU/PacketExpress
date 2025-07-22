@@ -10,27 +10,67 @@ extern "C"
 #endif
 /*----------------------------------------------------------------------------*/
 static inline int
-put_4tuple_to_headroom(struct rte_mbuf *pkt)
+insert_4tuple(struct rte_mbuf *pkt)
 {
+    /* check if the headroom is used for 4-tuple */
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    if (pkt->ol_flags & (PKT_FIRST_FREE << 1))
+#else
+    if (pkt->ol_flags & (RTE_MBUF_F_FIRST_FREE << 1))
+#endif
+    {
+        /* headroom already used for 4-tuple */
+        return -1;
+    }
+
     /* backup the tuple in the headroom */
     memcpy(pkt->buf_addr, get_four_tuple(pkt), sizeof(struct four_tuple));
 
+    /* mark that the headroom is used for 4-tuple */
     pkt->ol_flags |= (PKT_FIRST_FREE << 1);
 
     return 0;
 }
 /*----------------------------------------------------------------------------*/
 static inline struct four_tuple *
-get_4tuple_from_headroom(struct rte_mbuf *pkt)
+search_4tuple(struct rte_mbuf *pkt)
 {
-    /* rollback the tuple from the headroom */
+    /* check if the headroom is used for 4-tuple */
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
     if (!(pkt->ol_flags & (PKT_FIRST_FREE << 1)))
+#else
+    if (!(pkt->ol_flags & (RTE_MBUF_F_FIRST_FREE << 1)))
+#endif
     {
         return NULL;
     }
-    pkt->ol_flags &= ~(PKT_FIRST_FREE << 1);
 
+    /* return the tuple from the headroom */
     return (struct four_tuple *)pkt->buf_addr;
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+delete_4tuple(struct rte_mbuf *pkt)
+{
+    /* check if the headroom is used for 4-tuple */
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    if (!(pkt->ol_flags & (PKT_FIRST_FREE << 1)))
+#else
+    if (!(pkt->ol_flags & (RTE_MBUF_F_FIRST_FREE << 1)))
+#endif
+    {
+        return;
+    }
+
+    /* rollback the flags */
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    pkt->ol_flags &= ~(PKT_FIRST_FREE << 1);
+#else
+    pkt->ol_flags &= ~(RTE_MBUF_F_FIRST_FREE << 1);
+#endif
+
+    /* remove the tuple from the headroom */
+    memset(pkt->buf_addr, 0, sizeof(struct four_tuple));
 }
 /*----------------------------------------------------------------------------*/
 #ifdef __cplusplus

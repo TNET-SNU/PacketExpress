@@ -47,26 +47,20 @@ struct rule_manager
     struct req_ring request_ring[RTE_MAX_ETHPORTS];
 };
 /*----------------------------------------------------------------------------*/
-int
-get_host_cached_size(int core_id);
+int get_host_cached_size(int core_id);
 /*----------------------------------------------------------------------------*/
-int
-node_pool_create(int core_id, size_t num);
+int node_pool_create(int core_id, size_t num);
 /*----------------------------------------------------------------------------*/
 struct ri_node *
 node_pool_alloc(int core_id);
 /*----------------------------------------------------------------------------*/
-void
-node_pool_free(int core_id, struct ri_node *node);
+void node_pool_free(int core_id, struct ri_node *node);
 /*----------------------------------------------------------------------------*/
-void
-node_pool_destroy(int core_id);
+void node_pool_destroy(int core_id);
 /*----------------------------------------------------------------------------*/
-int
-ht_create(int core_id, size_t num);
+int ht_create(int core_id, size_t num);
 /*----------------------------------------------------------------------------*/
-void
-ht_destroy(int core_id);
+void ht_destroy(int core_id);
 /*----------------------------------------------------------------------------*/
 uint16_t ht_hash(struct ri_node *node);
 /*----------------------------------------------------------------------------*/
@@ -74,29 +68,23 @@ int ht_is_same_pattern(struct ri_node *node1, struct ri_node *node2);
 /*----------------------------------------------------------------------------*/
 int ht_is_same_action(struct ri_node *node1, struct ri_node *node2);
 /*----------------------------------------------------------------------------*/
-int
-ht_insert(int core_id, struct ri_node *node);
+int ht_insert(int core_id, struct ri_node *node);
 /*----------------------------------------------------------------------------*/
 struct ri_node *
 ht_search(int core_id, struct ri_node *node);
 /*----------------------------------------------------------------------------*/
-void
-ht_remove(int core_id, struct ri_node *node);
+void ht_remove(int core_id, struct ri_node *node);
 /*----------------------------------------------------------------------------*/
-int
-req_ring_create(int core_id, int queue_id, size_t num);
+int req_ring_create(int core_id, int queue_id, size_t num);
 /*----------------------------------------------------------------------------*/
-void
-req_ring_destroy(int core_id, int queue_id);
+void req_ring_destroy(int core_id, int queue_id);
 /*----------------------------------------------------------------------------*/
-int
-req_ring_put(int core_id, int queue_id, struct request *req);
+int req_ring_put(int core_id, int queue_id, struct request *req);
 /*----------------------------------------------------------------------------*/
 struct request *
 req_ring_get(int core_id, int queue_id);
 /*----------------------------------------------------------------------------*/
-void
-req_ring_consume(int core_id, int queue_id);
+void req_ring_consume(int core_id, int queue_id);
 /*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 }

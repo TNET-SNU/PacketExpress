@@ -340,6 +340,7 @@ px_flow_slave_main(void *arg)
 int px_hairpin_configure(struct px_hairpin_ctx *hp_ctx,
                          uint16_t port_id,
                          uint16_t num_rxq,
+                         uint16_t num_txq,
                          uint16_t num_rxq_incr,
                          uint16_t hp_num_rxq,
                          uint16_t hp_num_txq,
@@ -348,38 +349,70 @@ int px_hairpin_configure(struct px_hairpin_ctx *hp_ctx,
                          int arp_table_size,
                          int opt_out)
 {
-    int ret;
+    int i, ret;
 
+    /* build hairpin context */
     ret = rte_eth_macaddr_get(port_id, &hp_ctx->mac);
-    if (ret)
+    if (ret < 0)
     {
+        fprintf(stderr, "rte_eth_macaddr_get() failed for port %d\n", port_id);
         return ret;
     }
     hp_ctx->port_id = port_id;
 #if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0)
     hp_ctx->num_template_table = 0;
 #endif
+    hp_ctx->num_rxq = num_rxq;
+    hp_ctx->num_txq = num_txq;
+    hp_ctx->num_rxq_incr = num_rxq_incr;
     hp_ctx->hp_num_rxq = hp_num_rxq;
     hp_ctx->hp_num_txq = hp_num_txq;
-    for (int i = 0; i < hp_num_rxq; i++)
+
+    /* setup DMA RSS rule */
+    hp_ctx->rss.func = RTE_ETH_HASH_FUNCTION_DEFAULT;
+    hp_ctx->rss.level = 0;
+    hp_ctx->rss.types = eth_conf->rx_adv_conf.rss_conf.rss_hf;
+    hp_ctx->rss.key_len = eth_conf->rx_adv_conf.rss_conf.rss_key_len;
+    hp_ctx->rss.queue_num = hp_ctx->num_rxq;
+    hp_ctx->rss.key = eth_conf->rx_adv_conf.rss_conf.rss_key;
+    hp_ctx->rss.queue = hp_ctx->rss_queues;
+
+    /* initialize DMA RSS queues */
+    for (i = 0; i < num_rxq * num_rxq_incr; i++)
+    {
+        hp_ctx->rss_queues[i] = i;
+    }
+
+    /* initialize DMA count rule */
+    hp_ctx->ctr.shared = 0;
+    hp_ctx->ctr.id = 0;
+
+    /* setup DMA RSS rule (use the same RSS rule as DMA RSS rule) */
+    hp_ctx->hp_rss.func = RTE_ETH_HASH_FUNCTION_DEFAULT;
+    hp_ctx->hp_rss.level = 0;
+    hp_ctx->hp_rss.types = eth_conf->rx_adv_conf.rss_conf.rss_hf;
+    hp_ctx->hp_rss.key_len = eth_conf->rx_adv_conf.rss_conf.rss_key_len;
+    hp_ctx->hp_rss.queue_num = hp_ctx->hp_num_rxq;
+    hp_ctx->hp_rss.key = eth_conf->rx_adv_conf.rss_conf.rss_key;
+    hp_ctx->hp_rss.queue = hp_ctx->hp_rss_queues;
+
+    /* initialize hairpin RSS queues */
+    for (i = 0; i < hp_num_rxq; i++)
     {
         hp_ctx->hp_rss_queues[i] = num_rxq * num_rxq_incr + i;
     }
 
-    /* use the same rss key as DMA RSS queus */
-    hp_ctx->rss_hairpin.func = RTE_ETH_HASH_FUNCTION_DEFAULT;
-    hp_ctx->rss_hairpin.level = 0;
-    hp_ctx->rss_hairpin.types = ETH_RSS_TCP | ETH_RSS_UDP | ETH_RSS_IP;
-    hp_ctx->rss_hairpin.key_len = eth_conf->rx_adv_conf.rss_conf.rss_key_len;
-    hp_ctx->rss_hairpin.queue_num = hp_ctx->hp_num_rxq;
-    hp_ctx->rss_hairpin.key = eth_conf->rx_adv_conf.rss_conf.rss_key;
-    hp_ctx->rss_hairpin.queue = hp_ctx->hp_rss_queues;
-
-    hp_ctx->count_hairpin.shared = 0;
-    hp_ctx->count_hairpin.id = 0;
+    /* initialize hairpin count rule */
+    hp_ctx->hp_ctr.shared = 0;
+    hp_ctx->hp_ctr.id = 0;
 
     /* initiate hairpin context */
-    hp_ctx_init(port_id, hp_ctx, arp_table, arp_table_size, opt_out);
+    ret = hp_ctx_init(port_id, hp_ctx, arp_table, arp_table_size, opt_out);
+    if (ret < 0)
+    {
+        fprintf(stderr, "hp_ctx_init() failed for port %d\n", port_id);
+        return ret;
+    }
 
     return 0;
 }

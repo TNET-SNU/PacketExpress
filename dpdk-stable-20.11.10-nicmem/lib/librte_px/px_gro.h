@@ -14,6 +14,7 @@
 #include "px_offload.h"
 #include "px_4tuple.h"
 #include "rte_gro.h"
+#include "rte_gso.h"
 #include "rte_thash.h"
 
 #ifdef __cplusplus
@@ -22,6 +23,7 @@ extern "C"
 #endif
 
 #define LIMIT_64K 0
+#define LIMIT_NB_SEGS 1
 
 #define INVALID_INDEX UINT16_MAX
 #define MAX_TCP_HLEN 60
@@ -111,9 +113,9 @@ struct px_dev
 	uint16_t nb_tx_desc[PX_MAX_QUEUES_PER_PORT];
 
 	struct rte_eth_dev_info dev_info;
-	
+
 	/* for Redirection Table (ReTa) */
-    struct rte_eth_rss_reta_entry64 px_reta_conf[PX_RETA_GROUP_NUM];
+	struct rte_eth_rss_reta_entry64 px_reta_conf[PX_RETA_GROUP_NUM];
 };
 
 /*
@@ -177,13 +179,14 @@ struct px_ctx
 /*----------------------------------------------------------------------------*/
 struct rte_eth_conf
 px_eth_conf(uint16_t port_id,
-            struct rte_eth_conf *conf,
-            uint8_t *rss_key,
-            int rss_key_len,
-            int pkt_size,
+			struct rte_eth_conf *conf,
+			uint8_t *rss_key,
+			int rss_key_len,
+			int pkt_size,
 			int is_lro,
-            int is_gro,
-            int is_nicmem);
+			int is_gro,
+			int is_delayed,
+			int is_nicmem);
 /*----------------------------------------------------------------------------*/
 int px_init(uint16_t port_id,
 			uint16_t queue_id,
@@ -211,11 +214,11 @@ int px_eth_dev_configure(uint16_t port_id,
 						 uint16_t num_rxq_incr,
 						 unsigned int num_nicmem,
 						 unsigned int timeout_ns,
-                         uint16_t hp_num_rxq,
-                         uint16_t hp_num_txq,
+						 uint16_t hp_num_rxq,
+						 uint16_t hp_num_txq,
 						 struct rte_eth_conf *eth_conf,
-                         struct px_arp_entry *arp_table,
-                         int arp_table_size,
+						 struct px_arp_entry *arp_table,
+						 int arp_table_size,
 						 int opt_out);
 /*----------------------------------------------------------------------------*/
 int px_eth_rx_queue_setup(uint16_t port_id,
@@ -250,11 +253,18 @@ void px_pktmbuf_free_bulk(struct rte_mbuf **pkts,
 						  uint16_t nb_pkts);
 /*----------------------------------------------------------------------------*/
 /* below are for testing baselines (e.g., DPDK GRO) */
+int px_parse_packet(struct px_ctx *pctx,
+					struct rte_mbuf *pkt,
+					uint8_t *tcp_flags,
+					int hwcsum);
+/*----------------------------------------------------------------------------*/
+/* below are for testing baselines (e.g., DPDK GRO) */
 void px_parse_batch(uint16_t port_id,
 					uint16_t queue_id,
-                    struct rte_mbuf **pkts,
-                    uint16_t nb_pkts,
-                    int trans_mtu);
+					struct rte_mbuf **pkts,
+					uint16_t nb_pkts,
+					int trans_mtu,
+					int hwcsum);
 /*----------------------------------------------------------------------------*/
 void px_setup_tso_burst(uint16_t port_id,
 						uint16_t queue_id,

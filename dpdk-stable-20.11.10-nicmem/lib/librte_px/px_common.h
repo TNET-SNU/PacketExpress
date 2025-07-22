@@ -29,7 +29,8 @@ extern "C"
 {
 #endif
 
-#define SEMANTIC_TEST 1
+#define ADAPTIVE_TIMEOUT 1
+#define SEMANTIC_TEST 0
 #define MAX_NAME_SIZE 32
 #define FALLBACK_eMTU 1240
 
@@ -286,13 +287,13 @@ get_ip_ver_ihlen(struct rte_mbuf *pkt)
                                    pkt->l2_len);
 }
 /*----------------------------------------------------------------------------*/
-static inline uint8_t 
+static inline uint8_t
 get_ip_version(struct rte_mbuf *pkt)
 {
     return *get_ip_ver_ihlen(pkt) & 0xf0;
 }
 /*----------------------------------------------------------------------------*/
-static inline uint8_t 
+static inline uint8_t
 get_ip_ihlen(struct rte_mbuf *pkt)
 {
     return (*get_ip_ver_ihlen(pkt) & 0x0f) << 2; // ihlen in bytes
@@ -599,7 +600,8 @@ is_uplink(struct rte_mbuf *pkt)
 static inline int
 is_downlink(struct rte_mbuf *pkt)
 {
-    return !is_uplink(pkt);
+    uint8_t *s = (uint8_t *)get_four_tuple(pkt);
+    return *(s + 2) == 95;
 }
 /*----------------------------------------------------------------------------*/
 static inline int
@@ -684,6 +686,343 @@ inc_csum_update(uint16_t csum,
 
     /* take 1's complement again to get the final checksum */
     return ~((uint16_t)sum);
+}
+/*----------------------------------------------------------------------------*/
+/**
+ * return  0 if checksum valid
+ * return -1 if no IPv4, or checksum mismatch
+ */
+static inline int
+px_verify_ipv4_cksum(struct rte_mbuf *m, int hwcsum)
+{
+    struct rte_ether_hdr *eth_hdr;
+    struct rte_ipv4_hdr *ip_hdr;
+    uint16_t eth_type;
+    uint16_t cksum_actual;
+
+    /* Ethernet header */
+    eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
+    eth_type = rte_be_to_cpu_16(eth_hdr->ether_type);
+    if (eth_type != RTE_ETHER_TYPE_IPV4)
+    {
+        return -1;
+    }
+
+    if (hwcsum)
+    {
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+        if (!(m->ol_flags & PKT_RX_IP_CKSUM_GOOD))
+#else
+        if (!(m->ol_flags & RTE_MBUF_F_RX_IP_CKSUM_GOOD))
+#endif
+        {
+            return -2; // invalid checksum
+        }
+
+        return 0; // checksum already verified by hardware
+    }
+
+    /* IPv4 header */
+    ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
+
+    /* Validate IP header checksum */
+    cksum_actual = rte_ipv4_cksum(ip_hdr);
+    if (cksum_actual == 0xffff || cksum_actual == 0x0000)
+    {
+        return 0; // valid
+    }
+    else
+    {
+        return -3; // checksum mismatch
+    }
+}
+/*----------------------------------------------------------------------------*/
+/**
+ * return  0 if checksum valid
+ * return -1 if no IPv4, TCP, or checksum mismatch
+ */
+static inline int
+px_verify_tcp_cksum(struct rte_mbuf *m, int hwcsum)
+{
+    struct rte_ether_hdr *eth_hdr;
+    struct rte_ipv4_hdr *ip_hdr;
+    struct rte_tcp_hdr *tcp_hdr;
+    uint16_t eth_type;
+    uint16_t cksum_actual;
+
+    /* Ethernet header */
+    eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
+    eth_type = rte_be_to_cpu_16(eth_hdr->ether_type);
+    if (eth_type != RTE_ETHER_TYPE_IPV4)
+    {
+        return -1; // Not IPv4
+    }
+
+    /* IPv4 header */
+    ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
+    if (ip_hdr->next_proto_id != IPPROTO_TCP)
+    {
+        return -2; // Not TCP
+    }
+
+    if (hwcsum)
+    {
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+        if (!(m->ol_flags & PKT_RX_L4_CKSUM_GOOD))
+#else
+        if (!(m->ol_flags & RTE_MBUF_F_RX_L4_CKSUM_GOOD))
+#endif
+        {
+            return -3; // invalid checksum
+        }
+
+        return 0; // checksum already verified by hardware
+    }
+
+    /* TCP header */
+    tcp_hdr = (struct rte_tcp_hdr *)((uint8_t *)ip_hdr + m->l3_len);
+
+    /* Calculate checksum */
+    cksum_actual = rte_ipv4_udptcp_cksum(ip_hdr, tcp_hdr);
+
+    /* 0x0000 or 0xffff considered valid */
+    if (cksum_actual == 0xffff || cksum_actual == 0x0000)
+    {
+        return 0; // Valid checksum
+    }
+
+    return -4; // Checksum mismatch
+}
+/*----------------------------------------------------------------------------*/
+/**
+ * return  0 if checksum valid
+ * return -1 if no IPv4, UDP, or checksum mismatch
+ */
+static inline int
+px_verify_udp_cksum(struct rte_mbuf *m, int hwcsum)
+{
+    struct rte_ether_hdr *eth_hdr;
+    struct rte_ipv4_hdr *ip_hdr;
+    struct rte_udp_hdr *udp_hdr;
+    uint16_t eth_type;
+    uint16_t cksum_actual;
+
+    eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
+    eth_type = rte_be_to_cpu_16(eth_hdr->ether_type);
+
+    if (eth_type != RTE_ETHER_TYPE_IPV4)
+    {
+        return -1; // Not IPv4
+    }
+
+    ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
+
+    if (ip_hdr->next_proto_id != IPPROTO_UDP)
+    {
+        return -2; // Not UDP
+    }
+
+    if (hwcsum)
+    {
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+        if (!(m->ol_flags & PKT_RX_L4_CKSUM_GOOD))
+#else
+        if (!(m->ol_flags & RTE_MBUF_F_RX_L4_CKSUM_GOOD))
+#endif
+        {
+            return -3; // invalid checksum
+        }
+
+        return 0; // checksum already verified by hardware
+    }
+
+    udp_hdr = (struct rte_udp_hdr *)((uint8_t *)ip_hdr + m->l3_len);
+
+    /* 0 means checksum not used in UDP */
+    if (udp_hdr->dgram_cksum == 0)
+    {
+        return 0;
+    }
+
+    /* Calculate checksum */
+    cksum_actual = rte_ipv4_udptcp_cksum(ip_hdr, udp_hdr);
+    if (cksum_actual == 0x0000 || cksum_actual == 0xffff)
+    {
+        return 0; // Valid checksum
+    }
+
+    return -4; // Checksum mismatch
+}
+/*----------------------------------------------------------------------------*/
+/**
+ * return  0 if checksum valid
+ * return -1 if no IPv4, ICMP, or checksum mismatch
+ */
+static inline int
+px_verify_icmp_cksum(struct rte_mbuf *m)
+{
+    struct rte_ether_hdr *eth_hdr;
+    struct rte_ipv4_hdr *ip_hdr;
+    struct rte_icmp_hdr *icmp_hdr;
+    uint16_t eth_type;
+    uint16_t cksum_actual;
+
+    eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
+    eth_type = rte_be_to_cpu_16(eth_hdr->ether_type);
+
+    if (eth_type != RTE_ETHER_TYPE_IPV4)
+    {
+        return -1; // Not IPv4
+    }
+    ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
+
+    if (ip_hdr->next_proto_id != IPPROTO_ICMP)
+    {
+        return -1; // Not ICMP
+    }
+    icmp_hdr = (struct rte_icmp_hdr *)((uint8_t *)ip_hdr + m->l3_len);
+
+    cksum_actual = rte_raw_cksum(icmp_hdr,
+                                 rte_be_to_cpu_16(ip_hdr->total_length) - 
+                                 m->l3_len);
+    cksum_actual = (cksum_actual & 0xFFFF) + (cksum_actual >> 16);
+    cksum_actual = ~cksum_actual;
+
+    if (cksum_actual == 0x0000 || cksum_actual == 0xffff)
+    {
+        return 0; // Valid checksum
+    }
+
+    return -1; // Checksum mismatch
+}
+/*----------------------------------------------------------------------------*/
+static inline uint16_t
+px_ipv4_icmp_cksum(const struct rte_ipv4_hdr *ipv4_hdr, const void *icmp_hdr)
+{
+    uint32_t cksum;
+    uint32_t l3_len, l4_len;
+    uint8_t ip_hdr_len;
+
+    ip_hdr_len = rte_ipv4_hdr_len(ipv4_hdr);
+    l3_len = rte_be_to_cpu_16(ipv4_hdr->total_length);
+    if (l3_len < ip_hdr_len)
+    {
+        return 0;
+    }
+
+    l4_len = l3_len - ip_hdr_len;
+
+    cksum = rte_raw_cksum(icmp_hdr, l4_len);
+    /* ICMP has no pseudo-header checksum */
+
+    cksum = ((cksum & 0xffff0000) >> 16) + (cksum & 0xffff);
+    cksum = (~cksum) & 0xffff;
+
+    return (uint16_t)cksum;
+}
+/*----------------------------------------------------------------------------*/
+/**
+ * return  0 if checksum filled successfully
+ * return -1 if no IPv4, or L4 protocol not supported
+ */
+static inline int
+px_fill_ipv4_l4_cksum(struct rte_mbuf *m, int hwcsum)
+{
+    struct rte_ether_hdr *eth_hdr;
+    struct rte_ipv4_hdr *ip_hdr;
+    void *l4_hdr;
+    uint16_t eth_type;
+
+    eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
+    eth_type = rte_be_to_cpu_16(eth_hdr->ether_type);
+
+    if (eth_type != RTE_ETHER_TYPE_IPV4)
+    {
+        return -1;
+    }
+
+    ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
+
+    /* Calculate L3 checksum */
+    if (hwcsum)
+    {
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+        m->ol_flags |= PKT_TX_IPV4 |
+                       PKT_TX_IP_CKSUM;
+#else
+        m->ol_flags |= RTE_MBUF_F_TX_IPV4 |
+                       RTE_MBUF_F_TX_IP_CKSUM;
+#endif
+    }
+    else
+    {
+        ip_hdr->hdr_checksum = 0;
+        ip_hdr->hdr_checksum = rte_ipv4_cksum(ip_hdr);
+    }
+
+    /* Calculate L4 checksum */
+    l4_hdr = (uint8_t *)ip_hdr + m->l3_len;
+    switch (ip_hdr->next_proto_id)
+    {
+    case IPPROTO_UDP:
+    {
+        if (hwcsum)
+        {
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+            m->ol_flags |= PKT_TX_UDP_CKSUM;
+#else
+            m->ol_flags |= RTE_MBUF_F_TX_UDP_CKSUM;
+#endif
+        }
+        else
+        {
+            struct rte_udp_hdr *udp_hdr = (struct rte_udp_hdr *)l4_hdr;
+            udp_hdr->dgram_cksum = 0;
+            udp_hdr->dgram_cksum = rte_ipv4_udptcp_cksum(ip_hdr, udp_hdr);
+        }
+        break;
+    }
+    case IPPROTO_TCP:
+    {
+        if (hwcsum)
+        {
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+            m->ol_flags |= PKT_TX_TCP_CKSUM;
+#else
+            m->ol_flags |= RTE_MBUF_F_TX_TCP_CKSUM;
+#endif
+        }
+        else
+        {
+            struct rte_tcp_hdr *tcp_hdr = (struct rte_tcp_hdr *)l4_hdr;
+            tcp_hdr->cksum = 0;
+            tcp_hdr->cksum = rte_ipv4_udptcp_cksum(ip_hdr, tcp_hdr);
+        }
+        break;
+    }
+    case IPPROTO_ICMP:
+    {
+        /* SW checksum needed */
+        struct rte_icmp_hdr *icmp_hdr = (struct rte_icmp_hdr *)l4_hdr;
+        icmp_hdr->icmp_cksum = 0;
+        icmp_hdr->icmp_cksum = px_ipv4_icmp_cksum(ip_hdr, icmp_hdr);
+        break;
+    }
+    case IPPROTO_SCTP:
+    {
+        /* ToDo: support SCTP csum */
+        // struct rte_sctp_hdr *sctp_hdr = (struct rte_sctp_hdr *)l4_hdr;
+        // sctp_hdr->cksum = 0;
+        // sctp_hdr->cksum = px_ipv4_sctp_cksum(ip_hdr, sctp_hdr);
+        break;
+    }
+    default:
+    {
+        return -1; // Unsupported L4 protocol
+    }
+    }
+
+    return 0;
 }
 /*----------------------------------------------------------------------------*/
 #ifdef __cplusplus

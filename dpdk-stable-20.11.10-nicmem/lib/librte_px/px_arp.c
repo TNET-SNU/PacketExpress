@@ -27,7 +27,7 @@ mac_str_to_bin(const char *mac_str,
         printf("Invalid MAC format: %s\n", mac_str);
         return -1;
     }
-    for (int i = 0; i < 6; i++)
+    for (int i = 0; i < RTE_ETHER_ADDR_LEN; i++)
     {
         mac->addr_bytes[i] = (uint8_t)values[i];
     }
@@ -36,79 +36,88 @@ mac_str_to_bin(const char *mac_str,
 }
 /*----------------------------------------------------------------------------*/
 struct px_arp_ctx *
-px_init_arp_table(struct px_arp_entry *arp_string_table,
-                  int table_size)
+px_init_arp(struct px_arp_entry *arp_string_table,
+            int arp_table_size)
 {
-    struct px_arp_ctx *actx;
-    struct px_arp_bin *arp_bin_table;
-    actx = calloc(1, sizeof(struct px_arp_ctx));
-    if (!actx)
+    struct px_arp_ctx *arp_ctx;
+    int ret, i;
+
+    if (arp_table_size <= 0 || arp_table_size > MAX_ARP_TABLE_SIZE)
+    {
+        printf("Invalid ARP table size: %d\n", arp_table_size);
+        return NULL;
+    }
+
+    arp_ctx = calloc(1, sizeof(struct px_arp_ctx));
+    if (!arp_ctx)
     {
         printf("Failed to allocate ARP context\n");
         return NULL;
     }
-    actx->arp_bin_table = calloc(table_size, sizeof(struct px_arp_bin));
-    if (!actx->arp_bin_table)
+
+    arp_ctx->arp_bin_table = calloc(arp_table_size, sizeof(struct px_arp_bin));
+    if (!arp_ctx->arp_bin_table)
     {
         printf("Failed to allocate ARP binary table\n");
-        free(actx);
+        free(arp_ctx);
         return NULL;
     }
-    arp_bin_table = actx->arp_bin_table;
-    for (int i = 0; i < table_size; i++)
+
+    for (i = 0; i < arp_table_size; i++)
     {
-        if (ip_str_to_bin(arp_string_table[i].ip_string,
-                          &arp_bin_table[i].ip))
+        ret = ip_str_to_bin(arp_string_table[i].ip_string,
+                            &arp_ctx->arp_bin_table[i].ip);
+        if (ret < 0)
         {
             printf("Failed to translate IP string: %s\n",
                    arp_string_table[i].ip_string);
         }
-        if (mac_str_to_bin(arp_string_table[i].mac_string,
-                           &arp_bin_table[i].mac))
+        ret = mac_str_to_bin(arp_string_table[i].mac_string,
+                             &arp_ctx->arp_bin_table[i].mac);
+        if (ret < 0)
         {
             printf("Failed to translate MAC string: %s\n",
                    arp_string_table[i].mac_string);
         }
     }
 
-    actx->arp_bin_table = arp_bin_table;
-    actx->table_size = table_size;
+    arp_ctx->table_size = arp_table_size;
 
-    return actx;
+    return arp_ctx;
 }
 /*----------------------------------------------------------------------------*/
-void px_free_arp_table(struct px_arp_ctx *actx)
+void px_free_arp(struct px_arp_ctx *arp_ctx)
 {
-    if (!actx)
+    if (!arp_ctx)
     {
         printf("Initialize ARP context first\n");
         return;
     }
-    if (actx->arp_bin_table)
+    if (arp_ctx->arp_bin_table)
     {
-        free(actx->arp_bin_table);
-        actx->arp_bin_table = NULL;
+        free(arp_ctx->arp_bin_table);
+        arp_ctx->arp_bin_table = NULL;
     }
-    free(actx);
+    free(arp_ctx);
 }
 /*----------------------------------------------------------------------------*/
 struct rte_ether_addr *
-find_mac_in_arp(struct px_arp_ctx *actx,
-                uint32_t ip_dst)
+px_search_arp(struct px_arp_ctx *arp_ctx,
+              uint32_t ip_dst)
 {
     struct px_arp_bin *arp_bin_table;
-    if (!actx)
+    if (!arp_ctx)
     {
         printf("Initialize ARP context first\n");
         return NULL;
     }
-    arp_bin_table = actx->arp_bin_table;
+    arp_bin_table = arp_ctx->arp_bin_table;
     if (!arp_bin_table)
     {
         printf("Initialize ARP context first\n");
         return NULL;
     }
-    for (int i = 0; i < actx->table_size; i++)
+    for (int i = 0; i < arp_ctx->table_size; i++)
     {
         if (arp_bin_table[i].ip == ip_dst)
         {

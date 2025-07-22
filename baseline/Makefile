@@ -1,0 +1,36 @@
+# pxgw DPDK-based gateway Makefile
+
+APP     := gw
+SRCS    := gw.c
+OBJS    := $(SRCS:.c=.o)
+
+CC      := gcc
+CFLAGS  := -O3 -g -Wall -march=native -D_GNU_SOURCE
+PKGCONF := $(shell which pkg-config)
+DPDK_CFLAGS := $(shell $(PKGCONF) --cflags libdpdk)
+DPDK_LDFLAGS := $(shell $(PKGCONF) --libs libdpdk)
+
+################################################################################
+
+# Choose one of below
+
+# 1. Using 1500B MTU for incoming packets
+CFLAGS += -D HW_CSUM=0
+
+# 2. Using 9000B MTU for incoming packets
+# CFLAGS += -D HW_CSUM=1
+
+################################################################################
+
+all: $(APP)
+
+$(APP): $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $^ $(DPDK_LDFLAGS)
+
+%.o: %.c
+	$(CC) $(CFLAGS) $(DPDK_CFLAGS) -c $< -o $@
+
+clean:
+	rm -f $(APP) $(OBJS)
+
+.PHONY: all clean

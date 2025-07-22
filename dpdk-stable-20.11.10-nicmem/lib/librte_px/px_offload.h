@@ -19,6 +19,7 @@ extern "C"
 int px_hairpin_configure(struct px_hairpin_ctx *hp_ctx,
                          uint16_t port_id,
                          uint16_t num_rxq,
+                         uint16_t num_txq,
                          uint16_t num_rxq_incr,
                          uint16_t hp_num_rxq,
                          uint16_t hp_num_txq,

@@ -374,20 +374,20 @@ onload_iperf_flow(uint16_t port_id, uint16_t num_rxq, uint16_t num_rxq_incr)
   {
     rss_queues[i] = i;
   }
-  struct rte_flow_action_rss rss_hairpin;
-  rss_hairpin.func = RTE_ETH_HASH_FUNCTION_DEFAULT;
-  rss_hairpin.level = 0;
-  rss_hairpin.types = ETH_RSS_TCP | ETH_RSS_UDP | ETH_RSS_IP;
-  rss_hairpin.key_len = sizeof(rss_key);
-  rss_hairpin.queue_num = num_rxq * num_rxq_incr;
-  rss_hairpin.key = rss_key;
-  rss_hairpin.queue = rss_queues;
+  struct rte_flow_action_rss rss_dma;
+  rss_dma.func = RTE_ETH_HASH_FUNCTION_DEFAULT;
+  rss_dma.level = 0;
+  rss_dma.types = ETH_RSS_TCP | ETH_RSS_UDP | ETH_RSS_IP;
+  rss_dma.key_len = sizeof(rss_key);
+  rss_dma.queue_num = num_rxq * num_rxq_incr;
+  rss_dma.key = rss_key;
+  rss_dma.queue = rss_queues;
 
   /* make actions */
   struct rte_flow_action actions[] = {
     /* deliver to hairpin queue RSS */
     {.type = RTE_FLOW_ACTION_TYPE_RSS,
-      .conf = &rss_hairpin},
+      .conf = &rss_dma},
     {.type = RTE_FLOW_ACTION_TYPE_END}
   };
 
@@ -403,10 +403,10 @@ onload_iperf_flow(uint16_t port_id, uint16_t num_rxq, uint16_t num_rxq_incr)
   }
 #endif
 
-  flow = px_latent_flow_create(port_id, &attr, patterns, actions, &error);
+  flow = px_flow_create(port_id, &attr, patterns, actions, &error);
   if (!flow)
   {
-    fprintf(stderr, "px_latent_flow_create() failed for port %d. "
+    fprintf(stderr, "px_flow_create() failed for port %d. "
                     "Error type: %d, Error msg: %s\n",
             port_id, error.type, error.message);
   }
@@ -468,20 +468,20 @@ onload_iperf_ack_flow(uint16_t port_id, uint16_t num_rxq, uint16_t num_rxq_incr)
   {
     rss_queues[i] = i;
   }
-  struct rte_flow_action_rss rss_hairpin;
-  rss_hairpin.func = RTE_ETH_HASH_FUNCTION_DEFAULT;
-  rss_hairpin.level = 0;
-  rss_hairpin.types = ETH_RSS_TCP | ETH_RSS_UDP | ETH_RSS_IP;
-  rss_hairpin.key_len = sizeof(rss_key);
-  rss_hairpin.queue_num = num_rxq * num_rxq_incr;
-  rss_hairpin.key = rss_key;
-  rss_hairpin.queue = rss_queues;
+  struct rte_flow_action_rss rss_dma;
+  rss_dma.func = RTE_ETH_HASH_FUNCTION_DEFAULT;
+  rss_dma.level = 0;
+  rss_dma.types = ETH_RSS_TCP | ETH_RSS_UDP | ETH_RSS_IP;
+  rss_dma.key_len = sizeof(rss_key);
+  rss_dma.queue_num = num_rxq * num_rxq_incr;
+  rss_dma.key = rss_key;
+  rss_dma.queue = rss_queues;
 
   /* make actions */
   struct rte_flow_action actions[] = {
     /* deliver to hairpin queue RSS */
     {.type = RTE_FLOW_ACTION_TYPE_RSS,
-      .conf = &rss_hairpin},
+      .conf = &rss_dma},
     {.type = RTE_FLOW_ACTION_TYPE_END}
   };
 
@@ -497,10 +497,10 @@ onload_iperf_ack_flow(uint16_t port_id, uint16_t num_rxq, uint16_t num_rxq_incr)
   }
 #endif
 
-  flow = px_latent_flow_create(port_id, &attr, patterns, actions, &error);
+  flow = px_flow_create(port_id, &attr, patterns, actions, &error);
   if (!flow)
   {
-    fprintf(stderr, "px_latent_flow_create() failed for port %d. "
+    fprintf(stderr, "px_flow_create() failed for port %d. "
                     "Error type: %d, Error msg: %s\n",
             port_id, error.type, error.message);
   }
@@ -567,6 +567,11 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
                          0,
 #endif
 #if USE_CGRO || USE_DGRO
+                         1,
+#else
+                         0,
+#endif
+#if STALL_TIMEOUT_NS
                          1,
 #else
                          0,
@@ -822,8 +827,6 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
   if (onload_iperf_ack_flow(ret_port_id, num_rxq, NUM_LATENT_RXQ) == NULL)
     return CommandFailure(ENOMEM, "onload_iperf_ack_flow failed");
 #endif
-  if (rte_eth_dev_set_mtu(ret_port_id, 9978) < 0)
-      return CommandFailure(ENOMEM, "rte_eth_dev_set_mtu failed");
 
   return CommandSuccess();
 }
@@ -990,7 +993,7 @@ int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
 #else
   uint16_t recv = rte_eth_rx_burst(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), cnt);
 #if (USE_LRO || USE_DGRO || NUM_HAIRPIN_Q)
-  px_parse_batch(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), recv, !JUMBO_FRAME);
+  px_parse_batch(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), recv, !JUMBO_FRAME, 1);
 #endif
 #if USE_DGRO
   struct rte_gro_param gro_param = {
@@ -1015,7 +1018,7 @@ int PMDPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   // for (int i = 0; i < cnt; i++) {
   //   bess::Packet *pkt = pkts[i];
   //   struct ri_node node;
-  //   struct four_tuple *key = get_4tuple_from_headroom(reinterpret_cast<rte_mbuf *>(pkt));
+  //   struct four_tuple *key = search_4tuple(reinterpret_cast<rte_mbuf *>(pkt));
   //   if (!key)
   //     continue;
   //   node.key = *key;

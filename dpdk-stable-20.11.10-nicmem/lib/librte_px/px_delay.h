@@ -8,6 +8,57 @@ extern "C"
 {
 #endif
 
+static int rx_hw_timestamp_field_offset = -1;
+static uint64_t rx_hw_timestamp_flag = 0;
+/*----------------------------------------------------------------------------*/
+static inline int
+init_rx_hw_timestamp(void)
+{
+    static int done = 0;
+    int ret;
+    
+    if (done)
+    {
+        return 0;
+    }
+
+    /* register timestamp dynamic field */
+    ret = rte_mbuf_dyn_rx_timestamp_register(&rx_hw_timestamp_field_offset,
+                                             &rx_hw_timestamp_flag);
+    if (ret < 0)
+    {
+        rte_exit(EXIT_FAILURE,
+                 "rte_mbuf_dyn_rx_timestamp_register failed: %d\n", ret);
+        return ret;
+    }
+    printf("rx timestamp field offset: %d, flag: 0x%lx\n",
+           rx_hw_timestamp_field_offset, rx_hw_timestamp_flag);
+    done = 1;
+
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline int
+get_rx_hw_timestamp(struct rte_mbuf *pkt, uint64_t *timestamp)
+{
+    if (rx_hw_timestamp_field_offset < 0 || rx_hw_timestamp_flag == 0)
+    {
+        printf("rx_hw_timestamp not initialized!\n");
+        return -1;
+    }
+
+    if (!(pkt->ol_flags & rx_hw_timestamp_flag))
+    {
+        printf("rx_hw_timestamp not found in mbuf!\n");
+        return -1;
+    }
+
+    *timestamp = *RTE_MBUF_DYNFIELD(pkt,
+                                    rx_hw_timestamp_field_offset,
+                                    uint64_t *);
+
+    return 0;
+}
 /*----------------------------------------------------------------------------*/
 /* ensure that end and start are not NULL before call this function */
 static inline unsigned int
