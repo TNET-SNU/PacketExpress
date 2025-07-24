@@ -35,6 +35,3 @@ done
 
 # reset the driver
 /etc/init.d/openibd restart
-
-# setup route and arp
-./setup_interfaces.sh

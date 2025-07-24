@@ -2,10 +2,6 @@
 #define PX_ARP_H_
 
 #include "px_common.h"
-#include <arpa/inet.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <rte_ether.h>
 
 #ifdef __cplusplus
 extern "C"
@@ -32,6 +28,14 @@ struct px_arp_ctx
     int table_size;
 };
 /*----------------------------------------------------------------------------*/
+/**
+ * A single global ARP context is shared by all threads.
+ * Please initialize it before using, and do not modify it after initialization.
+ * If you need to modify the ARP table, add mutex locks around the ARP context
+ * to ensure thread safety.
+ * If you need to use different ARP tables for different threads, you can
+ * make per-thread ARP contexts.
+ */
 struct px_arp_ctx *
 px_init_arp(struct px_arp_entry *arp_table,
             int table_size);

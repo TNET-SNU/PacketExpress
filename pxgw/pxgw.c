@@ -31,11 +31,10 @@
 #include <rte_thread.h>
 #include <rte_lcore.h>
 #include "px_gro.h"
-#include "px_common.h"
 /*----------------------------------------------------------------------------*/
 /* Essential macros */
-#define MBUF_DATA_SIZE (65536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM)
-// #define MBUF_DATA_SIZE 9024
+// #define MBUF_DATA_SIZE (65536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM)
+#define MBUF_DATA_SIZE 9024
 #define NB_MBUF ((2 * 1024 * 1024) - 1)
 #define MAX_PKT_BURST 64
 
@@ -61,7 +60,7 @@ static struct px_arp_ctx *g_arp_ctx;
 static int g_arp_table_size = 0;
 /*----------------------------------------------------------------------------*/
 /* static ARP table configuration */
-const struct px_arp_entry g_arp_entries[] = {
+static struct px_arp_entry g_arp_entries[] = {
     {"10.1.90.2", "58:a2:e1:a7:a9:ee"}, // stream1
     {"10.2.90.2", "a0:88:c2:d6:9e:32"}, // stream3
     {"10.3.90.2", "58:a2:e1:a7:a9:fe"}, // stream5
@@ -413,6 +412,7 @@ void lcore_main(void)
                 eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
                 if (eth_hdr->ether_type != rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4))
                 {
+                    /* ignore non IPv4 */
                     rte_pktmbuf_free(m);
                     continue;
                 }
@@ -423,7 +423,7 @@ void lcore_main(void)
                 dst_mac = px_search_arp(g_arp_ctx, ip_hdr->dst_addr);
                 if (!dst_mac)
                 {
-                    /* Unknown dst IP */
+                    /* ignore unknown dst IP */
                     rte_pktmbuf_free(m);
                     continue;
                 }
@@ -439,6 +439,31 @@ void lcore_main(void)
             /* Forward to same port (L2 forward) */
 #if !USE_CGRO && (USE_LRO || USE_DGRO)
             px_setup_tso_burst(port_id, qid, wmbufs[port_id], nb_tx[port_id]);
+#endif
+#if NUM_HAIRPIN_Q
+            /* below is for benchmark */
+            for (i = 0; i < cnt; i++)
+            {
+                struct rte_mbuf *pkt = pkts[i];
+                struct ri_node node;
+                struct four_tuple *key = search_4tuple(pkt);
+                if (!key)
+                {
+                    continue;
+                }
+                node.key = *key;
+                node.pkt = pkt;
+                if ((node.key.src_port + node.key.dst_port) % 5 < 5) // offload 100% of flows
+                    // if ((node.key.src_port + node.key.dst_port) % 5 < 4) // offload 80% of flows
+                    // if ((node.key.src_port + node.key.dst_port) % 5 < 3) // offload 60% of flows
+                    // if ((node.key.src_port + node.key.dst_port) % 5 < 2) // offload 40% of flows
+                    // if ((node.key.src_port + node.key.dst_port) % 5 < 1) // offload 20% of flows
+                    // if ((node.key.src_port + node.key.dst_port) % 5 < 0) // offload 0% of flows
+                    if (hp_create_rule(qid, &node) < 0)
+                    {
+                        continue;
+                    }
+            }
 #endif
             ret = rte_eth_tx_burst(port_id, qid,
                                    wmbufs[port_id], nb_tx[port_id]);
@@ -512,7 +537,7 @@ int main(int argc, char **argv)
     }
 
     /* --socket-mem=65536,65536 (can be adapted dynamically) */
-    sprintf(socket_mem_arg, "--socket-mem=%d,%d", 65536, 65536); // 32GB per NUMA node
+    sprintf(socket_mem_arg, "--socket-mem=%d,%d", 65536, 65536); // 64GB per NUMA node
 
     /* --n=8 per NUMA node */
     sprintf(mem_channels, "%d", 8);
@@ -526,6 +551,23 @@ int main(int argc, char **argv)
         strdup(mem_channels),
         strdup("--proc-type=primary"),
         strdup(socket_mem_arg),
+
+        /**
+         * Configure ports to use.
+         * If nothing configured, all ports will be used
+         */
+
+        // strdup("-a"),
+        // strdup("0000:16:00.0"),
+
+        // strdup("-a"),
+        // strdup("0000:40:00.0"),
+
+        // strdup("-a"),
+        // strdup("0000:6a:00.0"),
+
+        // strdup("-a"),
+        // strdup("0000:94:00.0"),
     };
     int eal_argc = sizeof(eal_args) / sizeof(eal_args[0]);
 

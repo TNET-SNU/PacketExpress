@@ -4,7 +4,6 @@
 #include "px_common.h"
 #include "px_latent.h"
 #include "px_arp.h"
-#include <rte_flow.h>
 
 #ifdef __cplusplus
 extern "C"

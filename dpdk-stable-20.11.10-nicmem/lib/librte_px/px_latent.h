@@ -2,7 +2,6 @@
 #define PX_LATENT_H_
 
 #include "px_common.h"
-#include <rte_flow.h>
 
 #ifdef __cplusplus
 extern "C"

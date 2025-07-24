@@ -2,7 +2,7 @@
 
 # check which parameter should be updated
 setup="
-       REAL_TIME_CLOCK_ENABLE=1
+       REAL_TIME_CLOCK_ENABLE=0
 "
 
 # check the name of device in /dev/mst/
@@ -25,6 +25,3 @@ done
 
 # reset the driver
 /etc/init.d/openibd restart
-
-# setup route and arp
-# ./setup_interfaces.sh

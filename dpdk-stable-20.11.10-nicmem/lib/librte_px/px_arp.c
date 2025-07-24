@@ -124,7 +124,6 @@ px_search_arp(struct px_arp_ctx *arp_ctx,
             return &arp_bin_table[i].mac;
         }
     }
-    printf("No such ARP entry\n");
 
     return NULL;
 }

@@ -269,7 +269,7 @@ int patterns_to_types(struct px_pattern *patterns,
                 return -1;
             }
             types->l2_type = RTE_FLOW_ITEM_TYPE_ETH;
-            types->ether_type = htons(RTE_ETHER_TYPE_IPV4);
+            types->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
             continue;
         }
         if (patterns[i].type == RTE_FLOW_ITEM_TYPE_TCP)
@@ -281,11 +281,11 @@ int patterns_to_types(struct px_pattern *patterns,
             }
             types->l2_type = RTE_FLOW_ITEM_TYPE_ETH;
             if (types->ether_type &&
-                (types->ether_type != htons(RTE_ETHER_TYPE_IPV4)))
+                (types->ether_type != rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4)))
             {
                 return -1;
             }
-            types->ether_type = htons(RTE_ETHER_TYPE_IPV4);
+            types->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
             types->proto_id = IPPROTO_TCP;
             continue;
         }
@@ -298,11 +298,11 @@ int patterns_to_types(struct px_pattern *patterns,
             }
             types->l2_type = RTE_FLOW_ITEM_TYPE_ETH;
             if (types->ether_type &&
-                (types->ether_type != htons(RTE_ETHER_TYPE_IPV4)))
+                (types->ether_type != rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4)))
             {
                 return -1;
             }
-            types->ether_type = htons(RTE_ETHER_TYPE_IPV4);
+            types->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
             types->proto_id = IPPROTO_UDP;
             continue;
         }
@@ -315,11 +315,11 @@ int patterns_to_types(struct px_pattern *patterns,
             }
             types->l2_type = RTE_FLOW_ITEM_TYPE_ETH;
             if (types->ether_type &&
-                (types->ether_type != htons(RTE_ETHER_TYPE_IPV4)))
+                (types->ether_type != rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4)))
             {
                 return -1;
             }
-            types->ether_type = htons(RTE_ETHER_TYPE_IPV4);
+            types->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
             types->proto_id = IPPROTO_SCTP;
             continue;
         }

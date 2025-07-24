@@ -8,6 +8,14 @@ extern "C"
 {
 #endif
 
+/*----------------------------------------------------------------------------*/
+/**
+ * We handle MLX5 and non-MLX5 cases differently.
+ * i) For MLX5 PMD, we do not need to register a dynamic field for timestamp
+ * as it has already configured hardware timestamp in mbuf.
+ * ii) For non-MLX5 PMDs, we need to register a dynamic field for timestamp.
+ */
+#if !MLX5_ENABLED
 static int rx_hw_timestamp_field_offset = -1;
 static uint64_t rx_hw_timestamp_flag = 0;
 /*----------------------------------------------------------------------------*/
@@ -16,7 +24,7 @@ init_rx_hw_timestamp(void)
 {
     static int done = 0;
     int ret;
-    
+
     if (done)
     {
         return 0;
@@ -31,33 +39,64 @@ init_rx_hw_timestamp(void)
                  "rte_mbuf_dyn_rx_timestamp_register failed: %d\n", ret);
         return ret;
     }
-    printf("rx timestamp field offset: %d, flag: 0x%lx\n",
-           rx_hw_timestamp_field_offset, rx_hw_timestamp_flag);
+    // printf("rx timestamp field offset: %d, flag: 0x%lx\n",
+    //        rx_hw_timestamp_field_offset, rx_hw_timestamp_flag);
     done = 1;
 
     return 0;
 }
+#endif
 /*----------------------------------------------------------------------------*/
 static inline int
-get_rx_hw_timestamp(struct rte_mbuf *pkt, uint64_t *timestamp)
+is_timestamp_enabled(struct rte_mbuf *mbuf)
 {
-    if (rx_hw_timestamp_field_offset < 0 || rx_hw_timestamp_flag == 0)
+    static uint64_t timestamp_rx_dynflag = 0;
+    int timestamp_rx_dynflag_offset;
+
+    if (!timestamp_rx_dynflag)
     {
-        printf("rx_hw_timestamp not initialized!\n");
-        return -1;
+        timestamp_rx_dynflag_offset =
+            rte_mbuf_dynflag_lookup(RTE_MBUF_DYNFLAG_RX_TIMESTAMP_NAME, NULL);
+        if (timestamp_rx_dynflag_offset < 0)
+        {
+            return 0;
+        }
+        timestamp_rx_dynflag = RTE_BIT64(timestamp_rx_dynflag_offset);
     }
 
-    if (!(pkt->ol_flags & rx_hw_timestamp_flag))
+    return mbuf->ol_flags & timestamp_rx_dynflag;
+}
+/*----------------------------------------------------------------------------*/
+static inline rte_mbuf_timestamp_t *
+get_timestamp(struct rte_mbuf *mbuf)
+{
+    static int timestamp_dynfield_offset = -1;
+
+    if (timestamp_dynfield_offset < 0)
     {
-        printf("rx_hw_timestamp not found in mbuf!\n");
-        return -1;
+        timestamp_dynfield_offset =
+            rte_mbuf_dynfield_lookup(RTE_MBUF_DYNFIELD_TIMESTAMP_NAME, NULL);
+        if (timestamp_dynfield_offset < 0)
+        {
+            return 0;
+        }
     }
 
-    *timestamp = *RTE_MBUF_DYNFIELD(pkt,
-                                    rx_hw_timestamp_field_offset,
-                                    uint64_t *);
+    return RTE_MBUF_DYNFIELD(mbuf,
+                             timestamp_dynfield_offset,
+                             rte_mbuf_timestamp_t *);
+}
+/*----------------------------------------------------------------------------*/
+static inline rte_mbuf_timestamp_t *
+get_rx_hw_timestamp(struct rte_mbuf *pkt)
+{
+    if (!is_timestamp_enabled(pkt))
+    {
+        printf("rx_hw_timestamp not enabled in mbuf!\n");
+        return NULL;
+    }
 
-    return 0;
+    return get_timestamp(pkt);
 }
 /*----------------------------------------------------------------------------*/
 /* ensure that end and start are not NULL before call this function */
@@ -114,6 +153,28 @@ update_timestamp(struct timespec *orig_timestamp,
 
     return;
 }
+/**
+ * Below functions are used when timestamping in SW without hardware support.
+ * They are used to put timestamp in the headroom of mbuf, and get timestamp
+ * from the headroom of mbuf.
+ * Note that the timestamp is stored after the four_tuple.
+ */
+/*----------------------------------------------------------------------------*/
+static inline void
+put_timestamp_to_headroom(struct rte_mbuf *pkt,
+                          struct timespec *timestamp)
+{
+    /* backup the tuple in the headroom */
+    memcpy((uint8_t *)pkt->buf_addr + sizeof(struct four_tuple),
+           timestamp, sizeof(struct timespec));
+}
+/*----------------------------------------------------------------------------*/
+static inline struct timespec *
+get_timestamp_from_headroom(struct rte_mbuf *pkt)
+{
+    return (struct timespec *)((uint8_t *)pkt->buf_addr +
+                               sizeof(struct four_tuple));
+}
 /*----------------------------------------------------------------------------*/
 static inline void
 reset_timestamp_on_headroom(struct rte_mbuf *pkt)
@@ -126,18 +187,9 @@ reset_timestamp_on_headroom(struct rte_mbuf *pkt)
 }
 /*----------------------------------------------------------------------------*/
 static inline void
-put_timestamp_to_headroom(struct rte_mbuf *pkt,
-                          struct timespec *timestamp)
-{
-    /* backup the tuple in the headroom */
-    memcpy((uint8_t *)pkt->buf_addr + sizeof(struct four_tuple),
-           timestamp, sizeof(struct timespec));
-}
-/*----------------------------------------------------------------------------*/
-static inline void
-px_set_timestamp_batch(struct rte_mbuf **pkts,
-                       uint16_t nb_pkts,
-                       struct timespec *ts)
+set_timestamp_batch(struct rte_mbuf **pkts,
+                    uint16_t nb_pkts,
+                    struct timespec *ts)
 {
     struct rte_mbuf *pkt;
     for (int i = 0; i < nb_pkts; i++)
@@ -145,13 +197,6 @@ px_set_timestamp_batch(struct rte_mbuf **pkts,
         pkt = pkts[i];
         put_timestamp_to_headroom(pkt, ts);
     }
-}
-/*----------------------------------------------------------------------------*/
-static inline struct timespec *
-get_timestamp_from_headroom(struct rte_mbuf *pkt)
-{
-    return (struct timespec *)((uint8_t *)pkt->buf_addr +
-                               sizeof(struct four_tuple));
 }
 /*----------------------------------------------------------------------------*/
 static inline void

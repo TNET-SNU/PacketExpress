@@ -59,25 +59,25 @@ get_tcp_mss(struct rte_mbuf *pkt)
 void update_mss(uint16_t *mss_ptr, uint16_t new_mss, int direction)
 {
     (void)direction;
-    printf("%d -> ", ntohs(*mss_ptr));
+    printf("%d -> ", rte_be_to_cpu_16(*mss_ptr));
     if (new_mss)
     {
-        *mss_ptr = htons(new_mss);
+        *mss_ptr = rte_cpu_to_be_16(new_mss);
     }
 #if SEMANTIC_TEST
     /* use below on semantic test */
     /* if incoming packet */
     else if (direction)
     {
-        *mss_ptr = htons(DEFAULT_iMSS);
+        *mss_ptr = rte_cpu_to_be_16(DEFAULT_iMSS);
     }
     /* if outgoing packet */
 #endif
     else
     {
-        *mss_ptr = htons(DEFAULT_eMSS);
+        *mss_ptr = rte_cpu_to_be_16(DEFAULT_eMSS);
     }
-    printf("%d\n", ntohs(*mss_ptr));
+    printf("%d\n", rte_be_to_cpu_16(*mss_ptr));
 }
 /*----------------------------------------------------------------------------*/
 uint8_t *

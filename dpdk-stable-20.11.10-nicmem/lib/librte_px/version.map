@@ -23,13 +23,23 @@ DPDK_21 {
 	px_pktmbuf_free;
 	px_pktmbuf_free_bulk;
 	px_parse_batch;
-	px_latent_flow_create;
+	px_flow_validate;
+	px_flow_create;
 	px_flow_destroy;
 	px_flow_query;
 	px_eth_dev_rss_reta_update;
 	px_eth_dump_reta;
 	px_dump_reta;
 	px_setup_tso_burst;
+	px_verify_ipv4_cksum;
+	px_verify_tcp_cksum;
+	px_verify_udp_cksum;
+	px_verify_icmp_cksum;
+	px_ipv4_icmp_cksum;
+	px_fill_ipv4_l4_cksum;
+	px_init_arp;
+	px_free_arp;
+	px_search_arp;
 	reflect_4tuple;
 
 	hp_context_init;

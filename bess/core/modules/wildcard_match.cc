@@ -392,18 +392,6 @@ void WildcardMatch::ProcessBatch(Context *ctx, bess::PacketBatch *batch) {
   LookupBulkEntry(keys, default_gate, 0, Outgate, cnt, batch);
 #endif
   for (int j = 0; j < cnt; j++) {
-    // if (Outgate[j] == default_gate) {
-    //   printf("sink: data_off: %d\n", batch->pkts()[j]->data_off());
-    //   // struct rte_mbuf *pkt = reinterpret_cast<rte_mbuf **>(batch->pkts())[j];
-    //   // hexdump("mbuf", rte_pktmbuf_mtod(pkt, uint8_t *), pkt->data_len);
-    //   // uint64_t *link = reinterpret_cast<uint64_t *>(&pkt->dynfield1[5]);
-    //   // printf("len: %d, data_len: %d, nb_segs: %d, next: %p, link: %p\n",
-    //   //         pkt->pkt_len, pkt->data_len, pkt->nb_segs, pkt->next, reinterpret_cast<void *>(*link));
-    // }
-    // else{
-    //   printf("forward: data_off: %d\n", batch->pkts()[j]->data_off());
-    // }
-    // hexdump("keys", reinterpret_cast<uint8_t *>(keys[j].u64_arr), sizeof(keys[j]));
     EmitPacket(ctx, batch->pkts()[j], Outgate[j]);
   }
 }

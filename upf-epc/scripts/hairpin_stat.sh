@@ -26,4 +26,3 @@ do
 	mlxconfig -d /dev/mst/$devname"_pciconf"$i -y query $setup
 	i=$(expr $i + 1)
 done
-

@@ -1014,25 +1014,6 @@ int PMDPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
 #if !USE_CGRO && (USE_LRO || USE_DGRO)
   px_setup_tso_burst(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), cnt);
 #endif
-#if NUM_HAIRPIN_Q
-  // for (int i = 0; i < cnt; i++) {
-  //   bess::Packet *pkt = pkts[i];
-  //   struct ri_node node;
-  //   struct four_tuple *key = search_4tuple(reinterpret_cast<rte_mbuf *>(pkt));
-  //   if (!key)
-  //     continue;
-  //   node.key = *key;
-  //   node.pkt = reinterpret_cast<rte_mbuf *>(pkt);
-  //   if ((node.key.src_port + node.key.dst_port) % 5 < 5) // offload 100% of flows
-  //   // if ((node.key.src_port + node.key.dst_port) % 5 < 4) // offload 80% of flows
-  //   // if ((node.key.src_port + node.key.dst_port) % 5 < 3) // offload 60% of flows
-  //   // if ((node.key.src_port + node.key.dst_port) % 5 < 2) // offload 40% of flows
-  //   // if ((node.key.src_port + node.key.dst_port) % 5 < 1) // offload 20% of flows
-  //   // if ((node.key.src_port + node.key.dst_port) % 5 < 0) // offload 0% of flows
-  //   if (hp_create_rule(rte_lcore_id(), &node) < 0)
-  //     continue;
-  // }
-#endif
 
   int sent = rte_eth_tx_burst(dpdk_port_id_, qid,
                               reinterpret_cast<rte_mbuf **>(pkts), cnt);

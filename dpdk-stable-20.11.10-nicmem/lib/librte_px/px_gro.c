@@ -73,10 +73,10 @@ static inline uint32_t
 compare_seq(struct rte_mbuf *pkt1,
             struct rte_mbuf *pkt2)
 {
-    uint32_t seq1 = ntohl(*get_tcp_seq(pkt1));
+    uint32_t seq1 = rte_be_to_cpu_32(*get_tcp_seq(pkt1));
     uint32_t datalen1 = get_data_len(pkt1);
     uint32_t end1 = seq1 + datalen1;
-    uint32_t seq2 = ntohl(*get_tcp_seq(pkt2));
+    uint32_t seq2 = rte_be_to_cpu_32(*get_tcp_seq(pkt2));
     uint32_t datalen2 = get_data_len(pkt2);
     uint32_t end2 = seq2 + datalen2;
 
@@ -123,8 +123,8 @@ compare_ipid(struct rte_mbuf *pkt1,
     struct rte_mbuf *seg;
     uint16_t diff1 = 0;
     uint16_t diff2 = 0;
-    uint16_t id1 = ntohs(*get_ip_id(pkt1));
-    uint16_t id2 = ntohs(*get_ip_id(pkt2));
+    uint16_t id1 = rte_be_to_cpu_16(*get_ip_id(pkt1));
+    uint16_t id2 = rte_be_to_cpu_16(*get_ip_id(pkt2));
 
     // printf("nb_segs: pkt1 %d, pkt2 %d\n", pkt1->nb_segs, pkt2->nb_segs);
     // printf("compare_ipid: pkt1 id %d, pkt2 id %d\n", id1, id2);
@@ -160,9 +160,9 @@ static inline int
 check_seq_backup(struct rte_mbuf *pkt1,
                  struct rte_mbuf *pkt2)
 {
-    uint32_t seq1 = ntohl(*get_tcp_seq(pkt1));
+    uint32_t seq1 = rte_be_to_cpu_32(*get_tcp_seq(pkt1));
     uint32_t datalen1 = get_data_len(pkt1);
-    uint32_t seq2 = ntohl(*get_tcp_seq(pkt2));
+    uint32_t seq2 = rte_be_to_cpu_32(*get_tcp_seq(pkt2));
     uint32_t datalen2 = get_data_len(pkt2);
 
     /* append or pre-pend the new packet */
@@ -303,25 +303,25 @@ merge_udp(struct px_item *cur_item,
 
     if (is_px(orig_pkt))
     {
-        orig_seglen = ntohs(*(uint16_t *)get_payload(orig_pkt));
+        orig_seglen = rte_be_to_cpu_16(*(uint16_t *)get_payload(orig_pkt));
         orig_datalen = get_data_len(orig_pkt) - sizeof(uint16_t);
     }
     else
     {
-        orig_seglen = ntohs(*(uint16_t *)get_udp_len(orig_pkt)) -
+        orig_seglen = rte_be_to_cpu_16(*(uint16_t *)get_udp_len(orig_pkt)) -
                       orig_pkt->l4_len;
         orig_datalen = get_data_len(orig_pkt);
     }
 
     if (is_px(firstseg))
     {
-        new_seglen = ntohs(*(uint16_t *)get_payload(firstseg));
+        new_seglen = rte_be_to_cpu_16(*(uint16_t *)get_payload(firstseg));
         new_datalen = get_data_len(firstseg) - sizeof(uint16_t);
         new_hdrlen = get_hdr_len(firstseg) + sizeof(uint16_t);
     }
     else
     {
-        new_seglen = ntohs(*(uint16_t *)get_udp_len(firstseg)) -
+        new_seglen = rte_be_to_cpu_16(*(uint16_t *)get_udp_len(firstseg)) -
                      firstseg->l4_len;
         new_datalen = get_data_len(firstseg);
         new_hdrlen = get_hdr_len(firstseg);
@@ -390,12 +390,12 @@ merge_udp2(struct px_item *cur_item,
     px_off = (uint16_t *)orig_pkt->buf_addr + 1;
     if (orig_pkt->nb_segs == 1)
     {
-        *px_off = htons(get_data_len(orig_pkt));
+        *px_off = rte_cpu_to_be_16(get_data_len(orig_pkt));
     }
     px_off += orig_pkt->nb_segs;
     if (firstseg->nb_segs == 1)
     {
-        *px_off = htons(get_data_len(firstseg));
+        *px_off = rte_cpu_to_be_16(get_data_len(firstseg));
     }
     else
     {
@@ -494,8 +494,8 @@ concat_packet(struct px_item *cur_item,
 
     pkt_head = cur_item->firstseg;
 
-    orig_udp_len = ntohs(*(uint16_t *)get_udp_len(pkt_head));
-    new_udp_len = ntohs(*(uint16_t *)get_udp_len(firstseg));
+    orig_udp_len = rte_be_to_cpu_16(*(uint16_t *)get_udp_len(pkt_head));
+    new_udp_len = rte_be_to_cpu_16(*(uint16_t *)get_udp_len(firstseg));
 
     /* check if pktlen is same as existing one */
     if (unlikely(orig_udp_len != new_udp_len))
@@ -545,9 +545,9 @@ embed_px_hdr(struct rte_mbuf *pkt)
             pkt->l2_len + pkt->l3_len + pkt->l4_len);
 
     /* fill PX header */
-    orig_seglen = ntohs(*get_udp_len(pkt)) - sizeof(struct rte_udp_hdr);
+    orig_seglen = rte_be_to_cpu_16(*get_udp_len(pkt)) - sizeof(struct rte_udp_hdr);
     inner_seglen = (uint16_t *)get_payload(pkt);
-    *inner_seglen = htons(orig_seglen);
+    *inner_seglen = rte_cpu_to_be_16(orig_seglen);
 }
 /*----------------------------------------------------------------------------*/
 /*
@@ -582,7 +582,7 @@ embed_px_hdr2(struct rte_mbuf *pkt)
 
     /* fill PX header length field */
     pxhlen = (uint16_t *)get_payload(pkt);
-    *pxhlen = htons(new_pxhlen);
+    *pxhlen = rte_cpu_to_be_16(new_pxhlen);
 }
 /*----------------------------------------------------------------------------*/
 /*
@@ -595,7 +595,7 @@ embed_px_hdr3(struct rte_mbuf *pkt)
 {
     uint16_t pxhlen = sizeof(uint16_t);
     uint8_t *ethh = rte_pktmbuf_mtod(pkt, uint8_t *);
-    uint16_t seglen = ntohs(*get_udp_len(pkt)) - sizeof(struct rte_udp_hdr);
+    uint16_t seglen = rte_be_to_cpu_16(*get_udp_len(pkt)) - sizeof(struct rte_udp_hdr);
     uint8_t *pxh;
 
     /* move ETH|IP|UDP hdr to leftside by 2B */
@@ -605,7 +605,7 @@ embed_px_hdr3(struct rte_mbuf *pkt)
 
     /* write PX hdr */
     pxh = get_payload(pkt);
-    *(uint16_t *)pxh = htons(seglen);
+    *(uint16_t *)pxh = rte_cpu_to_be_16(seglen);
 }
 /*----------------------------------------------------------------------------*/
 static inline void
@@ -637,7 +637,7 @@ update_seq(struct rte_mbuf *pkt,
            uint32_t diff)
 {
     uint32_t *seq = get_tcp_seq(pkt);
-    *seq = htonl(ntohl(*seq) + diff);
+    *seq = rte_cpu_to_be_32(rte_be_to_cpu_32(*seq) + diff);
 }
 /*----------------------------------------------------------------------------*/
 static inline void
@@ -1070,7 +1070,7 @@ separate_edge_seg(struct px_ctx *pctx,
     /* update header (e.g., TCP seq, IP len) */
     update_seq(edge_head, seq_diff);
     update_iplen(edge_head);
-    update_ipid(edge_head, ntohs(*get_ip_id(edge_head)) + 2);
+    update_ipid(edge_head, rte_be_to_cpu_16(*get_ip_id(edge_head)) + 2);
 
     /* setup first segment */
     pkt->pkt_len = target_size;
@@ -1103,11 +1103,12 @@ err:
 static inline int
 is_stall_needed(struct px_ctx *pctx,
                 struct rte_mbuf *cur_pkt,
-                unsigned int diff,
+                struct timespec *timestamp,
                 uint32_t orig_segsz,
                 uint32_t target_segsz,
                 int print)
 {
+    unsigned int diff_ns, timeout_ns;
 #if ADAPTIVE_TIMEOUT
     /* below is for 95% reception rate */
     static const float timeout_factor_95[] = {
@@ -1208,18 +1209,19 @@ is_stall_needed(struct px_ctx *pctx,
 #else
     float factor = 1.0f; // Default factor for non-adaptive timeout
 #endif
-    unsigned int timeout_ns = g_px_dev[pctx->port_id].timeout_ns * factor;
+    diff_ns = get_nsec_diff(&pctx->now_ns, timestamp);
+    timeout_ns = g_px_dev[pctx->port_id].timeout_ns * factor;
     if (print)
     {
         printf("max_seg_nb: %u, missing_segs: %u, "
                "orig_segsz: %u, target_segsz: %u, "
-               "diff: %u, timeout_ns: %u\n",
+               "diff_ns: %u, timeout_ns: %u\n",
                max_seg_nb, missing_segs,
                orig_segsz, target_segsz,
-               diff, timeout_ns);
+               diff_ns, timeout_ns);
     }
 
-    return diff < timeout_ns;
+    return diff_ns < timeout_ns;
 }
 /*----------------------------------------------------------------------------*/
 /*
@@ -1234,8 +1236,6 @@ handle_incomplete(struct px_ctx *pctx,
                   uint32_t target_segsz,
                   int force)
 {
-    unsigned int diff;
-
     if (pctx->do_link)
     {
         clear_link(firstseg);
@@ -1266,9 +1266,8 @@ handle_incomplete(struct px_ctx *pctx,
         goto Enqueue;
     }
 
-    diff = get_nsec_diff(&pctx->now_ns, timestamp);
     /* if stall nsec is marginal */
-    if (is_stall_needed(pctx, firstseg, diff, orig_segsz, target_segsz, 0))
+    if (is_stall_needed(pctx, firstseg, timestamp, orig_segsz, target_segsz, 0))
     {
         /* can stall, so insert to stalled item array */
         if (insert_stall(pctx,
@@ -1297,11 +1296,6 @@ Enqueue:
         {
             update_udp(firstseg);
         }
-    }
-
-    if (pctx->do_link)
-    {
-        clear_link(firstseg);
     }
 
     if (px_ring_enqueue(&pctx->rx_ring, &firstseg, 1) != 1)
@@ -1559,14 +1553,14 @@ assemble_tcp(struct px_ctx *pctx,
 /*----------------------------------------------------------------------------*/
 static inline void
 parse_dtb(struct rte_mbuf *pkt,
-          uint16_t *nh_mtu,
+          uint16_t *next_hop_mtu,
           struct four_tuple **ft)
 {
-    uint16_t *nh_mtu_ptr = get_icmp_nh_mtu(pkt);
-    *nh_mtu = ntohs(*nh_mtu_ptr);
-    if (*nh_mtu == 0)
+    uint16_t *next_hop_mtu_ptr = get_icmp_next_hop_mtu(pkt);
+    *next_hop_mtu = rte_be_to_cpu_16(*next_hop_mtu_ptr);
+    if (*next_hop_mtu == 0)
     {
-        *nh_mtu = FALLBACK_eMTU;
+        *next_hop_mtu = FALLBACK_eMTU;
     }
 
     *ft = get_icmp_inner_four_tuple(pkt);
@@ -1574,25 +1568,26 @@ parse_dtb(struct rte_mbuf *pkt,
 /*----------------------------------------------------------------------------*/
 static inline void
 update_dtb(struct rte_mbuf *pkt,
-           uint16_t nh_mtu)
+           uint16_t next_hop_mtu)
 {
-    uint16_t *icmp_csum_ptr, *nh_mtu_ptr;
-    uint16_t old_nh_mtu, old_csum;
-    nh_mtu_ptr = get_icmp_nh_mtu(pkt);
-    old_nh_mtu = ntohs(*nh_mtu_ptr);
-    *nh_mtu_ptr = htons(nh_mtu);
+    uint16_t *icmp_csum_ptr, *next_hop_mtu_ptr;
+    uint16_t old_next_hop_mtu, old_csum;
+    next_hop_mtu_ptr = get_icmp_next_hop_mtu(pkt);
+    old_next_hop_mtu = rte_be_to_cpu_16(*next_hop_mtu_ptr);
+    *next_hop_mtu_ptr = rte_cpu_to_be_16(next_hop_mtu);
 
     /* Update checksum incrementally */
     icmp_csum_ptr = get_icmp_csum(pkt);
     old_csum = *icmp_csum_ptr;
     *icmp_csum_ptr = inc_csum_update(old_csum,
-                                     old_nh_mtu,
-                                     nh_mtu);
+                                     old_next_hop_mtu,
+                                     next_hop_mtu);
 }
 /*----------------------------------------------------------------------------*/
 static inline int
 parse_for_udp_gro(struct rte_mbuf *pkt)
 {
+    uint16_t src_port, dst_port;
     setup_udp(pkt);
 
     /* check if this packet requires UDP GSO rather than UDP GRO */
@@ -1601,11 +1596,30 @@ parse_for_udp_gro(struct rte_mbuf *pkt)
         return -1;
     }
 
+    /* for UDP, filter traffic under 1024 port */
+    src_port = rte_be_to_cpu_16(*get_src_port(pkt));
+    if (src_port < 1024)
+    {
+        /* not target flow */
+        return -1;
+    }
+
+    dst_port = rte_be_to_cpu_16(*get_dst_port(pkt));
+    if (dst_port < 1024)
+    {
+        /* not target flow */
+        return -1;
+    }
+
     // if (pkt->next && is_nicmem(pkt->next))
     // {
     //     printf("is nicmem, pkt->buf_addr: %p, pkt->next->buf_addr: %p\n",
     //            pkt->buf_addr, pkt->next->buf_addr);
     // }
+
+    /* backup original length to orig_pkt->buf_addr + 12 (this is headroom (=-128) */
+    uint16_t *orig_px_off = (uint16_t *)((uint8_t *)pkt->buf_addr + sizeof(struct four_tuple));
+    *orig_px_off = rte_cpu_to_be_16(get_data_len(pkt));
 
     return 0;
 }
@@ -1675,13 +1689,14 @@ int px_parse_packet(struct px_ctx *pctx,
     struct rte_ipv4_hdr *ipv4_hdr;
     struct four_tuple *key, reverse_key, reverse_key_le;
     uint32_t real_pkt_len, reverse_rss;
-    uint16_t nh_mtu, inner_qid, outer_qid, l4port;
+    uint16_t next_hop_mtu, inner_qid, outer_qid;
     int ret;
 
+    /* set zero for TCP flags by default */
+    *tcp_flags = 0;
 #if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0)
     if (unlikely(RTE_ETH_IS_TUNNEL_PKT(pkt->packet_type)))
     {
-        *tcp_flags = 0;
         return -1;
     }
 #endif
@@ -1690,7 +1705,6 @@ int px_parse_packet(struct px_ctx *pctx,
 
     if (unlikely(!is_ipv4(pkt)))
     {
-        *tcp_flags = 0;
         return -1;
     }
     ipv4_hdr = rte_pktmbuf_mtod_offset(pkt,
@@ -1713,7 +1727,6 @@ int px_parse_packet(struct px_ctx *pctx,
     if (ret < 0)
     {
         fprintf(stderr, "Invalid IPv4 checksum, ret: %d\n", ret);
-        *tcp_flags = 0;
         return -1;
     }
 
@@ -1724,10 +1737,12 @@ int px_parse_packet(struct px_ctx *pctx,
         rte_pktmbuf_trim(pkt, pkt->pkt_len - real_pkt_len);
     }
 
-    // /* parse HW timestamp */
-    // uint64_t rx_timestamp = 0;
-    // get_rx_hw_timestamp(pkt, &rx_timestamp);
-    // printf("[port %d] RX HW timestamp: %lu\n", pctx->port_id, rx_timestamp);
+    /* parse HW timestamp */
+    rte_mbuf_timestamp_t *rx_timestamp = get_rx_hw_timestamp(pkt);
+    printf("[port %d] RX HW timestamp: %#016lx %s\n",
+           pctx->port_id,
+           *rx_timestamp,
+           pkt->ol_flags & PKT_RX_LRO ? "(LROed)" : "(not LROed)");
 
     /* parse L4 */
     if (is_tcp(pkt))
@@ -1737,7 +1752,6 @@ int px_parse_packet(struct px_ctx *pctx,
         if (ret < 0)
         {
             fprintf(stderr, "Invalid TCP checksum, ret: %d\n", ret);
-            *tcp_flags = 0;
             return -1;
         }
 
@@ -1746,6 +1760,8 @@ int px_parse_packet(struct px_ctx *pctx,
         {
             insert_4tuple(pkt);
         }
+
+        /* parse for TCP GRO */
         ret = parse_for_tcp_gro(pkt, tcp_flags);
 
         /* check if the pkt is outgoing */
@@ -1764,24 +1780,6 @@ int px_parse_packet(struct px_ctx *pctx,
         if (ret < 0)
         {
             fprintf(stderr, "Invalid UDP checksum, ret: %d\n", ret);
-            *tcp_flags = 0;
-            return -1;
-        }
-
-        /* for UDP, filter traffic under 1024 port */
-        l4port = ntohs(*get_src_port(pkt));
-        if (l4port < 1024)
-        {
-            /* not target flow */
-            *tcp_flags = 0;
-            return -1;
-        }
-
-        l4port = ntohs(*get_dst_port(pkt));
-        if (l4port < 1024)
-        {
-            /* not target flow */
-            *tcp_flags = 0;
             return -1;
         }
 
@@ -1790,11 +1788,8 @@ int px_parse_packet(struct px_ctx *pctx,
         {
             insert_4tuple(pkt);
         }
-        *tcp_flags = 0;
 
-        /* backup original length to orig_pkt->buf_addr (this is headroom (=-128)) */
-        uint16_t *orig_px_off = (uint16_t *)pkt->buf_addr;
-        *orig_px_off = htons(get_data_len(pkt));
+        /* parse for UDP GRO */
         ret = parse_for_udp_gro(pkt);
 
         /* check if the pkt is outgoing */
@@ -1813,16 +1808,14 @@ int px_parse_packet(struct px_ctx *pctx,
         if (ret < 0)
         {
             fprintf(stderr, "Invalid ICMP checksum, ret: %d\n", ret);
-            *tcp_flags = 0;
             return -1;
         }
 
         /* non-target for offloading */
-        *tcp_flags = 0;
         if (is_dtb(pkt) && is_downlink(pkt))
         {
-            parse_dtb(pkt, &nh_mtu, &key);
-            fprintf(stderr, "[DTB] Next-Hop MTU: %u\n", nh_mtu);
+            parse_dtb(pkt, &next_hop_mtu, &key);
+            fprintf(stderr, "[DTB] Next-Hop MTU: %u\n", next_hop_mtu);
             reverse_key = (struct four_tuple){
                 .src_ip = key->dst_ip,
                 .dst_ip = key->src_ip,
@@ -1830,10 +1823,10 @@ int px_parse_packet(struct px_ctx *pctx,
                 .dst_port = key->src_port,
             };
             reverse_key_le = (struct four_tuple){
-                .src_ip = ntohl(key->dst_ip),
-                .dst_ip = ntohl(key->src_ip),
-                .src_port = ntohs(key->src_port),
-                .dst_port = ntohs(key->dst_port),
+                .src_ip = rte_be_to_cpu_32(key->dst_ip),
+                .dst_ip = rte_be_to_cpu_32(key->src_ip),
+                .src_port = rte_be_to_cpu_16(key->src_port),
+                .dst_port = rte_be_to_cpu_16(key->dst_port),
             };
             reverse_rss = rte_softrss((uint32_t *)&reverse_key_le,
                                       sizeof(struct four_tuple) >> 2,
@@ -1853,7 +1846,7 @@ int px_parse_packet(struct px_ctx *pctx,
             insert_mss_entry(new_pctx->mss_ctx,
                              reverse_rss,
                              &reverse_key,
-                             nh_mtu);
+                             next_hop_mtu);
 
             /* modify the next-hop MTU */
             update_dtb(pkt, DEFAULT_iMTU);
@@ -1864,7 +1857,6 @@ int px_parse_packet(struct px_ctx *pctx,
     else
     {
         /* non-target for offloading */
-        *tcp_flags = 0;
         return -1;
     }
 
@@ -2029,14 +2021,14 @@ px_uso_burst(struct px_ctx *pctx,
         }
 
         /* this packet is malformed */
-        if (ntohs(*(uint16_t *)get_payload(pkt)) > 4)
+        if (rte_be_to_cpu_16(*(uint16_t *)get_payload(pkt)) > 4)
         {
             out[idx++] = pkt;
             continue;
         }
 
         /* now this packet is PX tunneling packet */
-        seglen = ntohs(*((uint16_t *)get_payload(pkt) + 1));
+        seglen = rte_be_to_cpu_16(*((uint16_t *)get_payload(pkt) + 1));
 
         /* below are for debugging */
         // if ((seglen + pkt->l3_len + pkt->l4_len > DEFAULT_eMTU) || (seglen < 512))
@@ -2059,9 +2051,9 @@ px_uso_burst(struct px_ctx *pctx,
         pkt->data_len = get_hdr_len(pkt);
         iplen = get_ip_len(pkt);
         unmark_px(pkt);
-        *iplen = htons(pkt->l3_len + pkt->l4_len + seglen);
+        *iplen = rte_cpu_to_be_16(pkt->l3_len + pkt->l4_len + seglen);
         udplen = get_udp_len(pkt);
-        *udplen = htons(pkt->l4_len + seglen);
+        *udplen = rte_cpu_to_be_16(pkt->l4_len + seglen);
 
         offset = get_hdr_len(pkt) + 2 * sizeof(uint16_t);
         for (int j = 0; j < segnum; j++)
@@ -2076,9 +2068,9 @@ px_uso_burst(struct px_ctx *pctx,
                     continue;
                 }
                 iplen = get_ip_len(hdr_clone);
-                *iplen = htons(pkt->l3_len + pkt->l4_len + last_seglen);
+                *iplen = rte_cpu_to_be_16(pkt->l3_len + pkt->l4_len + last_seglen);
                 udplen = get_udp_len(hdr_clone);
-                *udplen = htons(pkt->l4_len + last_seglen);
+                *udplen = rte_cpu_to_be_16(pkt->l4_len + last_seglen);
 #if PX_MEASURE_DELAY
                 copy_timestamp(hdr_clone, pkt);
 #endif
@@ -2284,57 +2276,57 @@ link_and_flush(struct px_ctx *pctx,
             }
             else if (is_udp(cur_pkt))
             {
-                if (saved_segsz)
+#if SEMANTIC_TEST
+                /* if outgoing packet */
+                if (is_px(cur_pkt))
                 {
                     orig_segsz = get_data_len(cur_pkt);
+                    /* ToDo: Get the eMTU size from the PX header */
+                    target_segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len);
                 }
+                /* if incoming packet */
                 else
                 {
-#if SEMANTIC_TEST
-                    /* if outgoing packet */
-                    if (is_px(cur_pkt))
-                    {
-                        orig_segsz = get_data_len(cur_pkt);
-                        /* ToDo: Get the eMTU size from the PX header */
-                        target_segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len);
-                    }
-                    /* if incoming packet */
-                    else
-                    {
-                        // if (g_px_dev[pctx->port_id].nm_ctx.num_nicmem > 0)
-                        if (!cur_pkt->next || !is_nicmem(cur_pkt->next))
-                        {
-                            // printf("is not nicmem\n");
-                            orig_segsz = cur_pkt->data_len - get_hdr_len(cur_pkt);
-                        }
-                        else
-                        {
-                            // printf("is nicmem\n");
-                            orig_segsz = cur_pkt->data_len + cur_pkt->next->data_len - get_hdr_len(cur_pkt);
-                        }
-                        target_segsz = orig_segsz *
-                                       ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
-                                        orig_segsz);
-                        assert((int)target_segsz <= DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len);
-                        // printf("orig_segsz: %d, data_len: %d, next->data_len: %d, target_segsz: %d\n",
-                        //        orig_segsz, cur_pkt->data_len, cur_pkt->next->data_len, target_segsz);
-                    }
-#else
+                    // if (g_px_dev[pctx->port_id].nm_ctx.num_nicmem > 0)
                     if (!cur_pkt->next || !is_nicmem(cur_pkt->next))
                     {
-                        orig_segsz = cur_pkt->data_len;
+                        // printf("is not nicmem\n");
+                        orig_segsz = cur_pkt->data_len - get_hdr_len(cur_pkt);
                     }
                     else
                     {
-                        orig_segsz = cur_pkt->data_len + cur_pkt->next->data_len;
+                        // printf("is nicmem\n");
+                        orig_segsz = cur_pkt->data_len + cur_pkt->next->data_len -
+                                     get_hdr_len(cur_pkt);
                     }
                     target_segsz = orig_segsz *
                                    ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
                                     orig_segsz);
+                    assert((int)target_segsz <= DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len);
                     // printf("orig_segsz: %d, data_len: %d, next->data_len: %d, target_segsz: %d\n",
                     //        orig_segsz, cur_pkt->data_len, cur_pkt->next->data_len, target_segsz);
-#endif
                 }
+#else
+                if (!cur_pkt->next || !is_nicmem(cur_pkt->next))
+                {
+                    // printf("is not nicmem\n");
+                    orig_segsz = cur_pkt->data_len - get_hdr_len(cur_pkt);
+                }
+                else
+                {
+                    // printf("is nicmem\n");
+                    orig_segsz = cur_pkt->data_len + cur_pkt->next->data_len -
+                                 get_hdr_len(cur_pkt);
+                }
+                target_segsz = orig_segsz *
+                               ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
+                                orig_segsz);
+                assert((int)target_segsz <= DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len);
+                // printf("orig_segsz: %d, data_len: %d, next->data_len: %d, target_segsz: %d\n",
+                //        orig_segsz, cur_pkt->data_len, cur_pkt->next->data_len, target_segsz);
+#endif
+                // printf("orig_segsz: %d, target_segsz: %d\n", orig_segsz, target_segsz);
+
                 /* check if delayed merging needed and if is from outside */
 #if SEMANTIC_TEST
                 /* only for incoming packets */
@@ -2388,9 +2380,9 @@ link_and_flush(struct px_ctx *pctx,
                 }
                 else
                 {
-                    update_ipid(cur_pkt, ntohs(*start_id) + id_diff++);
+                    update_ipid(cur_pkt, rte_be_to_cpu_16(*start_id) + id_diff++);
                 }
-                // printf("ip_id: %u\n", ntohs(*get_ip_id(cur_pkt)));
+                // printf("ip_id: %u\n", rte_be_to_cpu_16(*get_ip_id(cur_pkt)));
             }
 
             if (pctx->do_link)
@@ -2537,7 +2529,7 @@ px_core(struct px_ctx *pctx,
             {
                 assemble_udp(pctx, item->firstseg, item->lastseg,
                              &item->timestamp);
-                // assemble_tcp(pctx, item->firstseg, item->lastseg,
+                // assemble_udp(pctx, item->firstseg, item->lastseg,
                 //              &pctx->now_ns);
             }
         }
@@ -2586,10 +2578,10 @@ px_core(struct px_ctx *pctx,
                             .dst_port = key->src_port,
                         };
                         reverse_key_le = (struct four_tuple){
-                            .src_ip = ntohl(key->dst_ip),
-                            .dst_ip = ntohl(key->src_ip),
-                            .src_port = ntohs(key->src_port),
-                            .dst_port = ntohs(key->dst_port),
+                            .src_ip = rte_be_to_cpu_32(key->dst_ip),
+                            .dst_ip = rte_be_to_cpu_32(key->src_ip),
+                            .src_port = rte_be_to_cpu_16(key->src_port),
+                            .dst_port = rte_be_to_cpu_16(key->dst_port),
                         };
                         reverse_rss = rte_softrss((uint32_t *)&reverse_key_le,
                                                   sizeof(struct four_tuple) >> 2,
@@ -2607,8 +2599,8 @@ px_core(struct px_ctx *pctx,
                         insert_mss_entry(new_pctx->mss_ctx,
                                          reverse_rss,
                                          &reverse_key,
-                                         ntohs(*mss_ptr));
-                        printf("mss: %u\n", ntohs(*mss_ptr));
+                                         rte_be_to_cpu_16(*mss_ptr));
+                        printf("mss: %u\n", rte_be_to_cpu_16(*mss_ptr));
 
                         /* update MSS */
                         update_mss(mss_ptr, 0, 1);
@@ -2625,10 +2617,10 @@ px_core(struct px_ctx *pctx,
                             .dst_port = key->src_port,
                         };
                         reverse_key_le = (struct four_tuple){
-                            .src_ip = ntohl(key->dst_ip),
-                            .dst_ip = ntohl(key->src_ip),
-                            .src_port = ntohs(key->src_port),
-                            .dst_port = ntohs(key->dst_port),
+                            .src_ip = rte_be_to_cpu_32(key->dst_ip),
+                            .dst_ip = rte_be_to_cpu_32(key->src_ip),
+                            .src_port = rte_be_to_cpu_16(key->src_port),
+                            .dst_port = rte_be_to_cpu_16(key->dst_port),
                         };
                         reverse_rss = rte_softrss((uint32_t *)&reverse_key_le,
                                                   sizeof(struct four_tuple) >> 2,
@@ -2719,10 +2711,10 @@ px_core(struct px_ctx *pctx,
                             .dst_port = key->src_port,
                         };
                         reverse_key_le = (struct four_tuple){
-                            .src_ip = ntohl(key->dst_ip),
-                            .dst_ip = ntohl(key->src_ip),
-                            .src_port = ntohs(key->src_port),
-                            .dst_port = ntohs(key->dst_port),
+                            .src_ip = rte_be_to_cpu_32(key->dst_ip),
+                            .dst_ip = rte_be_to_cpu_32(key->src_ip),
+                            .src_port = rte_be_to_cpu_16(key->src_port),
+                            .dst_port = rte_be_to_cpu_16(key->dst_port),
                         };
                         reverse_rss = rte_softrss((uint32_t *)&reverse_key_le,
                                                   sizeof(struct four_tuple) >> 2,
@@ -3324,6 +3316,7 @@ int px_eth_dev_configure(uint16_t port_id,
     }
 
     /* init RX hardware timestamp if necessary */
+#if !MLX5_ENABLED
     if (timeout_ns)
     {
         ret = init_rx_hw_timestamp();
@@ -3332,6 +3325,7 @@ int px_eth_dev_configure(uint16_t port_id,
             rte_exit(EXIT_FAILURE, "init_rx_hw_timestamp failed: %d\n", ret);
         }
     }
+#endif
 
     return ret;
 }
@@ -3460,56 +3454,48 @@ rx_and_px_gro(uint16_t port_id,
     uint16_t rxq_incr = g_px_dev[port_id].num_rxq_incr;
     uint16_t inner_qid;
     /* RX and GRO for every latent queues */
-#if SHARE_QUEUE
-    /** since we made latent queues to DMA to the same SW RX queue,
-     * We may poll the first latent queue */
-    pctx->latent_id = rxq_incr / 2;
-#else
     for (int i = 0; i < rxq_incr; i++)
     {
-#endif
-    /* busy wait for batching */
-    // busy_wait_for(10000);
+        /* busy wait for batching */
+        // busy_wait_for(10000);
 
-    inner_qid = queue_id * rxq_incr + pctx->latent_id;
-    // if (rte_eth_rx_queue_count(port_id, inner_qid) > 0)
-    // {
-    recv = rte_eth_rx_burst(port_id,
-                            inner_qid,
-                            rx_pkts + total,
-                            nb_pkts - total);
+        inner_qid = queue_id * rxq_incr + pctx->latent_id;
+        // if (rte_eth_rx_queue_count(port_id, inner_qid) > 0)
+        // {
+        recv = rte_eth_rx_burst(port_id,
+                                inner_qid,
+                                rx_pkts + total,
+                                nb_pkts - total);
 
-    px_clock_gettime(TIME_FLAG, &pctx->now_ns);
+        px_clock_gettime(TIME_FLAG, &pctx->now_ns);
 #if PX_MEASURE_DELAY
-    px_set_timestamp_batch(rx_pkts + total, recv, &pctx->now_ns);
+        set_timestamp_batch(rx_pkts + total, recv, &pctx->now_ns);
 #endif
-    // }
-    // for (int j = 0; j < recv; j++)
-    // {
-    //     if (port_id != rx_pkts[total + j]->port)
-    //     {
-    //         printf("port_id: %u from real port %u\n", rx_pkts[total + j]->port, port_id);
-    //     }
-    // }
-    total += px_core(pctx, rx_pkts + total, recv);
+        // }
+        // for (int j = 0; j < recv; j++)
+        // {
+        //     if (port_id != rx_pkts[total + j]->port)
+        //     {
+        //         printf("port_id: %u from real port %u\n", rx_pkts[total + j]->port, port_id);
+        //     }
+        // }
+        total += px_core(pctx, rx_pkts + total, recv);
 
-    if (++pctx->latent_id == rxq_incr)
-    {
-        pctx->latent_id = 0;
+        if (++pctx->latent_id == rxq_incr)
+        {
+            pctx->latent_id = 0;
+        }
+        if (total >= nb_pkts)
+        {
+            return total;
+        }
+        // if (recv)
+        // {
+        //     printf("inner_qid: %d\n", inner_qid);
+        // }
     }
-    if (total >= nb_pkts)
-    {
-        return total;
-    }
-    // if (recv)
-    // {
-    //     printf("inner_qid: %d\n", inner_qid);
-    // }
-#if !SHARE_QUEUE
-}
-#endif
 
-return total;
+    return total;
 }
 /*----------------------------------------------------------------------------*/
 static inline uint16_t
@@ -3539,7 +3525,7 @@ rx_and_px_gro_delayed(uint16_t port_id,
                                     nb_pkts - total_mq - total_sq);
             px_clock_gettime(TIME_FLAG, &pctx->now_ns);
 #if PX_MEASURE_DELAY
-            px_set_timestamp_batch(rx_pkts + total_mq + total_sq, recv, &pctx->now_ns);
+            set_timestamp_batch(rx_pkts + total_mq + total_sq, recv, &pctx->now_ns);
 #endif
             // }
 
