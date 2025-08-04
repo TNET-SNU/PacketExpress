@@ -63,20 +63,11 @@ static uint8_t g_key[] = {
 };
 /*----------------------------------------------------------------------------*/
 /* ARP table structures */
-struct arp_entry
-{
-    uint32_t ip; // Network byte order
-    struct rte_ether_addr mac;
-};
-#define MAX_ARP_ENTRIES 32
-static struct arp_entry g_arp_table[MAX_ARP_ENTRIES];
+static struct px_arp_ctx *g_arp_ctx;
 static int g_arp_table_size = 0;
 /*----------------------------------------------------------------------------*/
 /* static ARP table configuration */
-const struct
-{
-    const char *ip, *mac;
-} g_entries[] = {
+static struct px_arp_entry g_arp_entries[] = {
     {"10.1.90.2", "58:a2:e1:a7:a9:ee"}, // stream1
     {"10.2.90.2", "a0:88:c2:d6:9e:32"}, // stream3
     {"10.3.90.2", "58:a2:e1:a7:a9:fe"}, // stream5
@@ -106,40 +97,6 @@ static uint16_t g_num_ports = 0;
 static struct rte_ether_addr port_mac[RTE_MAX_ETHPORTS] = {{{0}}};
 static struct rte_mempool *g_pktmbuf_pool[RTE_MAX_LCORE] = {NULL};
 static struct rte_eth_dev_info g_dev_info[RTE_MAX_ETHPORTS];
-/*----------------------------------------------------------------------------*/
-/* string MAC to binary MAC */
-int parse_mac(const char *mac_str, struct rte_ether_addr *mac)
-{
-    return sscanf(mac_str, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
-                  &mac->addr_bytes[0], &mac->addr_bytes[1], &mac->addr_bytes[2],
-                  &mac->addr_bytes[3], &mac->addr_bytes[4], &mac->addr_bytes[5]) == 6
-               ? 0
-               : -1;
-}
-/*----------------------------------------------------------------------------*/
-/* string IP to uint32_t IP */
-uint32_t parse_ip(const char *ip_str)
-{
-    struct in_addr addr;
-    inet_aton(ip_str, &addr);
-
-    return addr.s_addr;
-}
-/*----------------------------------------------------------------------------*/
-/* dst IP to dst MAC */
-int lookup_dst_mac(uint32_t dst_ip, struct rte_ether_addr *mac)
-{
-    for (int i = 0; i < g_arp_table_size; i++)
-    {
-        if (g_arp_table[i].ip == dst_ip)
-        {
-            *mac = g_arp_table[i].mac;
-            return 0;
-        }
-    }
-
-    return -1;
-}
 /*----------------------------------------------------------------------------*/
 static void
 check_all_ports_link_status(uint8_t port_num, uint32_t port_mask)
@@ -300,6 +257,7 @@ void lcore_main(void)
     struct rte_mbuf *rmbufs[RTE_MAX_ETHPORTS][MAX_PKT_BURST] = {{NULL}};
     struct rte_mbuf *wmbufs[RTE_MAX_ETHPORTS][MAX_PKT_BURST] = {{NULL}};
     struct rte_mbuf *m;
+    struct rte_ether_addr *dst_mac;
     struct rte_ether_hdr *eth_hdr;
     struct rte_ipv4_hdr *ip_hdr;
     uint32_t qid = rte_lcore_id();
@@ -351,12 +309,14 @@ void lcore_main(void)
                 ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
 
                 /* modify DST MAC */
-                if (lookup_dst_mac(ip_hdr->dst_addr, &eth_hdr->d_addr) < 0)
+                dst_mac = px_search_arp(g_arp_ctx, ip_hdr->dst_addr);
+                if (!dst_mac)
                 {
-                    /* Unknown dst IP */
+                    /* ignore unknown dst IP */
                     rte_pktmbuf_free(m);
                     continue;
                 }
+                eth_hdr->d_addr = *dst_mac;
 
                 /* modify SRC MAC */
                 eth_hdr->s_addr = port_mac[port_id];
@@ -457,11 +417,9 @@ int main(int argc, char **argv)
     /* EAL configuration */
     char *eal_args[] = {
         strdup("pxgw"),
-        strdup("--iova-mode=va"),
         strdup(lcores_arg),
         strdup("-n"),
         strdup(mem_channels),
-        strdup("--proc-type=primary"),
         strdup(socket_mem_arg),
     };
     int eal_argc = sizeof(eal_args) / sizeof(eal_args[0]);
@@ -485,15 +443,8 @@ int main(int argc, char **argv)
     // printf("lcore_count: %u\n", rte_lcore_count());
     // printf("device_count: %u\n", g_num_ports);
 
-    g_arp_table_size = sizeof(g_entries) / sizeof(g_entries[0]);
-    for (i = 0; i < g_arp_table_size; i++)
-    {
-        g_arp_table[i].ip = parse_ip(g_entries[i].ip);
-        if (parse_mac(g_entries[i].mac, &g_arp_table[i].mac) < 0)
-        {
-            rte_exit(EXIT_FAILURE, "Invalid MAC format: %s\n", g_entries[i].mac);
-        }
-    }
+    g_arp_table_size = sizeof(g_arp_entries) / sizeof(g_arp_entries[0]);
+    g_arp_ctx = px_init_arp(g_arp_entries, g_arp_table_size);
 
     /* mbuf pool creation */
     for (core_id = 0; core_id < g_num_cores; core_id++)
@@ -562,6 +513,9 @@ int main(int argc, char **argv)
             rte_eal_wait_lcore(core_id);
         }
     }
+
+    /* cleanup */
+    px_free_arp(g_arp_ctx);
 
     for (i = 0; i < eal_argc; i++)
     {

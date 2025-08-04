@@ -1108,85 +1108,11 @@ is_stall_needed(struct px_ctx *pctx,
                 uint32_t target_segsz,
                 int print)
 {
-    unsigned int diff_ns, timeout_ns;
+    int64_t diff_ns, timeout_ns;
+    float factor;
+    double avg_iat;
+    int ret;
 #if ADAPTIVE_TIMEOUT
-    /* below is for 95% reception rate */
-    static const float timeout_factor_95[] = {
-        00.00f, // no need to stall
-        03.00f, // missing_segs = 1
-        04.74f, // missing_segs = 2
-        06.30f, // missing_segs = 3
-        07.75f, // missing_segs = 4
-        09.15f, // missing_segs = 5
-        10.51f, // missing_segs = 6
-        11.84f, // missing_segs = 7
-        13.15f, // missing_segs = 8
-        14.43f, // missing_segs = 9
-        15.71f, // missing_segs = 10
-        16.96f, // missing_segs = 11
-        18.21f, // missing_segs = 12
-        19.44f, // missing_segs = 13
-        20.67f, // missing_segs = 14
-        21.89f, // missing_segs = 15
-        23.10f, // missing_segs = 16
-        24.31f, // missing_segs = 17
-        25.51f, // missing_segs = 18
-        26.71f, // missing_segs = 19
-        27.90f, // missing_segs = 20
-    };
-    /* below is for 99% reception rate */
-    static const float timeout_factor_99[] = {
-        00.00f, // no need to stall
-        04.61f, // missing_segs = 1
-        06.64f, // missing_segs = 2
-        08.41f, // missing_segs = 3
-        10.05f, // missing_segs = 4
-        11.60f, // missing_segs = 5
-        13.06f, // missing_segs = 6
-        14.45f, // missing_segs = 7
-        15.79f, // missing_segs = 8
-        17.11f, // missing_segs = 9
-        18.42f, // missing_segs = 10
-        19.69f, // missing_segs = 11
-        20.96f, // missing_segs = 12
-        22.21f, // missing_segs = 13
-        23.45f, // missing_segs = 14
-        24.67f, // missing_segs = 15
-        25.89f, // missing_segs = 16
-        27.09f, // missing_segs = 17
-        28.29f, // missing_segs = 18
-        29.48f, // missing_segs = 19
-        30.66f, // missing_segs = 20
-    };
-    /* below is for 99.9% reception rate */
-    static const float timeout_factor_999[] = {
-        00.00f, // no need to stall
-        06.91f, // missing_segs = 1
-        09.88f, // missing_segs = 2
-        11.26f, // missing_segs = 3
-        13.11f, // missing_segs = 4
-        14.85f, // missing_segs = 5
-        16.50f, // missing_segs = 6
-        18.08f, // missing_segs = 7
-        19.60f, // missing_segs = 8
-        21.07f, // missing_segs = 9
-        22.51f, // missing_segs = 10
-        23.91f, // missing_segs = 11
-        25.28f, // missing_segs = 12
-        26.62f, // missing_segs = 13
-        27.94f, // missing_segs = 14
-        29.24f, // missing_segs = 15
-        30.52f, // missing_segs = 16
-        31.78f, // missing_segs = 17
-        33.02f, // missing_segs = 18
-        34.25f, // missing_segs = 19
-        35.47f, // missing_segs = 20
-    };
-
-    /* choose one of below */
-    // static const float *timeout_factor = timeout_factor_95;
-    // static const float *timeout_factor = timeout_factor_99;
-    static const float *timeout_factor = timeout_factor_999;
 
     uint32_t max_seg_nb = target_segsz / orig_segsz;
     if ((max_seg_nb == 0) || (get_data_len(cur_pkt) >= target_segsz))
@@ -1195,30 +1121,32 @@ is_stall_needed(struct px_ctx *pctx,
         return 0;
     }
 
-    uint32_t missing_segs = (target_segsz - get_data_len(cur_pkt)) / orig_segsz;
-    if (missing_segs >= 21)
-    {
-        /* to avoid seg fault due to nicmem, dump only first segment */
-        rte_exit(EXIT_FAILURE, "Missing_segs is too large. "
-                               "It might be due to overflow. "
-                               "Please do debug.\n");
-        return 0;
-    }
+    uint32_t missing_segs_nb = (target_segsz - get_data_len(cur_pkt)) /
+                               orig_segsz;
 
-    float factor = timeout_factor[missing_segs];
+    factor = get_time_factor(missing_segs_nb);
 #else
-    float factor = 1.0f; // Default factor for non-adaptive timeout
+    factor = 1.0f; // Default factor for non-adaptive timeout
 #endif
+    ret = iat_search_entry(pctx->iat_ctx,
+                           cur_pkt,
+                           g_px_dev[pctx->port_id].timeout_ns,
+                           &avg_iat);
+    if (ret < 0)
+    {
+        fprintf(stderr, "iat table search failed\n");
+        // avg_iat = g_px_dev[pctx->port_id].timeout_ns; // Use default timeout
+    }
     diff_ns = get_nsec_diff(&pctx->now_ns, timestamp);
-    timeout_ns = g_px_dev[pctx->port_id].timeout_ns * factor;
+    timeout_ns = (int64_t)(avg_iat * factor);
     if (print)
     {
-        printf("max_seg_nb: %u, missing_segs: %u, "
+        printf("max_seg_nb: %u, missing_segs_nb: %u, "
                "orig_segsz: %u, target_segsz: %u, "
-               "diff_ns: %u, timeout_ns: %u\n",
-               max_seg_nb, missing_segs,
+               "diff_ns: %ld, avg_iat: %lf, factor: %f, timeout_ns: %ld\n",
+               max_seg_nb, missing_segs_nb,
                orig_segsz, target_segsz,
-               diff_ns, timeout_ns);
+               diff_ns, avg_iat, factor, timeout_ns);
     }
 
     return diff_ns < timeout_ns;
@@ -1489,6 +1417,11 @@ assemble_tcp(struct px_ctx *pctx,
     // }
 
     /* found first neighbor item */
+    // if (!same_timestamp(timestamp, &cur_item->timestamp))
+    // {
+    //     printf("1 stalled %ld ns\n", get_nsec_diff(timestamp,
+    //                                                &cur_item->timestamp));
+    // }
     if (!merge_tcp(cur_item, firstseg, lastseg, cmp))
     {
         /* bigger than 64KB; store this packet as a new item in the given flow */
@@ -1537,6 +1470,11 @@ assemble_tcp(struct px_ctx *pctx,
     // }
 
     /* found second neighbor item */
+    // if (!same_timestamp(timestamp, &cur_item->timestamp))
+    // {
+    //     printf("2 stalled %ld ns\n", get_nsec_diff(timestamp,
+    //                                                &cur_item->timestamp));
+    // }
     if (!merge_tcp(merged_item, cur_item->firstseg,
                    cur_item->lastseg, cmp))
     {
@@ -1653,6 +1591,12 @@ parse_for_tcp_gro(struct rte_mbuf *pkt,
         return -1;
     }
 
+    /* only process payload length > 0 */
+    if (unlikely(pkt->pkt_len <= get_hdr_len(pkt)))
+    {
+        return -1;
+    }
+
     // printf("\npkt_len: %d, data_len: %d, nb_segs: %d, next: %p\n",
     //         pkt->pkt_len, pkt->data_len, pkt->nb_segs, pkt->next);
     // printf("buf_addr: %p, iova: %p\n", pkt->buf_addr, pkt->buf_iova);
@@ -1737,12 +1681,24 @@ int px_parse_packet(struct px_ctx *pctx,
         rte_pktmbuf_trim(pkt, pkt->pkt_len - real_pkt_len);
     }
 
-    /* parse HW timestamp */
-    rte_mbuf_timestamp_t *rx_timestamp = get_rx_hw_timestamp(pkt);
-    printf("[port %d] RX HW timestamp: %#016lx %s\n",
-           pctx->port_id,
-           *rx_timestamp,
-           pkt->ol_flags & PKT_RX_LRO ? "(LROed)" : "(not LROed)");
+    /* parse HW timestamp and TCP timestamp */
+    // if (is_downlink(pkt))
+    // {
+    //     rte_mbuf_timestamp_t *rx_timestamp = get_rx_hw_timestamp(pkt);
+    //     uint64_t *ts = get_tcp_timestamp(pkt);
+    //     if (rx_timestamp && ts)
+    //     {
+    //         uint32_t tsval, tsecr;
+    //         tsval = rte_be_to_cpu_32(*(uint32_t *)ts);
+    //         tsecr = rte_be_to_cpu_32(*((uint32_t *)ts + 1));
+
+    //         printf("[port %d] RX HW timestamp: 0x%016lx, "
+    //                "TCP timestamp: 0x%016lx (tsval: %10u, tsecr: %10u) %s\n",
+    //                pctx->port_id, *rx_timestamp,
+    //                rte_be_to_cpu_64(*ts), tsval, tsecr,
+    //                pkt->ol_flags & PKT_RX_LRO ? "(LROed)" : "(not LROed)");
+    //     }
+    // }
 
     /* parse L4 */
     if (is_tcp(pkt))
@@ -1758,16 +1714,25 @@ int px_parse_packet(struct px_ctx *pctx,
         /* target for offloading */
         if (g_px_dev[pctx->port_id].hp_ctx.hp_num_rxq)
         {
-            insert_4tuple(pkt);
+            insert_four_tuple(pkt);
         }
-
-        /* parse for TCP GRO */
-        ret = parse_for_tcp_gro(pkt, tcp_flags);
 
         /* check if the pkt is outgoing */
         if (is_uplink(pkt))
         {
             mark_px(pkt);
+        }
+        if (is_downlink(pkt))
+        {
+            iat_update_entry(pctx->iat_ctx, pkt,
+                             g_px_dev[pctx->port_id].timeout_ns);
+        }
+
+        /* parse for TCP GRO */
+        ret = parse_for_tcp_gro(pkt, tcp_flags);
+        if (ret < 0)
+        {
+            return ret;
         }
 
         /* use below when stop TCP GRO */
@@ -1786,16 +1751,25 @@ int px_parse_packet(struct px_ctx *pctx,
         /* target for offloading */
         if (g_px_dev[pctx->port_id].hp_ctx.hp_num_rxq)
         {
-            insert_4tuple(pkt);
+            insert_four_tuple(pkt);
         }
 
         /* parse for UDP GRO */
         ret = parse_for_udp_gro(pkt);
+        if (ret < 0)
+        {
+            return ret;
+        }
 
         /* check if the pkt is outgoing */
         if (is_uplink(pkt))
         {
             mark_px(pkt);
+        }
+        if (is_downlink(pkt))
+        {
+            iat_update_entry(pctx->iat_ctx, pkt,
+                             g_px_dev[pctx->port_id].timeout_ns);
         }
 
         /* use below when stop UDP GRO */
@@ -1840,10 +1814,10 @@ int px_parse_packet(struct px_ctx *pctx,
 
             /* update the MSS entry */
             new_pctx = &g_pctx[pkt->port][outer_qid];
-            evict_mss_entry(new_pctx->mss_ctx,
+            mss_evict_entry(new_pctx->mss_ctx,
                             reverse_rss,
                             &reverse_key);
-            insert_mss_entry(new_pctx->mss_ctx,
+            mss_insert_entry(new_pctx->mss_ctx,
                              reverse_rss,
                              &reverse_key,
                              next_hop_mtu);
@@ -1862,12 +1836,6 @@ int px_parse_packet(struct px_ctx *pctx,
 
     // printf("pkt_len: %d, l2_len: %d, l3_len: %d, l4_len: %d\n",
     //        pkt->pkt_len, pkt->l2_len, pkt->l3_len, pkt->l4_len);
-
-    /* only process payload length > 0 */
-    if (unlikely(pkt->pkt_len <= get_hdr_len(pkt)))
-    {
-        return -1;
-    }
 
     /*
      * ToDo: GRO for under 128B packets.
@@ -2151,7 +2119,7 @@ link_and_flush(struct px_ctx *pctx,
             /* if outgoing packet, use original eMSS */
             if (is_px(tmp))
             {
-                search_mss_entry(pctx->mss_ctx,
+                mss_search_entry(pctx->mss_ctx,
                                  tmp->hash.rss,
                                  get_four_tuple(tmp),
                                  &saved_segsz);
@@ -2596,11 +2564,11 @@ px_core(struct px_ctx *pctx,
                         new_pctx = &g_pctx[pkt->port][outer_qid];
 
                         /* insert MSS to hashtable */
-                        insert_mss_entry(new_pctx->mss_ctx,
+                        mss_insert_entry(new_pctx->mss_ctx,
                                          reverse_rss,
                                          &reverse_key,
                                          rte_be_to_cpu_16(*mss_ptr));
-                        printf("mss: %u\n", rte_be_to_cpu_16(*mss_ptr));
+                        // printf("[SYN/SYNACK] mss: %u\n", rte_be_to_cpu_16(*mss_ptr));
 
                         /* update MSS */
                         update_mss(mss_ptr, 0, 1);
@@ -2636,7 +2604,7 @@ px_core(struct px_ctx *pctx,
                         new_pctx = &g_pctx[pkt->port][outer_qid];
 
                         /* evict MSSes from hashtable */
-                        evict_mss_entry(new_pctx->mss_ctx,
+                        mss_evict_entry(new_pctx->mss_ctx,
                                         reverse_rss,
                                         &reverse_key);
                     }
@@ -2647,7 +2615,7 @@ px_core(struct px_ctx *pctx,
                         key = get_four_tuple(pkt);
 
                         /* search MSS of this flow */
-                        search_mss_entry(pctx->mss_ctx,
+                        mss_search_entry(pctx->mss_ctx,
                                          pkt->hash.rss,
                                          key,
                                          &segsz);
@@ -2687,7 +2655,7 @@ px_core(struct px_ctx *pctx,
                         key = get_four_tuple(pkt);
 
                         /* search MSS of this flow */
-                        search_mss_entry(pctx->mss_ctx,
+                        mss_search_entry(pctx->mss_ctx,
                                          pkt->hash.rss,
                                          key,
                                          &segsz);
@@ -2730,7 +2698,7 @@ px_core(struct px_ctx *pctx,
                         new_pctx = &g_pctx[pkt->port][outer_qid];
 
                         /* evict MSSes from hashtable */
-                        evict_mss_entry(new_pctx->mss_ctx,
+                        mss_evict_entry(new_pctx->mss_ctx,
                                         reverse_rss,
                                         &reverse_key);
                     }
@@ -2741,7 +2709,7 @@ px_core(struct px_ctx *pctx,
                         key = get_four_tuple(pkt);
 
                         /* search MSS of this flow */
-                        search_mss_entry(pctx->mss_ctx,
+                        mss_search_entry(pctx->mss_ctx,
                                          pkt->hash.rss,
                                          key,
                                          &segsz);
@@ -2825,11 +2793,20 @@ void px_deinit(uint16_t port_id,
 
     if (pctx->mss_ctx)
     {
-        if (destroy_mss_ctx(pctx->mss_ctx) < 0)
+        if (mss_destroy_ctx(pctx->mss_ctx) < 0)
         {
             rte_exit(EXIT_FAILURE, "Cannot destroy MSS ctx\n");
         }
         pctx->mss_ctx = NULL;
+    }
+
+    if (pctx->iat_ctx)
+    {
+        if (iat_destroy_ctx(pctx->iat_ctx) < 0)
+        {
+            rte_exit(EXIT_FAILURE, "Cannot destroy IAT ctx\n");
+        }
+        pctx->iat_ctx = NULL;
     }
 
     /* free items array */
@@ -2894,6 +2871,7 @@ int px_init(uint16_t port_id,
             uint16_t queue_id,
             int burst,
             int mss_table_size,
+            int iat_table_size,
             int do_link)
 {
     struct px_dev *px_dev = &g_px_dev[port_id];
@@ -2920,10 +2898,18 @@ int px_init(uint16_t port_id,
 
     if (mss_table_size && !pctx->mss_ctx)
     {
-        pctx->mss_ctx = init_mss_ctx(queue_id, mss_table_size);
+        pctx->mss_ctx = mss_init_ctx(port_id, queue_id, mss_table_size);
         if (!pctx->mss_ctx)
         {
             rte_exit(EXIT_FAILURE, "Cannot init MSS ctx\n");
+        }
+    }
+    if (px_dev->timeout_ns && !pctx->iat_ctx)
+    {
+        pctx->iat_ctx = iat_init_ctx(port_id, queue_id, iat_table_size, EWMA_ALPHA);
+        if (!pctx->iat_ctx)
+        {
+            rte_exit(EXIT_FAILURE, "Cannot init IAT ctx\n");
         }
     }
 
@@ -3085,11 +3071,9 @@ px_eth_conf(uint16_t port_id,
     {
 #if RTE_VERSION < RTE_VERSION_NUM(20, 11, 10, 99)
         conf->rxmode.offloads |= DEV_RX_OFFLOAD_BUFFER_SPLIT |
-                                 DEV_RX_OFFLOAD_TIMESTAMP |
                                  DEV_RX_OFFLOAD_SCATTER;
 #else
         conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT |
-                                 DEV_RX_OFFLOAD_TIMESTAMP |
                                  DEV_RX_OFFLOAD_SCATTER;
 #endif
     }
@@ -3134,7 +3118,6 @@ px_eth_conf(uint16_t port_id,
     if (is_nicmem)
     {
         conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT |
-                                 RTE_ETH_RX_OFFLOAD_TIMESTAMP |
                                  RTE_ETH_RX_OFFLOAD_SCATTER;
     }
 

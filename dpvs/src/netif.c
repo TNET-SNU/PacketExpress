@@ -4152,7 +4152,7 @@ int netif_port_start(struct netif_port *port)
     actions[1].type = RTE_FLOW_ACTION_TYPE_VOID;
     for (qid = 0; qid < port->nrxq; qid++)
     {
-        if (px_init(port->id, qid, NETIF_MAX_PKT_BURST, !JUMBO_FRAME ? 4096 : 0, USE_LINK) < 0) {
+        if (px_init(port->id, qid, NETIF_MAX_PKT_BURST, !JUMBO_FRAME ? 4096 : 0, STALL_TIMEOUT_NS, USE_LINK) < 0) {
             RTE_LOG(ERR, NETIF, "%s: fail to config %s:rx-queue-%d\n",
                     __func__, port->name, qid);
             return EDPVS_DPDKAPIFAIL;

@@ -33,8 +33,12 @@
 #include "px_gro.h"
 /*----------------------------------------------------------------------------*/
 /* Essential macros */
-// #define MBUF_DATA_SIZE (65536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM)
+#if NICMEM
+#define MBUF_DATA_SIZE (49152 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM)
+// #define MBUF_DATA_SIZE (65536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
+#else
 #define MBUF_DATA_SIZE 9024
+#endif
 #define NB_MBUF ((2 * 1024 * 1024) - 1)
 #define MAX_PKT_BURST 64
 
@@ -331,7 +335,8 @@ port_init(uint16_t portid, uint16_t num_queue)
     actions[1].type = RTE_FLOW_ACTION_TYPE_VOID;
     for (uint16_t qid = 0; qid < num_queue; qid++)
     {
-        if (px_init(portid, qid, MAX_PKT_BURST, !JUMBO_FRAME ? 4096 : 0, USE_LINK) < 0)
+        if (px_init(portid, qid, MAX_PKT_BURST, !JUMBO_FRAME ? 4096 : 0,
+                    STALL_TIMEOUT_NS, USE_LINK) < 0)
         {
             rte_exit(EXIT_FAILURE, "px_init failed\n");
         }
@@ -446,7 +451,7 @@ void lcore_main(void)
             {
                 struct rte_mbuf *pkt = pkts[i];
                 struct ri_node node;
-                struct four_tuple *key = search_4tuple(pkt);
+                struct four_tuple *key = search_four_tuple(pkt);
                 if (!key)
                 {
                     continue;
@@ -501,7 +506,6 @@ int main(int argc, char **argv)
         if (opt == 'c')
         {
             g_num_cores = atoi(optarg);
-            printf("g_num_cores: %d\n", g_num_cores);
             if (g_num_cores > RTE_MAX_LCORE)
             {
                 fprintf(stderr, "Error: g_num_cores (%d) > RTE_MAX_LCORE (%d)\n",
@@ -518,6 +522,10 @@ int main(int argc, char **argv)
     rte_log_set_level(RTE_LOGTYPE_RING, 0);
     rte_log_set_level(RTE_LOGTYPE_MEMPOOL, 0);
     rte_log_set_level(RTE_LOG_WARNING, 0);
+
+    // rte_log_set_global_level(RTE_LOG_ERR);
+    // rte_log_set_level(RTE_LOGTYPE_PMD, RTE_LOG_ERR);
+    // rte_log_set_level(rte_log_register("pmd.net.mlx5"), RTE_LOG_ERR);
 
     char mem_channels[5];
     char lcores_arg[256];
@@ -545,11 +553,9 @@ int main(int argc, char **argv)
     /* EAL configuration */
     char *eal_args[] = {
         strdup("pxgw"),
-        strdup("--iova-mode=va"),
         strdup(lcores_arg),
         strdup("-n"),
         strdup(mem_channels),
-        strdup("--proc-type=primary"),
         strdup(socket_mem_arg),
 
         /**

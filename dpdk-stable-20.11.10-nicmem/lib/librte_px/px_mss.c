@@ -1,60 +1,8 @@
 #include "px_mss.h"
-#include <stdatomic.h>
 /*----------------------------------------------------------------------------*/
-static struct px_mss_ctx g_mss_ctx[RTE_MAX_LCORE] = {0};
-static pthread_t g_tid = 0;
-static volatile int g_shutdown = 0;
-/*----------------------------------------------------------------------------*/
-uint16_t *
-get_tcp_mss(struct rte_mbuf *pkt)
-{
-    uint8_t *tcpopt = get_tcp_option(pkt);
-    int total_optlen = get_tcp_optlen(pkt);
-    int opt, optlen;
-
-    for (int i = 0; i < total_optlen;)
-    {
-        opt = *(tcpopt + i++);
-        if (opt == TCPOPT_EOL)
-        {
-            /* end of option field */
-            break;
-        }
-        if (opt == TCPOPT_NOP)
-        {
-            /* no option */
-            continue;
-        }
-        optlen = *(tcpopt + i++);
-        if (i + optlen - 2 > total_optlen)
-        {
-            break;
-        }
-        if (opt == TCPOPT_MAXSEG)
-        {
-            return (uint16_t *)(tcpopt + i);
-        }
-        if (opt == TCPOPT_WINDOW)
-        {
-            i++;
-            continue;
-        }
-        if (opt == TCPOPT_SACK_PERMITTED)
-        {
-            continue;
-        }
-        if (opt == TCPOPT_TIMESTAMP)
-        {
-            i += 8;
-            continue;
-        }
-        /* not handle */
-        i += optlen - 2;
-    }
-
-    /* no MSS field found */
-    return NULL;
-}
+static struct px_mss_ctx g_mss_ctx[RTE_MAX_ETHPORTS][PX_MAX_QUEUES_PER_PORT] = {0};
+static pthread_t g_mss_tid = 0;
+static volatile int g_mss_shutdown = 0;
 /*----------------------------------------------------------------------------*/
 void update_mss(uint16_t *mss_ptr, uint16_t new_mss, int direction)
 {
@@ -81,26 +29,26 @@ void update_mss(uint16_t *mss_ptr, uint16_t new_mss, int direction)
 }
 /*----------------------------------------------------------------------------*/
 uint8_t *
-bloom_init(void)
+mss_bloom_init(void)
 {
     uint8_t *filter = (uint8_t *)calloc(UINT16_MAX + 1, 1);
     if (!filter)
     {
-        fprintf(stderr, "bloom_init: rte_malloc failed\n");
+        fprintf(stderr, "mss_bloom_init: rte_malloc failed\n");
     }
     memset(filter, 0, UINT16_MAX + 1);
 
     return filter;
 }
 /*----------------------------------------------------------------------------*/
-void bloom_destroy(uint8_t *filter)
+void mss_bloom_destroy(uint8_t *filter)
 {
     free(filter);
 }
 /*----------------------------------------------------------------------------*/
-int bloom_search(uint8_t *filter,
-                uint32_t rss,
-                struct four_tuple *key)
+int mss_bloom_search(uint8_t *filter,
+                     uint32_t rss,
+                     struct four_tuple *key)
 {
     uint16_t hash0 = xor_hash0(rss, (uint32_t *)key);
     if (!filter[hash0])
@@ -120,9 +68,9 @@ int bloom_search(uint8_t *filter,
     return 1;
 }
 /*----------------------------------------------------------------------------*/
-void bloom_insert(uint8_t *filter,
-                  uint32_t rss,
-                  struct four_tuple *key)
+void mss_bloom_insert(uint8_t *filter,
+                      uint32_t rss,
+                      struct four_tuple *key)
 {
     /* hash0 */
     uint16_t hash0 = xor_hash0(rss, (uint32_t *)key);
@@ -136,7 +84,7 @@ void bloom_insert(uint8_t *filter,
         atomic_fetch_sub_explicit(
             (atomic_uchar *)&filter[hash0], 1,
             memory_order_relaxed);
-        fprintf(stderr, "bloom_insert overflow, hash0=%u\n", hash0);
+        fprintf(stderr, "mss_bloom_insert overflow, hash0=%u\n", hash0);
         return;
     }
 
@@ -155,7 +103,7 @@ void bloom_insert(uint8_t *filter,
         atomic_fetch_sub_explicit(
             (atomic_uchar *)&filter[hash0], 1,
             memory_order_relaxed);
-        fprintf(stderr, "bloom_insert overflow, hash1=%u\n", hash1);
+        fprintf(stderr, "mss_bloom_insert overflow, hash1=%u\n", hash1);
         return;
     }
 
@@ -177,14 +125,14 @@ void bloom_insert(uint8_t *filter,
         atomic_fetch_sub_explicit(
             (atomic_uchar *)&filter[hash0], 1,
             memory_order_relaxed);
-        fprintf(stderr, "bloom_insert overflow, hash2=%u\n", hash2);
+        fprintf(stderr, "mss_bloom_insert overflow, hash2=%u\n", hash2);
         return;
     }
 }
 /*----------------------------------------------------------------------------*/
-void bloom_delete(uint8_t *filter,
-                  uint32_t rss,
-                  struct four_tuple *key)
+void mss_bloom_delete(uint8_t *filter,
+                      uint32_t rss,
+                      struct four_tuple *key)
 {
     /* hash0 */
     uint16_t hash0 = xor_hash0(rss, (uint32_t *)key);
@@ -198,7 +146,7 @@ void bloom_delete(uint8_t *filter,
         atomic_fetch_add_explicit(
             (atomic_uchar *)&filter[hash0], 1,
             memory_order_relaxed);
-        fprintf(stderr, "bloom_delete: no data, hash0=%u\n", hash0);
+        fprintf(stderr, "mss_bloom_delete: no data, hash0=%u\n", hash0);
         return;
     }
 
@@ -217,7 +165,7 @@ void bloom_delete(uint8_t *filter,
         atomic_fetch_add_explicit(
             (atomic_uchar *)&filter[hash0], 1,
             memory_order_relaxed);
-        fprintf(stderr, "bloom_delete: no data, hash1=%u\n", hash1);
+        fprintf(stderr, "mss_bloom_delete: no data, hash1=%u\n", hash1);
         return;
     }
 
@@ -239,40 +187,49 @@ void bloom_delete(uint8_t *filter,
         atomic_fetch_add_explicit(
             (atomic_uchar *)&filter[hash0], 1,
             memory_order_relaxed);
-        fprintf(stderr, "bloom_delete: no data, hash2=%u\n", hash2);
+        fprintf(stderr, "mss_bloom_delete: no data, hash2=%u\n", hash2);
         return;
     }
 }
 /*----------------------------------------------------------------------------*/
 static void *
-periodic_cleanup(void *arg)
+mss_periodic_cleanup(void *arg)
 {
-    int i;
+    uint16_t port_nb = rte_eth_dev_count_avail();
+    int i, j;
     (void)arg;
-    while (!g_shutdown)
+    while (!g_mss_shutdown)
     {
-        for (i = 0; i < RTE_MAX_LCORE; i++)
+        for (i = 0; i < port_nb; i++)
         {
-            if (g_mss_ctx[i].initialized)
+            for (j = 0; j < PX_MAX_QUEUES_PER_PORT; j++)
             {
-                flush_timeout(&g_mss_ctx[i]);
-                sleep(MSS_THREAD_PERIOD);
+                if (g_mss_ctx[i][j].initialized)
+                {
+                    mss_flush_timeout(&g_mss_ctx[i][j]);
+                }
+                if (g_mss_shutdown)
+                {
+                    break;
+                }
             }
-            if (g_shutdown)
+            if (g_mss_shutdown)
             {
                 break;
             }
         }
+        sleep(MSS_THREAD_PERIOD);
     }
 
     return NULL;
 }
 /*----------------------------------------------------------------------------*/
 struct px_mss_ctx *
-init_mss_ctx(uint16_t core_id,
+mss_init_ctx(uint16_t port_id,
+             uint16_t queue_id,
              uint32_t num_entry)
 {
-    struct px_mss_ctx *ctx = &g_mss_ctx[core_id];
+    struct px_mss_ctx *ctx = &g_mss_ctx[port_id][queue_id];
     char name[MAX_NAME_SIZE];
 
     /* make every port shares the MSS context */
@@ -280,10 +237,9 @@ init_mss_ctx(uint16_t core_id,
     {
         return ctx;
     }
-    ctx->core_id = core_id;
 
     /* Initialize the mempool for flow_mss_entry structs */
-    snprintf(name, sizeof(name), "emss-mempool-%d", core_id);
+    snprintf(name, sizeof(name), "emss-mempool-%d-%d", port_id, queue_id);
     ctx->pool = rte_mempool_create(name,
                                    num_entry,
                                    sizeof(struct flow_mss_entry),
@@ -303,11 +259,11 @@ init_mss_ctx(uint16_t core_id,
     }
 
     /* Initialize the hash table */
-    snprintf(name, sizeof(name), "emss-hashtable-%d", core_id);
+    snprintf(name, sizeof(name), "emss-hashtable-%d-%d", port_id, queue_id);
     struct rte_hash_parameters hash_params = {
         .name = name,
         .entries = num_entry,
-        .key_len = FLOW_KEY_SIZE,
+        .key_len = sizeof(struct four_tuple),
         .hash_func = rte_jhash,
         .hash_func_init_val = 0,
         .socket_id = rte_socket_id(),
@@ -323,7 +279,7 @@ init_mss_ctx(uint16_t core_id,
         return NULL;
     }
 
-    ctx->bf = bloom_init();
+    ctx->bf = mss_bloom_init();
     if (!ctx->bf)
     {
         fprintf(stderr, "Failed to create counting bloom filter\n");
@@ -334,22 +290,24 @@ init_mss_ctx(uint16_t core_id,
     }
 
     /* Create a new thread for periodic cleanup */
-    // if (pthread_create(&g_tid, NULL, periodic_cleanup, NULL) != 0)
+    // if (pthread_create(&g_mss_tid, NULL, mss_periodic_cleanup, NULL) != 0)
     // {
     //     fprintf(stderr, "Failed to create cleanup thread\n");
-    //     bloom_destroy(ctx->bf);
+    //     mss_bloom_destroy(ctx->bf);
     //     rte_hash_free(ctx->tbl);
     //     rte_mempool_free(ctx->pool);
     //     rte_free(ctx);
     //     return NULL;
     // }
 
+    ctx->port_id = port_id;
+    ctx->queue_id = queue_id;
     ctx->initialized = 1;
 
     return ctx;
 }
 /*----------------------------------------------------------------------------*/
-int destroy_mss_ctx(struct px_mss_ctx *ctx)
+int mss_destroy_ctx(struct px_mss_ctx *ctx)
 {
     const void *next_key;
     void *next_data;
@@ -367,14 +325,14 @@ int destroy_mss_ctx(struct px_mss_ctx *ctx)
     }
 
     /* Free the hash table and mempool */
-    bloom_destroy(ctx->bf);
+    mss_bloom_destroy(ctx->bf);
     rte_hash_free(ctx->tbl);
     rte_mempool_free(ctx->pool);
 
-    g_shutdown = 1;
-    if (g_tid)
+    g_mss_shutdown = 1;
+    if (g_mss_tid)
     {
-        if (pthread_join(g_tid, NULL) != 0)
+        if (pthread_join(g_mss_tid, NULL) != 0)
         {
             fprintf(stderr, "Failed to join cleanup thread\n");
             return -1;
@@ -386,20 +344,20 @@ int destroy_mss_ctx(struct px_mss_ctx *ctx)
     return 0;
 }
 /*----------------------------------------------------------------------------*/
-int search_mss_entry(struct px_mss_ctx *ctx,
+int mss_search_entry(struct px_mss_ctx *ctx,
                      uint32_t rss,
                      struct four_tuple *key,
                      uint32_t *mss)
 {
     struct flow_mss_entry *entry;
 
-    if (!bloom_search(ctx->bf, rss, key))
+    if (!mss_bloom_search(ctx->bf, rss, key))
     {
         /* not exist in bloom filter */
         *mss = 0;
         return -1;
     };
-    
+
     if (rte_hash_lookup_data(ctx->tbl, key, (void **)&entry) < 0)
     {
         /* already evicted */
@@ -414,7 +372,7 @@ int search_mss_entry(struct px_mss_ctx *ctx,
     return 0;
 }
 /*----------------------------------------------------------------------------*/
-int insert_mss_entry(struct px_mss_ctx *ctx,
+int mss_insert_entry(struct px_mss_ctx *ctx,
                      uint32_t rss,
                      struct four_tuple *key,
                      uint32_t mss)
@@ -443,7 +401,7 @@ int insert_mss_entry(struct px_mss_ctx *ctx,
         rte_mempool_put(ctx->pool, entry);
 
         /* delete from bloom filter */
-        bloom_delete(ctx->bf, rss, key);
+        mss_bloom_delete(ctx->bf, rss, key);
     }
 
     /* Allocate a new entry from the mempool */
@@ -466,12 +424,12 @@ int insert_mss_entry(struct px_mss_ctx *ctx,
     }
 
     /* insert to bloom filter */
-    bloom_insert(ctx->bf, rss, key);
+    mss_bloom_insert(ctx->bf, rss, key);
 
     return 0;
 }
 /*----------------------------------------------------------------------------*/
-int evict_mss_entry(struct px_mss_ctx *ctx,
+int mss_evict_entry(struct px_mss_ctx *ctx,
                     uint32_t rss,
                     struct four_tuple *key)
 {
@@ -486,7 +444,7 @@ int evict_mss_entry(struct px_mss_ctx *ctx,
         rte_mempool_put(ctx->pool, entry);
 
         /* delete from bloom filter */
-        bloom_delete(ctx->bf, rss, key);
+        mss_bloom_delete(ctx->bf, rss, key);
 
         return 0;
     }
@@ -501,7 +459,7 @@ int evict_mss_entry(struct px_mss_ctx *ctx,
     }
 }
 /*----------------------------------------------------------------------------*/
-void flush_timeout(struct px_mss_ctx *ctx)
+void mss_flush_timeout(struct px_mss_ctx *ctx)
 {
     struct flow_mss_entry *entry;
     const void *next_key;

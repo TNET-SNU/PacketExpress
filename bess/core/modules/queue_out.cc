@@ -84,7 +84,7 @@ void QueueOut::ProcessBatch(Context *, bess::PacketBatch *batch) {
   if (p->conf().admin_up) {
 #if USE_LINK
     /* use below for NAT */
-    // batch->set_cnt(px_unlink(reinterpret_cast<rte_mbuf **>(batch->pkts()), batch->cnt(), reflect_4tuple));
+    // batch->set_cnt(px_unlink(reinterpret_cast<rte_mbuf **>(batch->pkts()), batch->cnt(), reflect_four_tuple));
     /* use below for UPF and HashLB */
     int cnt1 = batch->cnt();
     batch->set_cnt(px_unlink(reinterpret_cast<rte_mbuf **>(batch->pkts()), batch->cnt(), NULL));

@@ -116,7 +116,7 @@ reflect_encap_and_mac(struct rte_mbuf *cur,
     return 0;
 }
 /*----------------------------------------------------------------------------*/
-void reflect_4tuple(struct rte_mbuf *cur,
+void reflect_four_tuple(struct rte_mbuf *cur,
                     struct rte_mbuf *start);
 /*----------------------------------------------------------------------------*/
 uint16_t

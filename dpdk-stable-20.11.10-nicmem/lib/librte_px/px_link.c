@@ -1,6 +1,6 @@
 #include "px_link.h"
 /*----------------------------------------------------------------------------*/
-void reflect_4tuple(struct rte_mbuf *cur,
+void reflect_four_tuple(struct rte_mbuf *cur,
                     struct rte_mbuf *start)
 {
     unsigned int four_tuple_off =

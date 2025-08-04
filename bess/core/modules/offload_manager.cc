@@ -49,7 +49,7 @@ void OffloadManager::ProcessBatch(Context *ctx, bess::PacketBatch *batch) {
     node.pkt = reinterpret_cast<rte_mbuf *>(p);
 
     hexdump("backup 4 tuple",
-            (uint8_t *)search_4tuple(reinterpret_cast<rte_mbuf *>(p)),
+            (uint8_t *)search_four_tuple(reinterpret_cast<rte_mbuf *>(p)),
             sizeof(struct four_tuple));
 
     /* now create new rule */

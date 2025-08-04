@@ -60,6 +60,11 @@ int px_nicmem_configure(struct px_nicmem_ctx *nm_ctx,
     emem.elt_size = pkt_size;
     emem.buf_len = num_nicmem * pkt_size;
 
+    printf("[port %d] Allocating NIC memory: elt_size: %u, num: %u, buf_len: %lu\n",
+           port_id, emem.elt_size, num_nicmem, emem.buf_len);
+
+    // for (i = 0; i < 4; i++)
+    // {
     /* MEM_NIC_PINNED */
     ret = rte_dev_alloc_dm(dev_info->device,
                            &emem.buf_ptr,
@@ -94,13 +99,13 @@ int px_nicmem_configure(struct px_nicmem_ctx *nm_ctx,
                               emem.buf_len);
     if (ret)
     {
-        fprintf(stderr, "[port %d] Failed to get NIC DMA map %p %ld\n",
-                port_id, emem.buf_ptr, emem.buf_len);
+        fprintf(stderr, "[port %d] Failed to get NIC DMA map: ptr: %p, iova: %p, len: %ld\n",
+                port_id, emem.buf_ptr, (void *)emem.buf_iova, emem.buf_len);
         return ret;
     }
-    fprintf(stderr, "[port %d] Got DMA map: %p %lu\n",
-            port_id, emem.buf_ptr, emem.buf_len);
-
+    fprintf(stderr, "[port %d] Got DMA map: ptr: %p, iova: %p, len: %lu\n",
+            port_id, emem.buf_ptr, (void *)emem.buf_iova, emem.buf_len);
+    // }
     /*
      * This fills external memory with repeated
      * instances of NIC memory to overcome the

@@ -18,22 +18,23 @@
 #include <rte_malloc.h>
 #include <rte_mempool.h>
 #include <rte_bitops.h>
+#include <unistd.h>
 #include <inttypes.h>
 #include <time.h>
+#include <stdatomic.h>
 #include <pthread.h>
 #include <sys/queue.h>
 #include <arpa/inet.h>
-#include <unistd.h>
 #include <x86intrin.h>
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
-
+/*----------------------------------------------------------------------------*/
 #define MLX5_ENABLED 1
 #define ADAPTIVE_TIMEOUT 1
-#define SEMANTIC_TEST 0
+#define SEMANTIC_TEST 1
 #define MAX_NAME_SIZE 32
 #define FALLBACK_eMTU 1240
 
@@ -75,6 +76,26 @@ extern "C"
 #define MAX(a, b) ((a > b) ? a : b)
 #define MIN(a, b) ((a > b) ? b : a)
 
+/*----------------------------------------------------------------------------*/
+/* for TCP option parsing */
+#define TCPOPT_EOL 0
+#define TCPOPT_NOP 1
+#define TCPOPT_MAXSEG 2
+#define TCPOLEN_MAXSEG 4
+#define TCPOPT_WINDOW 3
+#define TCPOLEN_WINDOW 3
+#define TCPOPT_SACK_PERMITTED 4 /* Experimental */
+#define TCPOLEN_SACK_PERMITTED 2
+#define TCPOPT_SACK 5 /* Experimental */
+#define TCPOPT_TIMESTAMP 8
+#define TCPOLEN_TIMESTAMP 10
+#define TCPOLEN_TSTAMP_APPA (TCPOLEN_TIMESTAMP + 2) /* appendix A */
+
+#define TCPOPT_TSTAMP_HDR    \
+    (TCPOPT_NOP << 24 |      \
+     TCPOPT_NOP << 16 |      \
+     TCPOPT_TIMESTAMP << 8 | \
+     TCPOLEN_TIMESTAMP)
 /*----------------------------------------------------------------------------*/
 static inline void
 px_clock_gettime(clockid_t clk_id, struct timespec *ts)
@@ -468,6 +489,105 @@ static inline uint32_t
 get_tcp_optlen(struct rte_mbuf *pkt)
 {
     return pkt->l4_len - sizeof(struct rte_tcp_hdr);
+}
+/*----------------------------------------------------------------------------*/
+/* Get TCP timestamp values from options */
+static inline uint64_t *
+get_tcp_timestamp(struct rte_mbuf *pkt)
+{
+    uint8_t *tcpopt = get_tcp_option(pkt);
+    int total_optlen = get_tcp_optlen(pkt);
+    int opt, optlen;
+
+    for (int i = 0; i < total_optlen;)
+    {
+        opt = *(tcpopt + i++);
+
+        if (opt == TCPOPT_EOL)
+        {
+            /* end of option field */
+            break;
+        }
+        if (opt == TCPOPT_NOP)
+        {
+            /* no option */
+            continue;
+        }
+        if (i >= total_optlen)  // prevent overrun
+        {
+            break;
+        }
+        optlen = *(tcpopt + i++);
+        if (optlen < 2 || i + (optlen - 2) > total_optlen)
+        {
+            break;
+        }
+        if (opt == TCPOPT_TIMESTAMP && optlen == TCPOLEN_TIMESTAMP)
+        {
+            return (uint64_t *)(tcpopt + i);
+        }
+        /* not handle */
+        i += optlen - 2;
+    }
+
+    /* no timestamp field found */
+    return NULL;
+}
+/*----------------------------------------------------------------------------*/
+/* Get TCP MSS values from options */
+static inline uint16_t *
+get_tcp_mss(struct rte_mbuf *pkt)
+{
+    uint8_t *tcpopt = get_tcp_option(pkt);
+    int total_optlen = get_tcp_optlen(pkt);
+    int opt, optlen;
+
+    for (int i = 0; i < total_optlen;)
+    {
+        opt = *(tcpopt + i++);
+        if (opt == TCPOPT_EOL)
+        {
+            /* end of option field */
+            break;
+        }
+        if (opt == TCPOPT_NOP)
+        {
+            /* no option */
+            continue;
+        }
+        if (i >= total_optlen)  // prevent overrun
+        {
+            break;
+        }
+        optlen = *(tcpopt + i++);
+        if (i + optlen - 2 > total_optlen)
+        {
+            break;
+        }
+        if (opt == TCPOPT_MAXSEG)
+        {
+            return (uint16_t *)(tcpopt + i);
+        }
+        if (opt == TCPOPT_WINDOW)
+        {
+            i++;
+            continue;
+        }
+        if (opt == TCPOPT_SACK_PERMITTED)
+        {
+            continue;
+        }
+        if (opt == TCPOPT_TIMESTAMP)
+        {
+            i += 8;
+            continue;
+        }
+        /* not handle */
+        i += optlen - 2;
+    }
+
+    /* no MSS field found */
+    return NULL;
 }
 /*----------------------------------------------------------------------------*/
 static inline uint32_t

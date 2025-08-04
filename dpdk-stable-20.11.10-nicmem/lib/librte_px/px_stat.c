@@ -14,6 +14,7 @@ void px_update_stats(uint16_t port_id,
 {
     struct px_stat *stat;
     struct rte_mbuf *pkt;
+    int64_t diff = 0;
     uint32_t data_len;
     int i, pkt_cnt = 0, data_pkt_cnt = 0;
     stat = &g_px_stat[port_id][queue_id];
@@ -46,10 +47,12 @@ void px_update_stats(uint16_t port_id,
 #if PX_MEASURE_DELAY
             if (now_ns)
             {
-                // stat->delay_us +=
-                //     get_usec_diff(now_ns, get_timestamp_from_headroom(pkt));
-                stat->delay_ns +=
-                    get_nsec_diff(now_ns, get_timestamp_from_headroom(pkt));
+                // diff = get_usec_diff(now_ns, get_timestamp_from_headroom(pkt));
+                diff = get_nsec_diff(now_ns, get_timestamp_from_headroom(pkt));
+                if (diff > 0)
+                {
+                    stat->delay_ns += diff;
+                }
             }
 #endif
             stat->data_pkt_cnt++;

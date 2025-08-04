@@ -699,7 +699,7 @@ dpdk_load_module_lower_half(void)
 			actions[1].type = RTE_FLOW_ACTION_TYPE_VOID;
 			for (uint16_t qid = 0; qid < g_config.mos->num_cores; qid++)
 			{
-				if (px_init(portid, qid, MAX_PKT_BURST, !JUMBO_FRAME ? 4096 : 0, USE_LINK) < 0)
+				if (px_init(portid, qid, MAX_PKT_BURST, !JUMBO_FRAME ? 4096 : 0, STALL_TIMEOUT_NS, USE_LINK) < 0)
 					rte_exit(EXIT_FAILURE, "px_init failed\n");
 				if (px_add_rule(portid, qid, patterns, 2, actions, 2) < 0)
 					rte_exit(EXIT_FAILURE, "px_add_rule failed\n");

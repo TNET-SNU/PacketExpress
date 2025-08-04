@@ -7,7 +7,29 @@
 extern "C"
 {
 #endif
-
+/*----------------------------------------------------------------------------*/
+#define IAT_THREAD_PERIOD 10
+#define IAT_TIMEOUT 300
+#define EWMA_ALPHA 0.125 // α = 1/8
+/*----------------------------------------------------------------------------*/
+/* Structure to encapsulate mempool and hash table */
+struct px_iat_ctx
+{
+    int initialized;
+    uint16_t port_id;
+    uint16_t core_id;
+    uint16_t queue_id;
+    uint16_t lq_id;
+    struct rte_hash *tbl;
+    struct rte_mempool *pool;
+    double ewma_alpha;
+};
+struct flow_iat_entry
+{
+    rte_mbuf_timestamp_t last_timestamp; /* HW timestamp of last packet */
+    uint64_t last_delta;                 /* last delta in ns */
+    double avg_iat;                      /* avg. IAT (EWMA) */
+};
 /*----------------------------------------------------------------------------*/
 /**
  * We handle MLX5 and non-MLX5 cases differently.
@@ -100,7 +122,16 @@ get_rx_hw_timestamp(struct rte_mbuf *pkt)
 }
 /*----------------------------------------------------------------------------*/
 /* ensure that end and start are not NULL before call this function */
-static inline unsigned int
+static inline int
+same_timestamp(struct timespec *end,
+               struct timespec *start)
+{
+    return (end->tv_nsec == start->tv_nsec) &&
+           (end->tv_sec == start->tv_sec);
+}
+/*----------------------------------------------------------------------------*/
+/* ensure that end and start are not NULL before call this function */
+static inline int64_t
 get_nsec_diff(struct timespec *end,
               struct timespec *start)
 {
@@ -109,7 +140,7 @@ get_nsec_diff(struct timespec *end,
 }
 /*----------------------------------------------------------------------------*/
 /* ensure that end and start are not NULL before call this function */
-static inline unsigned int
+static inline int64_t
 get_usec_diff(struct timespec *end,
               struct timespec *start)
 {
@@ -118,7 +149,7 @@ get_usec_diff(struct timespec *end,
 }
 /*----------------------------------------------------------------------------*/
 /* ensure that end and start are not NULL before call this function */
-static inline unsigned int
+static inline int64_t
 get_msec_diff(struct timespec *end,
               struct timespec *start)
 {
@@ -213,7 +244,118 @@ copy_timestamp(struct rte_mbuf *dst,
     put_timestamp_to_headroom(dst, ts);
 }
 /*----------------------------------------------------------------------------*/
+struct px_iat_ctx *
+iat_init_ctx(uint16_t port_id,
+             uint16_t queue_id,
+             uint32_t num_entry,
+             double ewma_alpha);
+/*----------------------------------------------------------------------------*/
+int iat_destroy_ctx(struct px_iat_ctx *ctx);
+/*----------------------------------------------------------------------------*/
+int iat_update_entry(struct px_iat_ctx *ctx,
+                     struct rte_mbuf *pkt,
+                     int64_t timeout_ns);
+/*----------------------------------------------------------------------------*/
+int iat_search_entry(struct px_iat_ctx *ctx,
+                     struct rte_mbuf *pkt,
+                     int64_t timeout_ns,
+                     double *avg_iat);
+/*----------------------------------------------------------------------------*/
+void iat_flush_timeout(struct px_iat_ctx *ctx);
+/*----------------------------------------------------------------------------*/
+static inline float
+get_time_factor(uint32_t missing_segs_nb)
+{
+    /* below is for 95% reception rate */
+    static const float timeout_factor_95[] = {
+        00.00f, // no need to stall
+        03.00f, // missing_segs = 1
+        04.74f, // missing_segs = 2
+        06.30f, // missing_segs = 3
+        07.75f, // missing_segs = 4
+        09.15f, // missing_segs = 5
+        10.51f, // missing_segs = 6
+        11.84f, // missing_segs = 7
+        13.15f, // missing_segs = 8
+        14.43f, // missing_segs = 9
+        15.71f, // missing_segs = 10
+        16.96f, // missing_segs = 11
+        18.21f, // missing_segs = 12
+        19.44f, // missing_segs = 13
+        20.67f, // missing_segs = 14
+        21.89f, // missing_segs = 15
+        23.10f, // missing_segs = 16
+        24.31f, // missing_segs = 17
+        25.51f, // missing_segs = 18
+        26.71f, // missing_segs = 19
+        27.90f, // missing_segs = 20
+    };
+    /* below is for 99% reception rate */
+    static const float timeout_factor_99[] = {
+        00.00f, // no need to stall
+        04.61f, // missing_segs = 1
+        06.64f, // missing_segs = 2
+        08.41f, // missing_segs = 3
+        10.05f, // missing_segs = 4
+        11.60f, // missing_segs = 5
+        13.06f, // missing_segs = 6
+        14.45f, // missing_segs = 7
+        15.79f, // missing_segs = 8
+        17.11f, // missing_segs = 9
+        18.42f, // missing_segs = 10
+        19.69f, // missing_segs = 11
+        20.96f, // missing_segs = 12
+        22.21f, // missing_segs = 13
+        23.45f, // missing_segs = 14
+        24.67f, // missing_segs = 15
+        25.89f, // missing_segs = 16
+        27.09f, // missing_segs = 17
+        28.29f, // missing_segs = 18
+        29.48f, // missing_segs = 19
+        30.66f, // missing_segs = 20
+    };
+    /* below is for 99.9% reception rate */
+    static const float timeout_factor_999[] = {
+        00.00f, // no need to stall
+        06.91f, // missing_segs = 1
+        09.88f, // missing_segs = 2
+        11.26f, // missing_segs = 3
+        13.11f, // missing_segs = 4
+        14.85f, // missing_segs = 5
+        16.50f, // missing_segs = 6
+        18.08f, // missing_segs = 7
+        19.60f, // missing_segs = 8
+        21.07f, // missing_segs = 9
+        22.51f, // missing_segs = 10
+        23.91f, // missing_segs = 11
+        25.28f, // missing_segs = 12
+        26.62f, // missing_segs = 13
+        27.94f, // missing_segs = 14
+        29.24f, // missing_segs = 15
+        30.52f, // missing_segs = 16
+        31.78f, // missing_segs = 17
+        33.02f, // missing_segs = 18
+        34.25f, // missing_segs = 19
+        35.47f, // missing_segs = 20
+    };
 
+    /* choose one of below */
+    // static const float *timeout_factor = timeout_factor_95;
+    static const float *timeout_factor = timeout_factor_99;
+    // static const float *timeout_factor = timeout_factor_999;
+
+    if (missing_segs_nb >= 21)
+    {
+        /* to avoid seg fault due to nicmem, dump only first segment */
+        rte_exit(EXIT_FAILURE, "Missing_segs is too large. "
+                               "It might be due to overflow. "
+                               "Please do debug.\n");
+        return 0;
+    }
+
+    return timeout_factor[missing_segs_nb];
+}
+/*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 }
 #endif

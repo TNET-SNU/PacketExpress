@@ -808,7 +808,7 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
 #endif
   for (uint16_t qid = 0; qid < num_rxq; qid++)
   {
-    if (px_init(dpdk_port_id_, qid, bess::PacketBatch::kMaxBurst, !JUMBO_FRAME ? 4096 : 0, USE_LINK) < 0)
+    if (px_init(dpdk_port_id_, qid, bess::PacketBatch::kMaxBurst, !JUMBO_FRAME ? 4096 : 0, STALL_TIMEOUT_NS, USE_LINK) < 0)
       return CommandFailure(ENOMEM, "px_init failed");
     if (px_add_rule(dpdk_port_id_, qid, patterns, 2, actions, 2) < 0)
       return CommandFailure(ENOMEM, "px_add_rule failed");
