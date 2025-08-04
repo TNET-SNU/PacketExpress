@@ -30,7 +30,7 @@
 #include <rte_mbuf_core.h>
 #include <rte_thread.h>
 #include <rte_lcore.h>
-#include "px_gro.h"
+#include <px.h>
 /*----------------------------------------------------------------------------*/
 /* Essential macros */
 #if NICMEM
@@ -59,10 +59,6 @@ static uint16_t nb_rxd = RTE_TEST_RX_DESC_DEFAULT;
 static uint16_t nb_txd = RTE_TEST_TX_DESC_DEFAULT;
 static uint32_t nb_mbuf = NB_MBUF;
 /*----------------------------------------------------------------------------*/
-/* ARP table structures */
-static struct px_arp_ctx *g_arp_ctx;
-static int g_arp_table_size = 0;
-/*----------------------------------------------------------------------------*/
 /* static ARP table configuration */
 static struct px_arp_entry g_arp_entries[] = {
     {"10.1.90.2", "58:a2:e1:a7:a9:ee"}, // stream1
@@ -85,6 +81,21 @@ static struct px_arp_entry g_arp_entries[] = {
     {"10.3.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
     {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
 };
+/*----------------------------------------------------------------------------*/
+/* static routing table configuration */
+static int
+is_uplink(struct rte_mbuf *pkt)
+{
+    uint8_t *s = (uint8_t *)get_four_tuple(pkt);
+    return *(s + 2) == 90;
+}
+/*----------------------------------------------------------------------------*/
+static int
+is_downlink(struct rte_mbuf *pkt)
+{
+    uint8_t *s = (uint8_t *)get_four_tuple(pkt);
+    return *(s + 2) == 95;
+}
 /*----------------------------------------------------------------------------*/
 /* global information for port configuration */
 volatile int g_shutdown = 0;
@@ -246,7 +257,7 @@ port_init(uint16_t portid, uint16_t num_queue)
                                NUM_HAIRPIN_Q,
                                &port_conf,
                                g_arp_entries,
-                               g_arp_table_size,
+                               sizeof(g_arp_entries) / sizeof(g_arp_entries[0]),
 #if USE_OPTOUT
                                1
 #else
@@ -258,6 +269,14 @@ port_init(uint16_t portid, uint16_t num_queue)
                                 num_queue,
                                 num_queue,
                                 &port_conf);
+
+    /* Explicitly configure ARP table */
+    ret = px_arp_configure(g_arp_entries,
+                           sizeof(g_arp_entries) / sizeof(g_arp_entries[0]));
+    if (ret < 0)
+    {
+        rte_exit(EXIT_FAILURE, "Failed to configure ARP table\n");
+    }
 #endif
     if (ret < 0)
     {
@@ -336,7 +355,7 @@ port_init(uint16_t portid, uint16_t num_queue)
     for (uint16_t qid = 0; qid < num_queue; qid++)
     {
         if (px_init(portid, qid, MAX_PKT_BURST, !JUMBO_FRAME ? 4096 : 0,
-                    STALL_TIMEOUT_NS, USE_LINK) < 0)
+                    STALL_TIMEOUT_NS, is_uplink, is_downlink, USE_LINK) < 0)
         {
             rte_exit(EXIT_FAILURE, "px_init failed\n");
         }
@@ -425,7 +444,7 @@ void lcore_main(void)
                 ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
 
                 /* modify DST MAC */
-                dst_mac = px_search_arp(g_arp_ctx, ip_hdr->dst_addr);
+                dst_mac = px_search_arp(ip_hdr->dst_addr);
                 if (!dst_mac)
                 {
                     /* ignore unknown dst IP */
@@ -596,9 +615,6 @@ int main(int argc, char **argv)
     // printf("lcore_count: %u\n", rte_lcore_count());
     // printf("device_count: %u\n", g_num_ports);
 
-    g_arp_table_size = sizeof(g_arp_entries) / sizeof(g_arp_entries[0]);
-    g_arp_ctx = px_init_arp(g_arp_entries, g_arp_table_size);
-
     /* mbuf pool creation */
     for (core_id = 0; core_id < g_num_cores; core_id++)
     {
@@ -674,7 +690,7 @@ int main(int argc, char **argv)
     }
 
     /* cleanup */
-    px_free_arp(g_arp_ctx);
+    px_free_arp();
 
     for (i = 0; i < eal_argc; i++)
     {
