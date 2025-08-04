@@ -154,7 +154,7 @@ Again, you should make your own configuration for DPVS.
 You should configure setup.sh as well.
 
 ## Where's the main logic for dynamic MTU translation?
-See dpdk-stable-20.11.1/lib/px.c and px.h.
+See dpdk-stable-20.11.1/lib/librte_px/px.c and px.h.
 
 ## Where's the main logic for Hairpin Offload?
 See dpdk-stable-20.11.1/lib/librte_px/px_offload.c, px_offload.h, px_cache.c, px_cache.h, px_flow.c, and px_flow.h.
