@@ -1,6 +1,4 @@
 #include "px_stat.h"
-#include <signal.h>
-#include <time.h>
 /*----------------------------------------------------------------------------*/
 // static pthread_t g_stat_thread = 0;
 static struct px_stat g_px_stat[RTE_MAX_ETHPORTS][PX_MAX_QUEUES_PER_PORT] = {0};
@@ -173,6 +171,7 @@ void px_print_stats(int args)
                (i < UINT16_MAX / DIST_UNIT) ? "  " : "\n");
     }
 #endif
+    print_cache_stats();
 
     alarm(g_stat_interval);
 }

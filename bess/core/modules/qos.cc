@@ -444,7 +444,7 @@ CommandResponse Qos::CommandAdd(const bess::pb::QosCommandAddArg &arg) {
       //    * Since we do not know which packets come into which ports,
       //    * we need to make QoS profiles for every port.
       //    */
-      //   for (int port_id = 0; port_id < MAX_PORT_NUM; port_id++) {
+      //   for (int port_id = 0; port_id < RTE_MAX_ETHPORTS; port_id++) {
       //     offload_qos_profile_create(port_id, qer_id, &app_trtcm_params);
       //   }
       // }

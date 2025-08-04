@@ -403,10 +403,10 @@ onload_iperf_flow(uint16_t port_id, uint16_t num_rxq, uint16_t num_rxq_incr)
   }
 #endif
 
-  flow = px_flow_create(port_id, &attr, patterns, actions, &error);
+  flow = px_flow_create_static(port_id, &attr, patterns, actions, &error);
   if (!flow)
   {
-    fprintf(stderr, "px_flow_create() failed for port %d. "
+    fprintf(stderr, "px_flow_create_static() failed for port %d. "
                     "Error type: %d, Error msg: %s\n",
             port_id, error.type, error.message);
   }
@@ -497,10 +497,10 @@ onload_iperf_ack_flow(uint16_t port_id, uint16_t num_rxq, uint16_t num_rxq_incr)
   }
 #endif
 
-  flow = px_flow_create(port_id, &attr, patterns, actions, &error);
+  flow = px_flow_create_static(port_id, &attr, patterns, actions, &error);
   if (!flow)
   {
-    fprintf(stderr, "px_flow_create() failed for port %d. "
+    fprintf(stderr, "px_flow_create_static() failed for port %d. "
                     "Error type: %d, Error msg: %s\n",
             port_id, error.type, error.message);
   }
@@ -808,7 +808,7 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
 #endif
   for (uint16_t qid = 0; qid < num_rxq; qid++)
   {
-    if (px_init(dpdk_port_id_, qid, bess::PacketBatch::kMaxBurst, !JUMBO_FRAME ? 4096 : 0, STALL_TIMEOUT_NS, USE_LINK) < 0)
+    if (px_init(dpdk_port_id_, qid, bess::PacketBatch::kMaxBurst, !JUMBO_FRAME ? 4096 : 0, STALL_TIMEOUT_NS, NULL, NULL, USE_LINK) < 0)
       return CommandFailure(ENOMEM, "px_init failed");
     if (px_add_rule(dpdk_port_id_, qid, patterns, 2, actions, 2) < 0)
       return CommandFailure(ENOMEM, "px_add_rule failed");

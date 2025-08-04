@@ -38,14 +38,13 @@ unmark_nicmem(struct rte_mbuf *pkt)
     pkt->ol_flags &= ~EXT_ATTACHED_MBUF;
 }
 /*----------------------------------------------------------------------------*/
-int px_nicmem_free(struct px_nicmem_ctx *nm_ctx);
+int px_nicmem_free(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
-int px_nicmem_configure(struct px_nicmem_ctx *nm_ctx,
-                        uint16_t port_id,
+int px_nicmem_configure(uint16_t port_id,
                         uint16_t lro_size,
                         unsigned int num_nicmem);
 /*----------------------------------------------------------------------------*/
-int px_nicmem_setup(struct px_nicmem_ctx *nm_ctx,
+int px_nicmem_setup(uint16_t port_id,
                     struct rte_eth_rxconf *rx_conf,
                     struct rte_mempool *mp);
 /*----------------------------------------------------------------------------*/

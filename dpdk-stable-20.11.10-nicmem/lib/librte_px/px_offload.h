@@ -16,23 +16,40 @@ extern "C"
 #define PER_PORT_NIC_CACHE_SIZE 20000
 #define PER_CORE_HOST_CACHE_SIZE PER_PORT_NIC_CACHE_SIZE
 /*----------------------------------------------------------------------------*/
-int px_hairpin_configure(struct px_hairpin_ctx *hp_ctx,
-                         uint16_t port_id,
+int px_hairpin_configure(uint16_t port_id,
                          uint16_t num_rxq,
                          uint16_t num_txq,
                          uint16_t num_rxq_incr,
                          uint16_t hp_num_rxq,
                          uint16_t hp_num_txq,
-                         struct rte_eth_conf *eth_conf,
-                         struct px_arp_entry *arp_table,
-                         int arp_table_size,
-                         int opt_out);
+                         struct rte_eth_conf *eth_conf);
 /*----------------------------------------------------------------------------*/
-int px_hairpin_setup(struct px_hairpin_ctx *hp_ctx,
+int px_hairpin_setup(uint16_t port_id,
                      uint16_t num_rxq,
                      uint16_t num_txq,
                      uint16_t nb_rx_desc,
                      uint16_t nb_tx_desc);
+/*----------------------------------------------------------------------------*/
+/* returns handle for initiate and destroy of hairpin context */
+int hp_context_init(int thread_core_id,
+                    size_t per_core_host_cache_size,
+                    size_t per_port_nic_cache_size);
+/*----------------------------------------------------------------------------*/
+void hp_context_destroy(void);
+/*----------------------------------------------------------------------------*/
+int hp_create_rule(int core_id,
+                   struct ri_node *node);
+/*----------------------------------------------------------------------------*/
+int hp_delete_rule(int core_id,
+                   struct ri_node *node);
+/*----------------------------------------------------------------------------*/
+int hp_stat_rule(int core_id,
+                 struct ri_node *node,
+                 struct count *stat);
+/*----------------------------------------------------------------------------*/
+size_t hp_nic_cache_stat(void);
+/*----------------------------------------------------------------------------*/
+size_t hp_host_hash_stat(void);
 /*----------------------------------------------------------------------------*/
 /* not implemented yet */
 int hp_async_configure(uint16_t port_id);

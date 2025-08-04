@@ -1,7 +1,10 @@
 #include "px_offload.h"
 /*----------------------------------------------------------------------------*/
+struct px_hairpin_ctx g_hp_ctx[RTE_MAX_ETHPORTS] = {0};
+extern struct px_dev g_px_dev[RTE_MAX_ETHPORTS];
+/*----------------------------------------------------------------------------*/
 /* below are handles for offload thread */
-static pthread_t g_offload_thread[RTE_MAX_ETHPORTS];
+static pthread_t g_offload_worker_thread_tid[RTE_MAX_ETHPORTS];
 static int g_thread_core_id = -1;
 static int g_num_cores = 0;
 static volatile int g_shutdown = 0;
@@ -203,11 +206,11 @@ hp_host_hash_stat(void)
 static void *
 px_flow_slave_main(void *arg)
 {
-    int port_id = *(int *)arg, core_id;
+    int port_id = *(int *)arg, core_id, reset;
+    struct px_dev *px_dev = &g_px_dev[port_id];
     struct request *req;
     struct ri_node *node;
     cpu_set_t set;
-    struct timespec timer;
 
     /* slave core id and ring queue id are given as arg */
     CPU_ZERO(&set);
@@ -221,16 +224,17 @@ px_flow_slave_main(void *arg)
 
     while (!g_shutdown)
     {
+        reset = check_stat_reset(port_id);
+        if (reset)
+        {
+            /* reset stats */
+            reset_stat(port_id);
+        }
         /* poll request queue for each worker core */
         for (core_id = 0; core_id < g_num_cores; core_id++)
         {
             while ((req = req_ring_get(core_id, port_id)))
             {
-                /* print update rate */
-                if (port_id == 0)
-                {
-                    print_update_rate(&timer);
-                }
                 /* new request is on ring */
                 node = req->node;
                 /* make sure this thread is responsible for this request */
@@ -249,8 +253,15 @@ px_flow_slave_main(void *arg)
                 {
                     if (!node->flow)
                     {
-                        /* create offload flow rule */
-                        node->flow = px_create_flow_auto(port_id, &node->key, node->pkt);
+                        /* create flow rule */
+                        if (px_dev[port_id].initialized_optout)
+                        {
+                            node->flow = px_flow_create_onload_auto(port_id, &node->key, node->pkt);
+                        }
+                        else
+                        {
+                            node->flow = px_flow_create_offload_auto(port_id, &node->key, node->pkt);
+                        }
                         if (!node->flow)
                         {
                             /* do not consume the ring */
@@ -286,8 +297,15 @@ px_flow_slave_main(void *arg)
                         }
                         incr_temp_evicted_size(port_id);
                     }
-                    /* create offload flow rule */
-                    node->flow = px_create_flow_auto(port_id, &node->key, node->pkt);
+                    /* create flow rule */
+                    if (px_dev[port_id].initialized_optout)
+                    {
+                        node->flow = px_flow_create_onload_auto(port_id, &node->key, node->pkt);
+                    }
+                    else
+                    {
+                        node->flow = px_flow_create_offload_auto(port_id, &node->key, node->pkt);
+                    }
                     if (!node->flow)
                     {
                         /* do not consume the ring */
@@ -337,28 +355,17 @@ px_flow_slave_main(void *arg)
     return NULL;
 }
 /*----------------------------------------------------------------------------*/
-int px_hairpin_configure(struct px_hairpin_ctx *hp_ctx,
-                         uint16_t port_id,
+int px_hairpin_configure(uint16_t port_id,
                          uint16_t num_rxq,
                          uint16_t num_txq,
                          uint16_t num_rxq_incr,
                          uint16_t hp_num_rxq,
                          uint16_t hp_num_txq,
-                         struct rte_eth_conf *eth_conf,
-                         struct px_arp_entry *arp_table,
-                         int arp_table_size,
-                         int opt_out)
+                         struct rte_eth_conf *eth_conf)
 {
-    int i, ret;
+    struct px_hairpin_ctx *hp_ctx = &g_hp_ctx[port_id];
+    int i;
 
-    /* build hairpin context */
-    ret = rte_eth_macaddr_get(port_id, &hp_ctx->mac);
-    if (ret < 0)
-    {
-        fprintf(stderr, "rte_eth_macaddr_get() failed for port %d\n", port_id);
-        return ret;
-    }
-    hp_ctx->port_id = port_id;
 #if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0)
     hp_ctx->num_template_table = 0;
 #endif
@@ -406,27 +413,19 @@ int px_hairpin_configure(struct px_hairpin_ctx *hp_ctx,
     hp_ctx->hp_ctr.shared = 0;
     hp_ctx->hp_ctr.id = 0;
 
-    /* initiate hairpin context */
-    ret = hp_ctx_init(port_id, hp_ctx, arp_table, arp_table_size, opt_out);
-    if (ret < 0)
-    {
-        fprintf(stderr, "hp_ctx_init() failed for port %d\n", port_id);
-        return ret;
-    }
-
     return 0;
 }
 /*----------------------------------------------------------------------------*/
-int px_hairpin_setup(struct px_hairpin_ctx *hp_ctx,
+int px_hairpin_setup(uint16_t port_id,
                      uint16_t num_rxq,
                      uint16_t num_txq,
                      uint16_t nb_rx_desc,
                      uint16_t nb_tx_desc)
 {
+    struct px_hairpin_ctx *hp_ctx = &g_hp_ctx[port_id];
     struct rte_eth_hairpin_cap cap;
     struct rte_eth_hairpin_conf hp_rx_conf, hp_tx_conf;
     const struct rte_eth_hairpin_conf *hp_rx_conf_ptr, *hp_tx_conf_ptr;
-    uint16_t port_id = hp_ctx->port_id;
 
     if (rte_eth_dev_hairpin_capability_get(port_id, &cap) < 0)
     {
@@ -526,15 +525,15 @@ int hp_context_init(int thread_core_id,
 
     g_thread_core_id = thread_core_id;
 
-    /* create px_flow threads */
+    /* create px_flow threads per port */
     g_shutdown = 0;
     for (port_id = 0; port_id < port_num; port_id++)
     {
         arg[port_id] = port_id;
-        if (pthread_create(&g_offload_thread[port_id], NULL,
-                           px_flow_slave_main, &arg[port_id]) == -1)
+        if (pthread_create(&g_offload_worker_thread_tid[port_id], NULL,
+                           px_flow_slave_main, &arg[port_id]) < 0)
         {
-            perror("pthread_create() failed!");
+            perror("pthread_create() failed for worker thread!");
             exit(EXIT_FAILURE);
         }
 
@@ -584,7 +583,7 @@ void hp_context_destroy(void)
     g_shutdown = 1;
     for (port_id = 0; port_id < port_num; port_id++)
     {
-        if (pthread_join(g_offload_thread[port_id], NULL) < 0)
+        if (pthread_join(g_offload_worker_thread_tid[port_id], NULL) < 0)
         {
             perror("pthread_join() failed!");
             exit(EXIT_FAILURE);

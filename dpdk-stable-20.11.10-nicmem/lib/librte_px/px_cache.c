@@ -17,8 +17,31 @@ void incr_temp_evicted_size(int port_id)
     g_cache_manager[port_id].temp_evicted_size++;
 }
 /*----------------------------------------------------------------------------*/
-void
-lru_queue_init(int port_id, size_t num)
+void lru_queue_print_all(int port_id)
+{
+    struct cache_manager *cm = &g_cache_manager[port_id];
+    struct ri_node *node = cm->head.next;
+    printf("[P%2d] NIC-cached rule num: %lu, "
+           "Ever NIC-cached rule num: %lu, "
+           "Ever NIC-evicted rule num: %lu, "
+           "Current NIC-cached rule num: %ld\n",
+           port_id, cm->current_cached_size,
+           cm->total_cached_size,
+           cm->total_evicted_size,
+           cm->total_cached_size - cm->total_evicted_size);
+    while (node->flow)
+    {
+        tupledump(&node->key);
+        node = node->next;
+        if (node->flow)
+        {
+            printf(" -> ");
+        }
+    }
+    printf("\n");
+}
+/*----------------------------------------------------------------------------*/
+void lru_queue_init(int port_id, size_t num)
 {
     struct cache_manager *cm = &g_cache_manager[port_id];
     cm->cache_size = num;
@@ -29,6 +52,9 @@ lru_queue_init(int port_id, size_t num)
     cm->temp_evicted_size = 0;
     cm->total_cached_size = 0;
     cm->total_evicted_size = 0;
+    cm->reset = 0;
+
+    cm->init = 1;
 }
 /*----------------------------------------------------------------------------*/
 int lru_queue_insert_and_destroy_evicted(int port_id,
@@ -36,6 +62,7 @@ int lru_queue_insert_and_destroy_evicted(int port_id,
 {
     struct cache_manager *cm = &g_cache_manager[port_id];
     struct ri_node *evicted;
+
     /* insert to LRU queue */
     evicted = lru_queue_insert(port_id, node);
     // lru_queue_print_all(port_id);
@@ -47,41 +74,12 @@ int lru_queue_insert_and_destroy_evicted(int port_id,
         {
             return -1;
         }
-        cm->temp_evicted_size += 1;
+        cm->temp_evicted_size++;
         evicted->flow = NULL;
         // printf("another flow is evicted!\n\n");
     }
 
     return 0;
-}
-/*----------------------------------------------------------------------------*/
-void lru_queue_print_all(int port_id)
-{
-    struct cache_manager *cm = &g_cache_manager[port_id];
-    struct ri_node *node = cm->head.next;
-    uint8_t *s, *d;
-    printf("[port %d] NIC-cached rule num: %d, "
-           "Ever NIC-cached rule num: %d, "
-           "Ever NIC-evicted rule num: %d, "
-           "Current NIC-cached rule num: %d\n",
-           port_id, cm->current_cached_size,
-           cm->total_cached_size,
-           cm->total_evicted_size,
-           cm->total_cached_size - cm->total_evicted_size);
-    while (node->flow)
-    {
-        s = (uint8_t *)&node->key.src_ip;
-        d = (uint8_t *)&node->key.dst_ip;
-        printf("(%d.%d.%d.%d:%d | %d.%d.%d.%d:%d)",
-               *(s + 3), *(s + 2), *(s + 1), *s, node->key.src_port,
-               *(d + 3), *(d + 2), *(d + 1), *d, node->key.dst_port);
-        node = node->next;
-        if (node->flow)
-        {
-            printf(" -> ");
-        }
-    }
-    printf("\n");
 }
 /*----------------------------------------------------------------------------*/
 // returns least frequent entry by querying
@@ -136,11 +134,13 @@ lru_queue_find_smallest(int port_id)
 void lru_queue_move_to_front(int port_id, struct ri_node *node)
 {
     struct cache_manager *cm = &g_cache_manager[port_id];
+
     /* 1. remove from current position */
     node->prev->next = node->next;
     node->next->prev = node->prev;
     // node->prev = NULL;
     // node->next = NULL;
+
     /* 2. add to front */
     cm->head.next->prev = node;
     node->next = cm->head.next;
@@ -171,12 +171,14 @@ lru_queue_insert(int port_id, struct ri_node *node)
         lru_queue_move_to_front(port_id, node);
         return NULL;
     }
+
     /* 1. add to front */
     cm->head.next->prev = node;
     node->next = cm->head.next;
     cm->head.next = node;
     node->prev = &cm->head;
     cm->total_cached_size++;
+    
     /* check if LRU queue is full */
     if (cm->current_cached_size < cm->cache_size)
     {
@@ -213,114 +215,49 @@ lru_queue_get_least_recent(int port_id)
     return cm->tail.prev;
 }
 /*----------------------------------------------------------------------------*/
-void print_update_rate(struct timespec *timer)
+int check_stat_reset(int port_id)
 {
-    static int init = 1;
-    struct timespec cur;
-    long diff_time;
+    return g_cache_manager[port_id].reset;
+}
+/*----------------------------------------------------------------------------*/
+void reset_stat(int port_id)
+{
+    g_cache_manager[port_id].temp_cached_size = 0;
+    g_cache_manager[port_id].temp_evicted_size = 0;
+    g_cache_manager[port_id].reset = 0;
+}
+/*----------------------------------------------------------------------------*/
+void print_cache_stats(void)
+{
+    struct cache_manager *iter, total = {0};
+    int port_id;
+    uint16_t port_num = rte_eth_dev_count_avail();
 
-    if (init)
+    for (port_id = 0; port_id < port_num; port_id++)
     {
-        clock_gettime(TIME_FLAG, timer);
-        return;
+        iter = &g_cache_manager[port_id];
+
+        printf(" |-[P%2d] %ld/sec, cur: %lu, +: %lu, -: %lu, +-: %lu\n",
+               port_id,
+               (iter->temp_cached_size + iter->temp_evicted_size),
+               iter->current_cached_size,
+               iter->total_cached_size,
+               iter->total_evicted_size,
+               (iter->total_cached_size - iter->total_evicted_size));
+
+        total.temp_cached_size += iter->temp_cached_size;
+        total.temp_evicted_size += iter->temp_evicted_size;
+        total.current_cached_size += iter->current_cached_size;
+        total.total_cached_size += iter->total_cached_size;
+        total.total_evicted_size += iter->total_evicted_size;
+
+        /* notify reset to offload threads */
+        iter->reset = 1;
     }
-    
-    /* check timer and print stat */
-    clock_gettime(TIME_FLAG, &cur);
-    diff_time = (cur.tv_sec - timer->tv_sec) * E9 +
-                (cur.tv_nsec - timer->tv_nsec);
-
-    /*
-     * !Caveat!
-     * Updates of temp_cached_size and temp_evicted_size are not thread-safe,
-     * because print_update_rate is done by main offload thread
-     * which is responsible for port 0.
-     * But this is just for rough statistics, we ignore such accurateness.
-     */
-    if (diff_time >= E9)
-    {
-        printf(
-            "[PORT 0]: %d / %lf sec, cur: %d, +: %d, -: %d, +-: %d\n"
-            "[PORT 1]: %d / %lf sec, cur: %d, +: %d, -: %d, +-: %d\n"
-            "[PORT 2]: %d / %lf sec, cur: %d, +: %d, -: %d, +-: %d\n"
-            "[PORT 3]: %d / %lf sec, cur: %d, +: %d, -: %d, +-: %d\n"
-            "[TOTAL]: %d / %lf sec, cur: %d, +: %d, -: %d, +-: %d\n",
-            (g_cache_manager[0].temp_cached_size +
-             g_cache_manager[0].temp_evicted_size),
-            (double)diff_time / E9,
-            g_cache_manager[0].current_cached_size,
-            g_cache_manager[0].total_cached_size,
-            g_cache_manager[0].total_evicted_size,
-            (g_cache_manager[0].total_cached_size -
-             g_cache_manager[0].total_evicted_size),
-            (g_cache_manager[1].temp_cached_size +
-             g_cache_manager[1].temp_evicted_size),
-            (double)diff_time / E9,
-            g_cache_manager[1].current_cached_size,
-            g_cache_manager[1].total_cached_size,
-            g_cache_manager[1].total_evicted_size,
-            (g_cache_manager[1].total_cached_size -
-             g_cache_manager[1].total_evicted_size),
-            (g_cache_manager[2].temp_cached_size +
-             g_cache_manager[2].temp_evicted_size),
-            (double)diff_time / E9,
-            g_cache_manager[2].current_cached_size,
-            g_cache_manager[2].total_cached_size,
-            g_cache_manager[2].total_evicted_size,
-            (g_cache_manager[2].total_cached_size -
-             g_cache_manager[2].total_evicted_size),
-            (g_cache_manager[3].temp_cached_size +
-             g_cache_manager[3].temp_evicted_size),
-            (double)diff_time / E9,
-            g_cache_manager[3].current_cached_size,
-            g_cache_manager[3].total_cached_size,
-            g_cache_manager[3].total_evicted_size,
-            (g_cache_manager[3].total_cached_size -
-             g_cache_manager[3].total_evicted_size),
-
-            (g_cache_manager[0].temp_cached_size +
-             g_cache_manager[0].temp_evicted_size +
-             g_cache_manager[1].temp_cached_size +
-             g_cache_manager[1].temp_evicted_size +
-             g_cache_manager[2].temp_cached_size +
-             g_cache_manager[2].temp_evicted_size +
-             g_cache_manager[3].temp_cached_size +
-             g_cache_manager[3].temp_evicted_size),
-            (double)diff_time / E9,
-
-            (g_cache_manager[0].current_cached_size +
-             g_cache_manager[1].current_cached_size +
-             g_cache_manager[2].current_cached_size +
-             g_cache_manager[3].current_cached_size),
-
-            (g_cache_manager[0].total_cached_size +
-             g_cache_manager[1].total_cached_size +
-             g_cache_manager[2].total_cached_size +
-             g_cache_manager[3].total_cached_size),
-
-            (g_cache_manager[0].total_evicted_size +
-             g_cache_manager[1].total_evicted_size +
-             g_cache_manager[2].total_evicted_size +
-             g_cache_manager[3].total_evicted_size),
-
-            (g_cache_manager[0].total_cached_size +
-             g_cache_manager[1].total_cached_size +
-             g_cache_manager[2].total_cached_size +
-             g_cache_manager[3].total_cached_size) -
-                (g_cache_manager[0].total_evicted_size +
-                 g_cache_manager[1].total_evicted_size +
-                 g_cache_manager[2].total_evicted_size +
-                 g_cache_manager[3].total_evicted_size));
-
-        /* reset stats */
-        g_cache_manager[0].temp_cached_size =
-            g_cache_manager[0].temp_evicted_size =
-                g_cache_manager[1].temp_cached_size =
-                    g_cache_manager[1].temp_evicted_size =
-                        g_cache_manager[2].temp_cached_size =
-                            g_cache_manager[2].temp_evicted_size =
-                                g_cache_manager[3].temp_cached_size =
-                                    g_cache_manager[3].temp_evicted_size = 0;
-        *timer = cur;
-    }
+    printf("[   TOTAL   ] %ld/sec, cur: %lu, +: %lu, -: %lu, +-: %lu\n",
+           (total.temp_cached_size + total.temp_evicted_size),
+           total.current_cached_size,
+           total.total_cached_size,
+           total.total_evicted_size,
+           (total.total_cached_size - total.total_evicted_size));
 }

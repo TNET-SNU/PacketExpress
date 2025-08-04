@@ -1,6 +1,10 @@
 #include "px_flow.h"
-/* fast-path to hp manager */
-struct px_hairpin_ctx *g_hp_ctx[RTE_MAX_ETHPORTS] = {NULL};
+/* global hairpin context in px_offload.c */
+extern struct px_hairpin_ctx g_hp_ctx[RTE_MAX_ETHPORTS];
+/* global ARP context in px_arp.c */
+extern struct px_arp_ctx g_arp_ctx;
+/* global device configuration in px.c */
+extern struct px_dev g_px_dev[RTE_MAX_ETHPORTS];
 /*----------------------------------------------------------------------------*/
 /**
  * Onload TCP SYN|FIN|RST and ICMP packets with to DMA RSS queues
@@ -8,9 +12,9 @@ struct px_hairpin_ctx *g_hp_ctx[RTE_MAX_ETHPORTS] = {NULL};
  * because this function is called only once at initial time
  */
 static inline int
-onload_ctrl_pkts(struct px_hairpin_ctx *hp_ctx)
+onload_ctrl_pkts(uint16_t port_id)
 {
-    uint16_t port_id = hp_ctx->port_id;
+    struct px_hairpin_ctx *hp_ctx = &g_hp_ctx[port_id];
     struct rte_flow_error error;
     /* Holds the flow attributes. */
     struct rte_flow_attr attr = {
@@ -60,9 +64,9 @@ onload_ctrl_pkts(struct px_hairpin_ctx *hp_ctx)
     /* create SYN rule */
     tcp_spec.hdr.tcp_flags = RTE_TCP_SYN_FLAG;
 #if VALIDATE_FLOW_RULE
-    if (px_flow_validate(port_id, &attr, tcp_patterns, actions, &error) < 0)
+    if (px_latent_flow_validate(port_id, &attr, tcp_patterns, actions, &error) < 0)
     {
-        fprintf(stderr, "[port %d] px_flow_validate() failed for SYN onload. "
+        fprintf(stderr, "[port %d] px_latent_flow_validate() failed for SYN onload. "
                         "Error type: %d, Error msg: %s\n",
                 port_id, error.type, error.message);
 
@@ -70,10 +74,10 @@ onload_ctrl_pkts(struct px_hairpin_ctx *hp_ctx)
     }
 #endif
     hp_ctx->common_onload_rule[0] =
-        px_flow_create(port_id, &attr, tcp_patterns, actions, &error);
+        px_latent_flow_create(port_id, &attr, tcp_patterns, actions, &error);
     if (!hp_ctx->common_onload_rule[0])
     {
-        fprintf(stderr, "[port %d] px_flow_create() failed for SYN onload. "
+        fprintf(stderr, "[port %d] px_latent_flow_create() failed for SYN onload. "
                         "Error type: %d, Error msg: %s\n",
                 port_id, error.type, error.message);
     }
@@ -81,9 +85,9 @@ onload_ctrl_pkts(struct px_hairpin_ctx *hp_ctx)
     /* create FIN rule */
     tcp_spec.hdr.tcp_flags = RTE_TCP_FIN_FLAG;
 #if VALIDATE_FLOW_RULE
-    if (px_flow_validate(port_id, &attr, tcp_patterns, actions, &error) < 0)
+    if (px_latent_flow_validate(port_id, &attr, tcp_patterns, actions, &error) < 0)
     {
-        fprintf(stderr, "[port %d] px_flow_validate() failed for FIN onload. "
+        fprintf(stderr, "[port %d] px_latent_flow_validate() failed for FIN onload. "
                         "Error type: %d, Error msg: %s\n",
                 port_id, error.type, error.message);
 
@@ -91,10 +95,10 @@ onload_ctrl_pkts(struct px_hairpin_ctx *hp_ctx)
     }
 #endif
     hp_ctx->common_onload_rule[1] =
-        px_flow_create(port_id, &attr, tcp_patterns, actions, &error);
+        px_latent_flow_create(port_id, &attr, tcp_patterns, actions, &error);
     if (!hp_ctx->common_onload_rule[1])
     {
-        fprintf(stderr, "[port %d] px_flow_create() failed for FIN onload. "
+        fprintf(stderr, "[port %d] px_latent_flow_create() failed for FIN onload. "
                         "Error type: %d, Error msg: %s\n",
                 port_id, error.type, error.message);
     }
@@ -102,9 +106,9 @@ onload_ctrl_pkts(struct px_hairpin_ctx *hp_ctx)
     /* create RST rule */
     tcp_spec.hdr.tcp_flags = RTE_TCP_RST_FLAG;
 #if VALIDATE_FLOW_RULE
-    if (px_flow_validate(port_id, &attr, tcp_patterns, actions, &error) < 0)
+    if (px_latent_flow_validate(port_id, &attr, tcp_patterns, actions, &error) < 0)
     {
-        fprintf(stderr, "[port %d] px_flow_validate() failed for RST onload. "
+        fprintf(stderr, "[port %d] px_latent_flow_validate() failed for RST onload. "
                         "Error type: %d, Error msg: %s\n",
                 port_id, error.type, error.message);
 
@@ -112,10 +116,10 @@ onload_ctrl_pkts(struct px_hairpin_ctx *hp_ctx)
     }
 #endif
     hp_ctx->common_onload_rule[2] =
-        px_flow_create(port_id, &attr, tcp_patterns, actions, &error);
+        px_latent_flow_create(port_id, &attr, tcp_patterns, actions, &error);
     if (!hp_ctx->common_onload_rule[2])
     {
-        fprintf(stderr, "[port %d] px_flow_create() failed for RST onload. "
+        fprintf(stderr, "[port %d] px_latent_flow_create() failed for RST onload. "
                         "Error type: %d, Error msg: %s\n",
                 port_id, error.type, error.message);
     }
@@ -135,9 +139,9 @@ onload_ctrl_pkts(struct px_hairpin_ctx *hp_ctx)
     ipv4_mask.hdr.next_proto_id = UINT8_MAX;
     ipv4_spec.hdr.next_proto_id = IPPROTO_ICMP;
 #if VALIDATE_FLOW_RULE
-    if (px_flow_validate(port_id, &attr, icmp_patterns, actions, &error) < 0)
+    if (px_latent_flow_validate(port_id, &attr, icmp_patterns, actions, &error) < 0)
     {
-        fprintf(stderr, "[port %d] px_flow_validate() failed for ICMP onload. "
+        fprintf(stderr, "[port %d] px_latent_flow_validate() failed for ICMP onload. "
                         "Error type: %d, Error msg: %s\n",
                 port_id, error.type, error.message);
 
@@ -145,10 +149,10 @@ onload_ctrl_pkts(struct px_hairpin_ctx *hp_ctx)
     }
 #endif
     hp_ctx->common_onload_rule[3] =
-        px_flow_create(port_id, &attr, icmp_patterns, actions, &error);
+        px_latent_flow_create(port_id, &attr, icmp_patterns, actions, &error);
     if (!hp_ctx->common_onload_rule[3])
     {
-        fprintf(stderr, "[port %d] px_flow_create() failed for ICMP onload. "
+        fprintf(stderr, "[port %d] px_latent_flow_create() failed for ICMP onload. "
                         "Error type: %d, Error msg: %s\n",
                 port_id, error.type, error.message);
     }
@@ -162,9 +166,9 @@ onload_ctrl_pkts(struct px_hairpin_ctx *hp_ctx)
  * because this function is called only once at initial time
  */
 static inline int
-offload_all_flows(struct px_hairpin_ctx *hp_ctx)
+offload_all_flows(uint16_t port_id)
 {
-    uint16_t port_id = hp_ctx->port_id;
+    struct px_hairpin_ctx *hp_ctx = &g_hp_ctx[port_id];
     struct rte_flow_error error;
     /* Holds the flow attributes. */
     struct rte_flow_attr attr = {
@@ -198,7 +202,7 @@ offload_all_flows(struct px_hairpin_ctx *hp_ctx)
     /* make SRC MAC action */
     struct rte_flow_action_set_mac modify_src_mac, modify_dst_mac;
     memcpy(modify_src_mac.mac_addr,
-           &hp_ctx->mac,
+           &g_px_dev[port_id].mac,
            RTE_ETHER_ADDR_LEN);
 
     /* make actions */
@@ -215,19 +219,19 @@ offload_all_flows(struct px_hairpin_ctx *hp_ctx)
         {.type = RTE_FLOW_ACTION_TYPE_END}};
 
     /* make rte_flow rules for all ARP entries */
-    for (int i = 0; i < hp_ctx->arp_ctx->table_size; i++)
+    for (int i = 0; i < g_arp_ctx.table_size; i++)
     {
         /* update DST IP in pattern and DST MAC in action */
-        ipv4_spec.hdr.dst_addr = hp_ctx->arp_ctx->arp_bin_table[i].ip;
+        ipv4_spec.hdr.dst_addr = g_arp_ctx.arp_bin_table[i].ip;
         memcpy(modify_dst_mac.mac_addr,
-               &hp_ctx->arp_ctx->arp_bin_table[i].mac,
+               &g_arp_ctx.arp_bin_table[i].mac,
                RTE_ETHER_ADDR_LEN);
 
         /* create main traffic rule */
 #if VALIDATE_FLOW_RULE
-        if (px_flow_validate(port_id, &attr, patterns, actions, &error) < 0)
+        if (px_latent_flow_validate(port_id, &attr, patterns, actions, &error) < 0)
         {
-            fprintf(stderr, "[port %d] px_flow_validate() failed. "
+            fprintf(stderr, "[port %d] px_latent_flow_validate() failed. "
                             "Error type: %d, Error msg: %s\n",
                     port_id, error.type, error.message);
 
@@ -236,10 +240,10 @@ offload_all_flows(struct px_hairpin_ctx *hp_ctx)
 #endif
 
         hp_ctx->common_offload_rule[i] =
-            px_flow_create(port_id, &attr, patterns, actions, &error);
+            px_latent_flow_create(port_id, &attr, patterns, actions, &error);
         if (!hp_ctx->common_offload_rule[i])
         {
-            fprintf(stderr, "[port %d] px_flow_create() failed. "
+            fprintf(stderr, "[port %d] px_latent_flow_create() failed. "
                             "Error type: %d, Error msg: %s\n",
                     port_id, error.type, error.message);
         }
@@ -248,68 +252,68 @@ offload_all_flows(struct px_hairpin_ctx *hp_ctx)
     return 0;
 }
 /*----------------------------------------------------------------------------*/
-int hp_ctx_init(uint16_t port_id,
-                struct px_hairpin_ctx *hp_ctx,
-                struct px_arp_entry *arp_table,
-                int arp_table_size,
-                int opt_out)
+int px_create_flow_optout(uint16_t port_id)
 {
     int ret;
 
-    /* make a fast path to hp manager */
-    g_hp_ctx[port_id] = hp_ctx;
-
-    /* initialize ARP table */
-    if (!hp_ctx->arp_ctx)
+    /* offload every flows -- priority 3 */
+    ret = offload_all_flows(port_id);
+    if (ret < 0)
     {
-        hp_ctx->arp_ctx = px_init_arp(arp_table, arp_table_size);
-        if (!hp_ctx->arp_ctx)
-        {
-            fprintf(stderr, "[port %d] px_init_arp() failed, ret: %d\n",
-                    port_id, ret);
-            return -1;
-        }
+        fprintf(stderr, "[port %d] offload_all_flows() failed, ret: %d\n",
+                port_id, ret);
+        return ret;
     }
 
-    /* if opt-out flag on, offload all IPv4 flows except  */
-    if (opt_out)
+    /* onload TCP SYN|FIN|RST and ICMP -- priority 2 */
+    ret = onload_ctrl_pkts(port_id);
+    if (ret < 0)
     {
-        /* offload every flows -- priority 3 */
-        ret = offload_all_flows(hp_ctx);
-        if (ret < 0)
-        {
-            fprintf(stderr, "[port %d] offload_all_flows() failed, ret: %d\n",
-                    port_id, ret);
-            return ret;
-        }
-
-        /* onload TCP SYN|FIN|RST and ICMP -- priority 2 */
-        ret = onload_ctrl_pkts(hp_ctx);
-        if (ret < 0)
-        {
-            fprintf(stderr, "[port %d] onload_ctrl_pkts() failed, ret: %d\n",
-                    port_id, ret);
-            return ret;
-        }
+        fprintf(stderr, "[port %d] onload_ctrl_pkts() failed, ret: %d\n",
+                port_id, ret);
+        return ret;
     }
 
     return 0;
 }
 /*----------------------------------------------------------------------------*/
 struct rte_flow *
-px_create_flow_static(uint16_t port_id,
+px_flow_create_static(uint16_t port_id,
                       const struct rte_flow_attr *attr,
-                      const struct rte_flow_item pattern[],
+                      const struct rte_flow_item patterns[],
                       const struct rte_flow_action actions[],
                       struct rte_flow_error *error)
 {
-    return rte_flow_create(port_id, attr, pattern, actions, error);
+    struct rte_flow *flow = NULL;
+
+#if VALIDATE_FLOW_RULE
+    if (px_latent_flow_validate(port_id, attr, patterns, actions, error) < 0)
+    {
+        fprintf(stderr, "[port %d] px_latent_flow_validate() failed. "
+                        "Error type: %d, Error msg: %s\n",
+                port_id, error->type, error->message);
+        return NULL;
+    }
+#endif
+
+    MEASURE(
+        "px_latent_flow_create",
+        flow = px_latent_flow_create(port_id, attr, patterns, actions, error);
+        if (!flow) {
+            fprintf(stderr, "[port %d] px_latent_flow_create() failed. "
+                            "Error type: %d, Error msg: %s\n",
+                    port_id, error->type, error->message);
+        });
+
+    return flow;
 }
 /*----------------------------------------------------------------------------*/
 struct rte_flow *
-px_create_flow_auto(uint16_t port_id, struct four_tuple *key, struct rte_mbuf *pkt)
+px_flow_create_offload_auto(uint16_t port_id,
+                            struct four_tuple *key,
+                            struct rte_mbuf *pkt)
 {
-    struct px_hairpin_ctx *hp_ctx = g_hp_ctx[port_id];
+    struct px_hairpin_ctx *hp_ctx = &g_hp_ctx[port_id];
     struct rte_flow *flow = NULL;
     struct rte_flow_error error;
     /* Holds the flow attributes. */
@@ -435,6 +439,7 @@ px_create_flow_auto(uint16_t port_id, struct four_tuple *key, struct rte_mbuf *p
     modify_dst_port.port = get_four_tuple(pkt)->dst_port;
 
     /* make actions */
+    /* if we use selective offload, we need counter action for each flow */
     struct rte_flow_action actions[] = {
         /* modify src MAC */
         {.type = RTE_FLOW_ACTION_TYPE_SET_MAC_SRC,
@@ -463,11 +468,11 @@ px_create_flow_auto(uint16_t port_id, struct four_tuple *key, struct rte_mbuf *p
         {.type = RTE_FLOW_ACTION_TYPE_END}};
 #endif
 
-    /* create main traffic rule */
+    /* create main flow rule */
 #if VALIDATE_FLOW_RULE
-    if (px_flow_validate(port_id, &attr, patterns, actions, &error) < 0)
+    if (px_latent_flow_validate(port_id, &attr, patterns, actions, &error) < 0)
     {
-        fprintf(stderr, "[port %d] px_flow_validate() failed. "
+        fprintf(stderr, "[port %d] px_latent_flow_validate() failed. "
                         "Error type: %d, Error msg: %s\n",
                 port_id, error.type, error.message);
         return NULL;
@@ -475,10 +480,121 @@ px_create_flow_auto(uint16_t port_id, struct four_tuple *key, struct rte_mbuf *p
 #endif
 
     MEASURE(
-        "px_flow_create",
-        flow = px_flow_create(port_id, &attr, patterns, actions, &error);
+        "px_latent_flow_create",
+        flow = px_latent_flow_create(port_id, &attr, patterns, actions, &error);
         if (!flow) {
-            fprintf(stderr, "[port %d] px_flow_create() failed. "
+            fprintf(stderr, "[port %d] px_latent_flow_create() failed. "
+                            "Error type: %d, Error msg: %s\n",
+                    port_id, error.type, error.message);
+        });
+
+    return flow;
+}
+/*----------------------------------------------------------------------------*/
+struct rte_flow *
+px_flow_create_onload_auto(uint16_t port_id,
+                           struct four_tuple *key,
+                           struct rte_mbuf *pkt)
+{
+    struct px_hairpin_ctx *hp_ctx = &g_hp_ctx[port_id];
+    struct rte_flow *flow = NULL;
+    struct rte_flow_error error;
+    /* Holds the flow attributes. */
+    struct rte_flow_attr attr = {
+        /* set the rule on the main group. */
+        .group = 0,
+        /* give the offload rule higher priority */
+        .priority = 0,
+        /* Rx flow. */
+        .ingress = 1,
+        .egress = 0,
+        .transfer = 0};
+
+    /* make pattern */
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    struct rte_flow_item_eth eth_spec = {0};
+    struct rte_flow_item_eth eth_mask = {0};
+#endif
+    struct rte_flow_item_ipv4 ipv4_spec = {0};
+    struct rte_flow_item_ipv4 ipv4_mask = {0};
+    struct rte_flow_item_tcp tcp_spec = {0};
+    struct rte_flow_item_tcp tcp_mask = {0};
+    struct rte_flow_item patterns[4];
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    patterns[0].type = RTE_FLOW_ITEM_TYPE_ETH;
+    patterns[0].spec = &eth_spec;
+    patterns[0].last = NULL;
+    patterns[0].mask = &eth_mask;
+#else
+    patterns[0].type = RTE_FLOW_ITEM_TYPE_VOID;
+#endif
+    patterns[1].type = RTE_FLOW_ITEM_TYPE_IPV4;
+    patterns[1].spec = &ipv4_spec;
+    patterns[1].last = NULL;
+    patterns[1].mask = &ipv4_mask;
+
+    /* below is used for prevent offloading to measure dynamic rule insertion throughput */
+    // struct four_tuple temp_key = *key;
+    // temp_key.src_ip = ntohl(get_current_cached_size(port_id) + 1);
+    // temp_key.dst_ip = ntohl(get_current_cached_size(port_id) + 1);
+    // key = &temp_key;
+
+    /* ipv4 pattern */
+    if (key->src_ip)
+    {
+        ipv4_mask.hdr.src_addr = UINT32_MAX;
+    }
+    if (key->dst_ip)
+    {
+        ipv4_mask.hdr.dst_addr = UINT32_MAX;
+    }
+    ipv4_spec.hdr.src_addr = key->src_ip;
+    ipv4_spec.hdr.dst_addr = key->dst_ip;
+
+    /* TCP pattern */
+    if (key->src_port)
+    {
+        tcp_mask.hdr.src_port = UINT16_MAX;
+    }
+    if (key->dst_port)
+    {
+        tcp_mask.hdr.dst_port = UINT16_MAX;
+    }
+    tcp_spec.hdr.src_port = key->src_port;
+    tcp_spec.hdr.dst_port = key->dst_port;
+    patterns[2].type = (*get_ip_protoid(pkt) == IPPROTO_TCP)
+                           ? RTE_FLOW_ITEM_TYPE_TCP
+                           : RTE_FLOW_ITEM_TYPE_UDP;
+    patterns[2].spec = &tcp_spec;
+    patterns[2].last = NULL;
+    patterns[2].mask = &tcp_mask;
+    patterns[3].type = RTE_FLOW_ITEM_TYPE_END;
+
+    /* make rte_flow DMA onload rule */
+    /* if we use selective onload, we need no action but RSS */
+    struct rte_flow_action actions[] = {
+        /* deliver to DMA queue RSS */
+        {.type = RTE_FLOW_ACTION_TYPE_RSS,
+         .conf = &hp_ctx->rss},
+        {.type = RTE_FLOW_ACTION_TYPE_END},
+    };
+
+    /* create main flow rule */
+#if VALIDATE_FLOW_RULE
+    if (px_latent_flow_validate(port_id, &attr, patterns, actions, &error) < 0)
+    {
+        fprintf(stderr, "[port %d] px_latent_flow_validate() failed. "
+                        "Error type: %d, Error msg: %s\n",
+                port_id, error.type, error.message);
+        return NULL;
+    }
+#endif
+
+    MEASURE(
+        "px_latent_flow_create",
+        flow = px_latent_flow_create(port_id, &attr, patterns, actions, &error);
+        if (!flow) {
+            fprintf(stderr, "[port %d] px_latent_flow_create() failed. "
                             "Error type: %d, Error msg: %s\n",
                     port_id, error.type, error.message);
         });

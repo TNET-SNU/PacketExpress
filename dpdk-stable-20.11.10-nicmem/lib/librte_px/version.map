@@ -23,8 +23,7 @@ DPDK_21 {
 	px_pktmbuf_free;
 	px_pktmbuf_free_bulk;
 	px_parse_batch;
-	px_flow_validate;
-	px_flow_create;
+	px_flow_create_static;
 	px_flow_destroy;
 	px_flow_query;
 	px_eth_dev_rss_reta_update;
@@ -37,10 +36,10 @@ DPDK_21 {
 	px_verify_icmp_cksum;
 	px_ipv4_icmp_cksum;
 	px_fill_ipv4_l4_cksum;
-	px_init_arp;
+	px_arp_configure;
 	px_free_arp;
 	px_search_arp;
-	reflect_4tuple;
+	reflect_four_tuple;
 
 	hp_context_init;
 	hp_context_destroy;

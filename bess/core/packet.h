@@ -44,7 +44,7 @@
 #include "metadata.h"
 #include "snbuf_layout.h"
 #include "worker.h"
-#include <px_gro.h>
+#include <px.h>
 
 /* NOTE: NEVER use rte_pktmbuf_*() directly,
  *       unless you know what you are doing */

@@ -1,11 +1,12 @@
 #include "px_nicmem.h"
 /*----------------------------------------------------------------------------*/
+static struct px_nicmem_ctx g_px_nicmem_ctx[RTE_MAX_ETHPORTS] = {0};
 static struct rte_mempool *g_ext_pool[RTE_MAX_NUMA_NODES][RTE_MAX_ETHPORTS] = {NULL};
 /*----------------------------------------------------------------------------*/
-int px_nicmem_free(struct px_nicmem_ctx *nm_ctx)
+int px_nicmem_free(uint16_t port_id)
 {
+    struct px_nicmem_ctx *nm_ctx = &g_px_nicmem_ctx[port_id];
     uint16_t sid = nm_ctx->socket_id;
-    uint16_t port_id = nm_ctx->port_id;
 
     if (g_ext_pool[sid][port_id])
     {
@@ -22,11 +23,11 @@ int px_nicmem_free(struct px_nicmem_ctx *nm_ctx)
     return 0;
 }
 /*----------------------------------------------------------------------------*/
-int px_nicmem_configure(struct px_nicmem_ctx *nm_ctx,
-                        uint16_t port_id,
+int px_nicmem_configure(uint16_t port_id,
                         uint16_t pkt_size,
                         unsigned int num_nicmem)
 {
+    struct px_nicmem_ctx *nm_ctx = &g_px_nicmem_ctx[port_id];
     int ret, sid = rte_eth_dev_socket_id(port_id);
     uint32_t i, num_elt_per_emem, num_emem;
     struct rte_eth_dev_info *dev_info = &nm_ctx->dev_info;
@@ -41,7 +42,7 @@ int px_nicmem_configure(struct px_nicmem_ctx *nm_ctx,
 
     if (g_ext_pool[sid][port_id])
     {
-        px_nicmem_free(nm_ctx);
+        px_nicmem_free(port_id);
         g_ext_pool[sid][port_id] = NULL;
     }
 
@@ -148,10 +149,11 @@ int px_nicmem_configure(struct px_nicmem_ctx *nm_ctx,
     return 0;
 }
 /*----------------------------------------------------------------------------*/
-int px_nicmem_setup(struct px_nicmem_ctx *nm_ctx,
+int px_nicmem_setup(uint16_t port_id,
                     struct rte_eth_rxconf *rx_conf,
                     struct rte_mempool *mp)
 {
+    struct px_nicmem_ctx *nm_ctx = &g_px_nicmem_ctx[port_id];
     // fprintf(stderr, "[port %d] pkt_size: %u\n",
     //         nm_ctx->port_id, nm_ctx->pkt_size);
 
@@ -162,7 +164,7 @@ int px_nicmem_setup(struct px_nicmem_ctx *nm_ctx,
             .length = NICMEM_DMA_SIZE,
             .offset = 0};
         nm_ctx->rx_seg[1] = (struct rte_eth_rxseg_split){
-            .mp = g_ext_pool[nm_ctx->socket_id][nm_ctx->port_id],
+            .mp = g_ext_pool[nm_ctx->socket_id][port_id],
             .length = nm_ctx->pkt_size,
             .offset = 0};
         rx_conf->rx_seg = (union rte_eth_rxseg *)nm_ctx->rx_seg;

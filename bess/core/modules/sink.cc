@@ -30,7 +30,7 @@
 
 #include "sink.h"
 #include "queue_inc.h"
-#include <px_gro.h>
+#include <px.h>
 
 void Sink::ProcessBatch(Context *, bess::PacketBatch *batch) {
 #if USE_LINK

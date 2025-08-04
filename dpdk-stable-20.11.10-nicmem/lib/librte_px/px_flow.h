@@ -66,12 +66,6 @@ struct ri_node
 /*----------------------------------------------------------------------------*/
 struct px_hairpin_ctx
 {
-    uint16_t port_id;
-    struct rte_ether_addr mac;
-
-    /* ARP table context */
-    struct px_arp_ctx *arp_ctx;
-
     /* below are for e-switch offloading using rte_flow */
 #if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0) && RTE_FLOW_ASYNC_API
     int table_id;
@@ -98,23 +92,24 @@ struct px_hairpin_ctx
     struct rte_flow *common_offload_rule[MAX_ARP_TABLE_SIZE];
 };
 /*----------------------------------------------------------------------------*/
-int hp_ctx_init(uint16_t port_id,
-                struct px_hairpin_ctx *hp_ctx,
-                struct px_arp_entry *arp_table,
-                int arp_table_size,
-                int opt_out);
+int px_create_flow_optout(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 struct rte_flow *
-px_create_flow_static(uint16_t port_id,
+px_flow_create_static(uint16_t port_id,
                       const struct rte_flow_attr *attr,
                       const struct rte_flow_item pattern[],
                       const struct rte_flow_action actions[],
                       struct rte_flow_error *error);
 /*----------------------------------------------------------------------------*/
 struct rte_flow *
-px_create_flow_auto(uint16_t port_id,
-                    struct four_tuple *key,
-                    struct rte_mbuf *pkt);
+px_flow_create_offload_auto(uint16_t port_id,
+                            struct four_tuple *key,
+                            struct rte_mbuf *pkt);
+/*----------------------------------------------------------------------------*/
+struct rte_flow *
+px_flow_create_onload_auto(uint16_t port_id,
+                           struct four_tuple *key,
+                           struct rte_mbuf *pkt);
 /*----------------------------------------------------------------------------*/
 int px_destroy_flow(uint16_t port_id, struct rte_flow *flow);
 /*----------------------------------------------------------------------------*/

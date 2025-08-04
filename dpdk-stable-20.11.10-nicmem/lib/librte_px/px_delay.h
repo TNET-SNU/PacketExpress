@@ -27,7 +27,7 @@ struct px_iat_ctx
 struct flow_iat_entry
 {
     rte_mbuf_timestamp_t last_timestamp; /* HW timestamp of last packet */
-    uint64_t last_delta;                 /* last delta in ns */
+    int64_t last_delta;                 /* last delta in ns */
     double avg_iat;                      /* avg. IAT (EWMA) */
 };
 /*----------------------------------------------------------------------------*/
@@ -338,6 +338,9 @@ get_time_factor(uint32_t missing_segs_nb)
         34.25f, // missing_segs = 19
         35.47f, // missing_segs = 20
     };
+    (void)timeout_factor_95;
+    (void)timeout_factor_99;
+    (void)timeout_factor_999;
 
     /* choose one of below */
     // static const float *timeout_factor = timeout_factor_95;

@@ -2,7 +2,7 @@
 # Copyright(c) 2017 Intel Corporation
 
 sources = files(
-        'px_gro.c',
+        'px.c',
         'px_ring.c',
         'px_latent.c',
         'px_rule.c',
@@ -19,7 +19,7 @@ sources = files(
 )
 headers = files(
         'px_common.h',
-        'px_gro.h',
+        'px.h',
         'px_ring.h',
         'px_latent.h',
         'px_rule.h',

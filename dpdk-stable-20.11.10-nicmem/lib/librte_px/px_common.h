@@ -20,6 +20,7 @@
 #include <rte_bitops.h>
 #include <unistd.h>
 #include <inttypes.h>
+#include <signal.h>
 #include <time.h>
 #include <stdatomic.h>
 #include <pthread.h>
@@ -36,40 +37,56 @@ extern "C"
 #define ADAPTIVE_TIMEOUT 1
 #define SEMANTIC_TEST 1
 #define MAX_NAME_SIZE 32
-#define FALLBACK_eMTU 1240
 
+/* External MTU (eMTU) is 1500 by default */
 #define DEFAULT_eMTU RTE_ETHER_MTU
 
-/* choose one of below for test */
+/**
+ * Internal MTU (iMTU) is 3000 ~ 9000 for now.
+ * Choose one of below for testing.
+ */
 // #define DEFAULT_iMTU 3000
 // #define DEFAULT_iMTU 4500
 // #define DEFAULT_iMTU 6000
 // #define DEFAULT_iMTU 7500
 #define DEFAULT_iMTU 9000
 
+/**
+ * Fallback external MTU (eMTU) is 1240 for now.
+ * This is used when PMTUD failed due to the ICMP blackhole.
+ * 1200 is the minimum MSS for TCP over IPv4 used by MAC.
+ * Windows and Linux use 536 as the minimum MSS for TCP over IPv4.
+ */
+// #define FALLBACK_eMTU 576
+#define FALLBACK_eMTU 1240
+
+/* Below are for statistics measurement */
 #define PX_MEASURE_STATS 1
 #define PX_MEASURE_PER_QUEUE_STAT 0
 #define PX_MEASURE_DIST 0
 #define PX_MEASURE_DELAY 1
 
+/**
+ * Below are for configuring multi-core and multi-port.
+ * PX allows up to 32 cores and 16 latent queues per queue.
+ */
 #define MAX_CORE_NUM 32
-#define PX_MAX_CORE_NUM MAX_CORE_NUM
-#define MAX_PORT_NUM RTE_MAX_ETHPORTS
-#define PX_MAX_QUEUES_PER_PORT MAX_CORE_NUM
-#define PX_MAX_QUEUE_INCREASE (RTE_MAX_QUEUES_PER_PORT / MAX_CORE_NUM)
-#define PX_MAX_PKT_BURST 64
+#define PX_MAX_QUEUE_INCREASE 16
+#define PX_MAX_QUEUES_PER_PORT (RTE_MAX_QUEUES_PER_PORT / PX_MAX_QUEUE_INCREASE)
 
+/* Custom timestamp flags */
 #define CLOCK_CPU_TIMESTAMP 100
 #define CLOCK_NIC_TIMESTAMP 101
 
+/* Choose one of below */
 // #define TIME_FLAG (CLOCK_REALTIME)
 // #define TIME_FLAG (CLOCK_MONOTONIC)
 #define TIME_FLAG (CLOCK_CPU_TIMESTAMP)
 // #define TIME_FLAG (CLOCK_NIC_TIMESTAMP)
 
-#define E9 (long)1e9
-#define E6 (long)1e6
-#define E3 (long)1e3
+#define E9 ((long)1e9)
+#define E6 ((long)1e6)
+#define E3 ((long)1e3)
 
 #define PX_MARK_ON_TOS 0x01
 
@@ -97,12 +114,50 @@ extern "C"
      TCPOPT_TIMESTAMP << 8 | \
      TCPOLEN_TIMESTAMP)
 /*----------------------------------------------------------------------------*/
+struct px_dev
+{
+    uint16_t num_rxq;
+    uint16_t num_rxq_incr;
+    uint16_t num_txq;
+
+    /* for packet stalling */
+    int64_t timeout_ns;
+
+    /* source MAC from this port */
+    struct rte_ether_addr mac;
+
+    /* whether delayed merging is initialized for downlink flow */
+    int initialized_delay:1;
+
+    /* whether MSS table is initialized for uplink flow */
+    int initialized_mss:1;
+
+    /* whether ARP table context initialized */
+    int initialized_arp:1;
+
+    /* whether nicmem context initialized */
+    int initialized_nicmem:1;
+
+    /* whether hairpin context initialized */
+    int initialized_hairpin:1;
+
+    /* selective onload or selective offload for hairpin */
+    int initialized_optout:1;
+
+    /* whether ReTa entry initialized */
+    int initialized_reta:1;
+
+    uint16_t nb_rx_desc[PX_MAX_QUEUES_PER_PORT];
+    uint16_t nb_tx_desc[PX_MAX_QUEUES_PER_PORT];
+
+    struct rte_eth_dev_info dev_info;
+};
+/*----------------------------------------------------------------------------*/
 static inline void
 px_clock_gettime(clockid_t clk_id, struct timespec *ts)
 {
     if (clk_id == CLOCK_CPU_TIMESTAMP)
     {
-
         uint64_t tsc = rte_rdtsc();
         uint64_t tsc_hz = rte_get_tsc_hz();
 
@@ -112,16 +167,13 @@ px_clock_gettime(clockid_t clk_id, struct timespec *ts)
 
         return;
     }
-    if (clk_id == CLOCK_MONOTONIC)
+    if (clk_id == CLOCK_NIC_TIMESTAMP)
     {
-        clock_gettime(CLOCK_MONOTONIC, ts);
+        /* not implemented yet */
         return;
     }
-    if (clk_id == CLOCK_REALTIME)
-    {
-        clock_gettime(CLOCK_REALTIME, ts);
-        return;
-    }
+    
+    clock_gettime(clk_id, ts);
 }
 /*----------------------------------------------------------------------------*/
 #ifdef RTE_FLOW_MEASURE_DELAY
@@ -238,10 +290,10 @@ busy_wait_for(unsigned int nsecs)
 {
     struct timespec start, end;
     long time;
-    clock_gettime(TIME_FLAG, &start);
+    px_clock_gettime(TIME_FLAG, &start);
     do
     {
-        clock_gettime(TIME_FLAG, &end);
+        px_clock_gettime(TIME_FLAG, &end);
         time = (end.tv_sec - start.tv_sec) * E9 + (end.tv_nsec - start.tv_nsec);
     } while (time < nsecs); // Loop until it arrives.
 }
@@ -711,20 +763,6 @@ is_tso(struct rte_mbuf *pkt)
 #else
     return pkt->ol_flags & RTE_MBUF_F_TX_TCP_SEG;
 #endif
-}
-/*----------------------------------------------------------------------------*/
-static inline int
-is_uplink(struct rte_mbuf *pkt)
-{
-    uint8_t *s = (uint8_t *)get_four_tuple(pkt);
-    return *(s + 2) == 90;
-}
-/*----------------------------------------------------------------------------*/
-static inline int
-is_downlink(struct rte_mbuf *pkt)
-{
-    uint8_t *s = (uint8_t *)get_four_tuple(pkt);
-    return *(s + 2) == 95;
 }
 /*----------------------------------------------------------------------------*/
 static inline int

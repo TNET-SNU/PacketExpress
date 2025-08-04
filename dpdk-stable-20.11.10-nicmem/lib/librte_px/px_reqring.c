@@ -8,6 +8,7 @@ int get_host_cached_size(int core_id)
     {
         return -1;
     }
+    
     return g_rule_manager[core_id].ht->ht_count;
 }
 /*----------------------------------------------------------------------------*/

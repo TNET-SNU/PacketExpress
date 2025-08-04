@@ -1,31 +1,51 @@
 #include "px_latent.h"
-
-static int g_num_rxq[RTE_MAX_ETHPORTS] = {0};
-static int g_num_rxq_incr[RTE_MAX_ETHPORTS] = {0};
+/* for Redirection Table (ReTa) */
+static struct px_latent_ctx g_px_latent_ctx[RTE_MAX_ETHPORTS] = {0};
+extern struct px_dev g_px_dev[RTE_MAX_ETHPORTS];
 /*----------------------------------------------------------------------------*/
 void px_latent_rxq_configure(uint16_t port_id, int num_rxq, int num_rxq_incr)
 {
-    g_num_rxq[port_id] = num_rxq;
-    g_num_rxq_incr[port_id] = num_rxq_incr;
+    struct px_latent_ctx *ctx = &g_px_latent_ctx[port_id];
+    int ret;
+
+    /* initialize ReTa entry */
+    memset(ctx->reta, 0, sizeof(ctx->reta));
+    for (int i = 0; i < ctx->num_rxq; i++)
+    {
+        ctx->reta[i / RTE_RETA_GROUP_SIZE].mask = UINT64_MAX;
+    }
+
+    ctx->num_rxq = num_rxq;
+    ctx->num_rxq_incr = num_rxq_incr;
+
+    /* get ReTa */
+    ret = rte_eth_dev_rss_reta_query(port_id,
+                                     ctx->reta,
+                                     g_px_dev[port_id].dev_info.reta_size);
+    // if (ret)
+    // {
+    //     rte_exit(EXIT_FAILURE, "rte_eth_dev_rss_reta_query failed: %d\n", ret);
+    // }
+    (void)ret;
 }
 /*----------------------------------------------------------------------------*/
 /**
  * ToDo: Make px_action and px_queue dynamic
  */
-int
-px_flow_validate(uint16_t port_id,
-                        const struct rte_flow_attr *attr,
-                        const struct rte_flow_item pattern[],
-                        const struct rte_flow_action actions[],
-                        struct rte_flow_error *error)
+int px_latent_flow_validate(uint16_t port_id,
+                            const struct rte_flow_attr *attr,
+                            const struct rte_flow_item pattern[],
+                            const struct rte_flow_action actions[],
+                            struct rte_flow_error *error)
 {
+    struct px_latent_ctx *ctx = &g_px_latent_ctx[port_id];
     struct rte_flow_action px_action[PX_FLOW_MAX_ACTIONS];
     struct rte_flow_action_queue px_queue[PX_FLOW_MAX_ACTIONS];
     const struct rte_flow_action_queue *temp;
     uint16_t queue_idx;
     int i = 0, j = 0;
     static int inner_idx = 0;
-    if (unlikely(g_num_rxq_incr[port_id] == 0))
+    if (unlikely(ctx->num_rxq_incr == 0))
     {
         printf("please configure device first using px_latent_rxq_configure\n");
         return -1;
@@ -34,6 +54,8 @@ px_flow_validate(uint16_t port_id,
     {
         return rte_flow_validate(port_id, attr, pattern, actions, error);
     }
+
+    /* find queue actions and adjust them considering latent RXQs */
     while (i < PX_FLOW_MAX_ACTIONS)
     {
         px_action[i] = actions[i];
@@ -49,8 +71,8 @@ px_flow_validate(uint16_t port_id,
         {
             temp = (const struct rte_flow_action_queue *)px_action[i].conf;
             queue_idx = temp->index;
-            px_queue[j].index = queue_idx * g_num_rxq_incr[port_id] +
-                                (inner_idx++ % g_num_rxq_incr[port_id]);
+            px_queue[j].index = queue_idx * ctx->num_rxq_incr +
+                                (inner_idx++ % ctx->num_rxq_incr);
 
             // printf("adjusted qid: %u --> %u\n",
             //        queue_idx,
@@ -59,13 +81,13 @@ px_flow_validate(uint16_t port_id,
             px_action[i].conf = &px_queue[j];
             if (++j >= PX_FLOW_MAX_ACTIONS)
             {
-                printf("px_flow_create: too many queue actions\n");
+                printf("px_latent_flow_create: too many queue actions\n");
                 break;
             }
         }
         if (++i >= PX_FLOW_MAX_ACTIONS)
         {
-            printf("px_flow_create: too many actions\n");
+            printf("px_latent_flow_create: too many actions\n");
             break;
         }
     }
@@ -77,19 +99,20 @@ px_flow_validate(uint16_t port_id,
  * ToDo: Make px_action and px_queue dynamic
  */
 struct rte_flow *
-px_flow_create(uint16_t port_id,
+px_latent_flow_create(uint16_t port_id,
                       const struct rte_flow_attr *attr,
                       const struct rte_flow_item pattern[],
                       const struct rte_flow_action actions[],
                       struct rte_flow_error *error)
 {
+    struct px_latent_ctx *ctx = &g_px_latent_ctx[port_id];
     struct rte_flow_action px_action[PX_FLOW_MAX_ACTIONS];
     struct rte_flow_action_queue px_queue[PX_FLOW_MAX_ACTIONS];
     const struct rte_flow_action_queue *temp;
     uint16_t queue_idx;
     int i = 0, j = 0;
     static int inner_idx = 0;
-    if (unlikely(g_num_rxq_incr[port_id] == 0))
+    if (unlikely(ctx->num_rxq_incr == 0))
     {
         printf("please configure device first using px_latent_rxq_configure\n");
         return NULL;
@@ -113,8 +136,8 @@ px_flow_create(uint16_t port_id,
         {
             temp = (const struct rte_flow_action_queue *)px_action[i].conf;
             queue_idx = temp->index;
-            px_queue[j].index = queue_idx * g_num_rxq_incr[port_id] +
-                                (inner_idx++ % g_num_rxq_incr[port_id]);
+            px_queue[j].index = queue_idx * ctx->num_rxq_incr +
+                                (inner_idx++ % ctx->num_rxq_incr);
 
             // printf("adjusted qid: %u --> %u\n",
             //        queue_idx,
@@ -123,13 +146,13 @@ px_flow_create(uint16_t port_id,
             px_action[i].conf = &px_queue[j];
             if (++j >= PX_FLOW_MAX_ACTIONS)
             {
-                printf("px_flow_create: too many queue actions\n");
+                printf("px_latent_flow_create: too many queue actions\n");
                 break;
             }
         }
         if (++i >= PX_FLOW_MAX_ACTIONS)
         {
-            printf("px_flow_create: too many actions\n");
+            printf("px_latent_flow_create: too many actions\n");
             break;
         }
     }
@@ -141,9 +164,15 @@ int px_eth_dev_rss_reta_update(uint16_t port_id,
                                struct rte_eth_rss_reta_entry64 *reta_conf,
                                uint16_t reta_size)
 {
-    struct rte_eth_rss_reta_entry64 px_reta_conf[PX_RETA_GROUP_NUM];
-    struct rte_eth_dev_info dev_info;
-    int ret, i, j, group_num, inner_len;
+    struct px_latent_ctx *ctx = &g_px_latent_ctx[port_id];
+    struct rte_eth_rss_reta_entry64 px_reta[PX_RETA_GROUP_NUM];
+    int i, j, group_num, inner_len;
+
+    if (!g_px_dev[port_id].initialized_reta)
+    {
+        fprintf(stderr, "ReTa context is not initialized\n");
+        return -1;
+    }
 
     if (reta_size > PX_FLOW_MAX_RETA_SIZE)
     {
@@ -151,38 +180,31 @@ int px_eth_dev_rss_reta_update(uint16_t port_id,
         return -1;
     }
 
-    ret = rte_eth_dev_info_get(port_id, &dev_info);
-    if (unlikely(ret))
-    {
-        fprintf(stderr, "rte_eth_dev_info_get failed: %d\n", ret);
-        return -1;
-    }
-
     group_num = (reta_size + RTE_RETA_GROUP_SIZE - 1) / RTE_RETA_GROUP_SIZE;
     inner_len = RTE_RETA_GROUP_SIZE;
     for (i = 0; i < group_num; i++)
     {
-        px_reta_conf[i] = reta_conf[i];
+        px_reta[i] = reta_conf[i];
         if (reta_size % RTE_RETA_GROUP_SIZE && i == group_num - 1)
         {
             inner_len = reta_size % RTE_RETA_GROUP_SIZE;
         }
         for (j = 0; j < inner_len; j++)
         {
-            px_reta_conf[i].reta[j] +=
+            px_reta[i].reta[j] +=
                 ((i * RTE_RETA_GROUP_SIZE + j) /
-                 g_num_rxq_incr[port_id] *
-                 g_num_rxq_incr[port_id]) %
-                (g_num_rxq[port_id] * g_num_rxq_incr[port_id]);
+                 ctx->num_rxq_incr *
+                 ctx->num_rxq_incr) %
+                (ctx->num_rxq * ctx->num_rxq_incr);
         }
     }
 
     // fprintf(stderr, "before)\n");
     // px_dump_reta(reta_conf, reta_size);
     // fprintf(stderr, "after)\n");
-    // px_dump_reta(px_reta_conf, reta_size);
+    // px_dump_reta(px_reta, reta_size);
 
-    return rte_eth_dev_rss_reta_update(port_id, px_reta_conf, reta_size);
+    return rte_eth_dev_rss_reta_update(port_id, px_reta, reta_size);
 }
 /*----------------------------------------------------------------------------*/
 void px_dump_reta(struct rte_eth_rss_reta_entry64 *reta_conf,
@@ -232,31 +254,33 @@ void px_dump_reta(struct rte_eth_rss_reta_entry64 *reta_conf,
     fprintf(stderr, "RSS RETA: %s\n", buf);
 }
 /*----------------------------------------------------------------------------*/
-void px_eth_dump_reta(uint16_t port_id)
+int px_eth_dump_reta(uint16_t port_id)
 {
-    struct rte_eth_rss_reta_entry64 px_reta_conf[PX_RETA_GROUP_NUM];
-    struct rte_eth_dev_info dev_info;
+    struct rte_eth_rss_reta_entry64 px_reta[PX_RETA_GROUP_NUM];
+    uint16_t reta_size = g_px_dev[port_id].dev_info.reta_size;
     int ret, i;
 
-    ret = rte_eth_dev_info_get(port_id, &dev_info);
+    if (!g_px_dev[port_id].initialized_reta)
+    {
+        fprintf(stderr, "ReTa context is not initialized\n");
+        return -1;
+    }
+
+    memset(px_reta, 0, sizeof(px_reta));
+    for (i = 0; i < reta_size; i++)
+    {
+        px_reta[i / RTE_RETA_GROUP_SIZE].mask = UINT64_MAX;
+    }
+
+    ret = rte_eth_dev_rss_reta_query(port_id, px_reta, reta_size);
     if (unlikely(ret))
     {
-        rte_exit(EXIT_FAILURE, "px_dump_rss_reta: rte_eth_dev_info_get failed: %d\n", ret);
-        return;
+        fprintf(stderr, "rte_eth_dev_rss_reta_query failed: %d\n", ret);
+        return -1;
     }
 
-    memset(px_reta_conf, 0, sizeof(px_reta_conf));
-    for (i = 0; i < dev_info.reta_size; i++)
-    {
-        px_reta_conf[i / RTE_RETA_GROUP_SIZE].mask = UINT64_MAX;
-    }
+    px_dump_reta(px_reta, reta_size);
 
-    ret = rte_eth_dev_rss_reta_query(port_id, px_reta_conf, dev_info.reta_size);
-    if (unlikely(ret))
-    {
-        return;
-    }
-
-    px_dump_reta(px_reta_conf, dev_info.reta_size);
+    return 0;
 }
 /*----------------------------------------------------------------------------*/

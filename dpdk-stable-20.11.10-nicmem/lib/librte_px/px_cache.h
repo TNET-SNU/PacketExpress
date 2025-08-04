@@ -3,6 +3,7 @@
 
 #include "px_common.h"
 #include "px_flow.h"
+#include "px_delay.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -11,17 +12,25 @@ extern "C"
 /*----------------------------------------------------------------------------*/
 struct cache_manager
 {
-    uint32_t cache_size; // size of cache. it should be about 10K
-    uint32_t current_cached_size;
-    uint32_t temp_cached_size;
-    uint32_t temp_evicted_size;
-    uint32_t total_cached_size;
-    uint32_t total_evicted_size;
+    /* total size of cache. it should be about 10K */
+    uint64_t cache_size;
+
+    /* stats for cache */
+    uint64_t current_cached_size;
+    uint64_t temp_cached_size;
+    uint64_t temp_evicted_size;
+    uint64_t total_cached_size;
+    uint64_t total_evicted_size;
+
+    /* LRU queue */
     struct ri_node head; // this has no data
     struct ri_node tail; // this has no data
-    struct timespec start_time;
-    struct timespec curr_time;
-    long diff_time;
+
+    /* to notify manager thread to reset stats */
+    int reset;
+
+    /* whether this cache manager is initialized */
+    int init;
 };
 /*----------------------------------------------------------------------------*/
 int get_nic_cached_size(int port_id);
@@ -31,6 +40,11 @@ void incr_temp_cached_size(int port_id);
 void incr_temp_evicted_size(int port_id);
 /*----------------------------------------------------------------------------*/
 void lru_queue_print_all(int port_id);
+/*----------------------------------------------------------------------------*/
+void lru_queue_init(int port_id, size_t num);
+/*----------------------------------------------------------------------------*/
+int lru_queue_insert_and_destroy_evicted(int port_id,
+                                         struct ri_node *node);
 /*----------------------------------------------------------------------------*/
 // returns least frequent entry by querying
 struct ri_node *
@@ -54,37 +68,11 @@ lru_queue_get_most_recent(int port_id);
 struct ri_node *
 lru_queue_get_least_recent(int port_id);
 /*----------------------------------------------------------------------------*/
-int lru_queue_insert_and_destroy_evicted(int port_id,
-                                         struct ri_node *node);
+int check_stat_reset(int port_id);
 /*----------------------------------------------------------------------------*/
-void print_update_rate(struct timespec *timer);
+void reset_stat(int port_id);
 /*----------------------------------------------------------------------------*/
-void lru_queue_init(int port_id, size_t num);
-/*----------------------------------------------------------------------------*/
-/* returns handle for initiate and destroy of hairpin context */
-int hp_context_init(int thread_core_id,
-                    size_t per_core_host_cache_size,
-                    size_t per_port_nic_cache_size);
-/*----------------------------------------------------------------------------*/
-void hp_context_destroy(void);
-/*----------------------------------------------------------------------------*/
-int hp_create_rule(int core_id,
-                   struct ri_node *node);
-/*----------------------------------------------------------------------------*/
-int hp_delete_rule(int core_id,
-                   struct ri_node *node);
-/*----------------------------------------------------------------------------*/
-int hp_stat_rule(int core_id,
-                 struct ri_node *node,
-                 struct count *stat);
-/*----------------------------------------------------------------------------*/
-size_t hp_nic_cache_stat(void);
-/*----------------------------------------------------------------------------*/
-size_t hp_host_hash_stat(void);
-/*----------------------------------------------------------------------------*/
-/* not implemented yet */
-int hp_async_configure(uint16_t port_id);
-
+void print_cache_stats(void);
 /*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 }

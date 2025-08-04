@@ -2,6 +2,7 @@
 #define PX_STAT_H_
 
 #include "px_common.h"
+#include "px_cache.h"
 #include "px_delay.h"
 
 #ifdef __cplusplus

@@ -30,7 +30,7 @@
 #include <rte_mbuf_core.h>
 #include <rte_thread.h>
 #include <rte_lcore.h>
-#include "px_gro.h"
+#include "px.h"
 /*----------------------------------------------------------------------------*/
 /* Essential macros */
 #define MBUF_DATA_SIZE 9024
@@ -56,15 +56,10 @@ static uint32_t nb_mbuf = NB_MBUF;
 /*----------------------------------------------------------------------------*/
 static uint8_t g_key[] = {
     0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
-	0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
-	0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
-	0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
-	0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A
-};
-/*----------------------------------------------------------------------------*/
-/* ARP table structures */
-static struct px_arp_ctx *g_arp_ctx;
-static int g_arp_table_size = 0;
+    0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+    0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+    0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+    0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A};
 /*----------------------------------------------------------------------------*/
 /* static ARP table configuration */
 static struct px_arp_entry g_arp_entries[] = {
@@ -88,6 +83,21 @@ static struct px_arp_entry g_arp_entries[] = {
     {"10.3.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
     {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
 };
+/*----------------------------------------------------------------------------*/
+/* static routing table configuration */
+static int
+is_uplink(struct rte_mbuf *pkt)
+{
+    uint8_t *s = (uint8_t *)get_four_tuple(pkt);
+    return *(s + 2) == 90;
+}
+/*----------------------------------------------------------------------------*/
+static int
+is_downlink(struct rte_mbuf *pkt)
+{
+    uint8_t *s = (uint8_t *)get_four_tuple(pkt);
+    return *(s + 2) == 95;
+}
 /*----------------------------------------------------------------------------*/
 /* global information for port configuration */
 volatile int g_shutdown = 0;
@@ -208,6 +218,14 @@ port_init(uint16_t portid, uint16_t num_queue)
                  ret, (unsigned)portid);
     }
 
+    /* Explicitly configure ARP table */
+    ret = px_arp_configure(g_arp_entries,
+                           sizeof(g_arp_entries) / sizeof(g_arp_entries[0]));
+    if (ret < 0)
+    {
+        rte_exit(EXIT_FAILURE, "Failed to configure ARP table\n");
+    }
+
     fflush(stdout);
 
     rte_eth_macaddr_get(portid, &port_mac[portid]);
@@ -309,7 +327,7 @@ void lcore_main(void)
                 ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
 
                 /* modify DST MAC */
-                dst_mac = px_search_arp(g_arp_ctx, ip_hdr->dst_addr);
+                dst_mac = px_search_arp(ip_hdr->dst_addr);
                 if (!dst_mac)
                 {
                     /* ignore unknown dst IP */
@@ -443,9 +461,6 @@ int main(int argc, char **argv)
     // printf("lcore_count: %u\n", rte_lcore_count());
     // printf("device_count: %u\n", g_num_ports);
 
-    g_arp_table_size = sizeof(g_arp_entries) / sizeof(g_arp_entries[0]);
-    g_arp_ctx = px_init_arp(g_arp_entries, g_arp_table_size);
-
     /* mbuf pool creation */
     for (core_id = 0; core_id < g_num_cores; core_id++)
     {
@@ -515,7 +530,7 @@ int main(int argc, char **argv)
     }
 
     /* cleanup */
-    px_free_arp(g_arp_ctx);
+    px_free_arp();
 
     for (i = 0; i < eal_argc; i++)
     {

@@ -36,15 +36,13 @@ struct px_arp_ctx
  * If you need to use different ARP tables for different threads, you can
  * make per-thread ARP contexts.
  */
-struct px_arp_ctx *
-px_init_arp(struct px_arp_entry *arp_table,
-            int table_size);
+int px_arp_configure(struct px_arp_entry *arp_string_table,
+                     int arp_string_table_size);
 /*----------------------------------------------------------------------------*/
-void px_free_arp(struct px_arp_ctx *arp_ctx);
+void px_free_arp(void);
 /*----------------------------------------------------------------------------*/
 struct rte_ether_addr *
-px_search_arp(struct px_arp_ctx *arp_ctx,
-              uint32_t ip_dst);
+px_search_arp(uint32_t ip_dst);
 /*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 }

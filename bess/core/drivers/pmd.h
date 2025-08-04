@@ -51,7 +51,7 @@
 #include "../packet.h"
 
 #include <rte_gro.h>
-#include <px_gro.h>
+#include <px.h>
 #include <px_offload.h>
 
 typedef uint16_t dpdk_port_t;
