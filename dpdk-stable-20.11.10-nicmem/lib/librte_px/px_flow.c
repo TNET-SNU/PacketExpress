@@ -243,16 +243,16 @@ offload_all_flows(uint16_t port_id)
             px_latent_flow_create(port_id, &attr, patterns, actions, &error);
         if (!hp_ctx->common_offload_rule[i])
         {
-            fprintf(stderr, "[port %d] px_latent_flow_create() failed. "
+            fprintf(stderr, "%d [port %d] px_latent_flow_create() failed. "
                             "Error type: %d, Error msg: %s\n",
-                    port_id, error.type, error.message);
+                    __LINE__, port_id, error.type, error.message);
         }
     }
 
     return 0;
 }
 /*----------------------------------------------------------------------------*/
-int px_create_flow_optout(uint16_t port_id)
+int px_flow_create_optout(uint16_t port_id)
 {
     int ret;
 
@@ -300,9 +300,9 @@ px_flow_create_static(uint16_t port_id,
         "px_latent_flow_create",
         flow = px_latent_flow_create(port_id, attr, patterns, actions, error);
         if (!flow) {
-            fprintf(stderr, "[port %d] px_latent_flow_create() failed. "
+            fprintf(stderr, "%d [port %d] px_latent_flow_create() failed. "
                             "Error type: %d, Error msg: %s\n",
-                    port_id, error->type, error->message);
+                    __LINE__, port_id, error->type, error->message);
         });
 
     return flow;
@@ -336,6 +336,8 @@ px_flow_create_offload_auto(uint16_t port_id,
     struct rte_flow_item_ipv4 ipv4_mask = {0};
     struct rte_flow_item_tcp tcp_spec = {0};
     struct rte_flow_item_tcp tcp_mask = {0};
+    struct rte_flow_item_udp udp_spec = {0};
+    struct rte_flow_item_udp udp_mask = {0};
     struct rte_flow_item patterns[4];
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
     patterns[0].type = RTE_FLOW_ITEM_TYPE_ETH;
@@ -368,23 +370,42 @@ px_flow_create_offload_auto(uint16_t port_id,
     ipv4_spec.hdr.src_addr = key->src_ip;
     ipv4_spec.hdr.dst_addr = key->dst_ip;
 
-    /* TCP pattern */
-    if (key->src_port)
+    if (*get_ip_protoid(pkt) == IPPROTO_UDP)
     {
-        tcp_mask.hdr.src_port = UINT16_MAX;
+        /* UDP pattern */
+        if (key->src_port)
+        {
+            udp_mask.hdr.src_port = UINT16_MAX;
+        }
+        if (key->dst_port)
+        {
+            udp_mask.hdr.dst_port = UINT16_MAX;
+        }
+        udp_spec.hdr.src_port = key->src_port;
+        udp_spec.hdr.dst_port = key->dst_port;
+        patterns[2].type = RTE_FLOW_ITEM_TYPE_UDP;
+        patterns[2].spec = &udp_spec;
+        patterns[2].last = NULL;
+        patterns[2].mask = &udp_mask;
     }
-    if (key->dst_port)
+    else if (*get_ip_protoid(pkt) == IPPROTO_TCP)
     {
-        tcp_mask.hdr.dst_port = UINT16_MAX;
+        /* TCP pattern */
+        if (key->src_port)
+        {
+            tcp_mask.hdr.src_port = UINT16_MAX;
+        }
+        if (key->dst_port)
+        {
+            tcp_mask.hdr.dst_port = UINT16_MAX;
+        }
+        tcp_spec.hdr.src_port = key->src_port;
+        tcp_spec.hdr.dst_port = key->dst_port;
+        patterns[2].type = RTE_FLOW_ITEM_TYPE_TCP;
+        patterns[2].spec = &tcp_spec;
+        patterns[2].last = NULL;
+        patterns[2].mask = &tcp_mask;
     }
-    tcp_spec.hdr.src_port = key->src_port;
-    tcp_spec.hdr.dst_port = key->dst_port;
-    patterns[2].type = (*get_ip_protoid(pkt) == IPPROTO_TCP)
-                           ? RTE_FLOW_ITEM_TYPE_TCP
-                           : RTE_FLOW_ITEM_TYPE_UDP;
-    patterns[2].spec = &tcp_spec;
-    patterns[2].last = NULL;
-    patterns[2].mask = &tcp_mask;
     patterns[3].type = RTE_FLOW_ITEM_TYPE_END;
 
 #if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0)
@@ -483,9 +504,9 @@ px_flow_create_offload_auto(uint16_t port_id,
         "px_latent_flow_create",
         flow = px_latent_flow_create(port_id, &attr, patterns, actions, &error);
         if (!flow) {
-            fprintf(stderr, "[port %d] px_latent_flow_create() failed. "
+            fprintf(stderr, "%d [port %d] px_latent_flow_create() failed. "
                             "Error type: %d, Error msg: %s\n",
-                    port_id, error.type, error.message);
+                    __LINE__, port_id, error.type, error.message);
         });
 
     return flow;
@@ -519,6 +540,8 @@ px_flow_create_onload_auto(uint16_t port_id,
     struct rte_flow_item_ipv4 ipv4_mask = {0};
     struct rte_flow_item_tcp tcp_spec = {0};
     struct rte_flow_item_tcp tcp_mask = {0};
+    struct rte_flow_item_tcp udp_spec = {0};
+    struct rte_flow_item_tcp udp_mask = {0};
     struct rte_flow_item patterns[4];
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
     patterns[0].type = RTE_FLOW_ITEM_TYPE_ETH;
@@ -551,23 +574,42 @@ px_flow_create_onload_auto(uint16_t port_id,
     ipv4_spec.hdr.src_addr = key->src_ip;
     ipv4_spec.hdr.dst_addr = key->dst_ip;
 
-    /* TCP pattern */
-    if (key->src_port)
+    if (*get_ip_protoid(pkt) == IPPROTO_UDP)
     {
-        tcp_mask.hdr.src_port = UINT16_MAX;
+        /* UDP pattern */
+        if (key->src_port)
+        {
+            udp_mask.hdr.src_port = UINT16_MAX;
+        }
+        if (key->dst_port)
+        {
+            udp_mask.hdr.dst_port = UINT16_MAX;
+        }
+        udp_spec.hdr.src_port = key->src_port;
+        udp_spec.hdr.dst_port = key->dst_port;
+        patterns[2].type = RTE_FLOW_ITEM_TYPE_UDP;
+        patterns[2].spec = &udp_spec;
+        patterns[2].last = NULL;
+        patterns[2].mask = &udp_mask;
     }
-    if (key->dst_port)
+    else if (*get_ip_protoid(pkt) == IPPROTO_TCP)
     {
-        tcp_mask.hdr.dst_port = UINT16_MAX;
+        /* TCP pattern */
+        if (key->src_port)
+        {
+            tcp_mask.hdr.src_port = UINT16_MAX;
+        }
+        if (key->dst_port)
+        {
+            tcp_mask.hdr.dst_port = UINT16_MAX;
+        }
+        tcp_spec.hdr.src_port = key->src_port;
+        tcp_spec.hdr.dst_port = key->dst_port;
+        patterns[2].type = RTE_FLOW_ITEM_TYPE_TCP;
+        patterns[2].spec = &tcp_spec;
+        patterns[2].last = NULL;
+        patterns[2].mask = &tcp_mask;
     }
-    tcp_spec.hdr.src_port = key->src_port;
-    tcp_spec.hdr.dst_port = key->dst_port;
-    patterns[2].type = (*get_ip_protoid(pkt) == IPPROTO_TCP)
-                           ? RTE_FLOW_ITEM_TYPE_TCP
-                           : RTE_FLOW_ITEM_TYPE_UDP;
-    patterns[2].spec = &tcp_spec;
-    patterns[2].last = NULL;
-    patterns[2].mask = &tcp_mask;
     patterns[3].type = RTE_FLOW_ITEM_TYPE_END;
 
     /* make rte_flow DMA onload rule */
@@ -594,9 +636,9 @@ px_flow_create_onload_auto(uint16_t port_id,
         "px_latent_flow_create",
         flow = px_latent_flow_create(port_id, &attr, patterns, actions, &error);
         if (!flow) {
-            fprintf(stderr, "[port %d] px_latent_flow_create() failed. "
+            fprintf(stderr, "%d [port %d] px_latent_flow_create() failed. "
                             "Error type: %d, Error msg: %s\n",
-                    port_id, error.type, error.message);
+                    __LINE__, port_id, error.type, error.message);
         });
 
     return flow;
@@ -648,3 +690,4 @@ int px_query_flow(uint16_t port_id,
 
     return 0;
 }
+/*----------------------------------------------------------------------------*/

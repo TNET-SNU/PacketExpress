@@ -9,7 +9,7 @@ Use Ubuntu 22.04.
                   iproute2 iptables iputils-ping tcpdump python-is-python3 python3-pip python3-pyelftools golang-go protobuf-compiler-grpc \
                   libtool libprotobuf-dev libgrpc++-dev libzmq3-dev libjsoncpp-dev libgoogle-glog0v5 libgoogle-glog-dev libzmq5 \
                   libunwind-dev liblzma-dev libpcap-dev libssl-dev libnuma-dev libgflags-dev libgraph-easy-perl libgtest-dev \
-                  libc-ares-dev libbenchmark-dev libelf-dev libdwarf-dev zlib1g-dev 
+                  libc-ares-dev libbenchmark-dev libelf-dev libdwarf-dev zlib1g-dev libnl-3-dev libnl-genl-3-dev libpopt-dev
    pip install protobuf==3.19.6 grpcio scapy flask iptools mitogen psutil pyroute2==0.8.1
    ```
 For details, please refer to prerequisites of BESS, DPDK (data plane) and UPF-EPC (control plane).

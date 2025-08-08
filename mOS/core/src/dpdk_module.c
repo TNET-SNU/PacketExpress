@@ -271,7 +271,7 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 {
 	struct dpdk_private_context *dpc;
 	int ret;
-	uint8_t qid;
+	uint16_t qid;
 
 	dpc = (struct dpdk_private_context *) ctxt->io_private_context;
 	qid = cpu_qid_map[ifidx][ctxt->cpu];
@@ -282,10 +282,10 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 	
 	/* rx from data mbuf */
 #if USE_CGRO
-	ret = px_eth_rx_burst((uint8_t)ifidx, qid,
+	ret = px_eth_rx_burst(ifidx, qid,
 			dpc->rmbufs[ifidx].m_table, MAX_PKT_BURST);
 #else
-	ret = rte_eth_rx_burst((uint8_t)ifidx, qid,
+	ret = rte_eth_rx_burst(ifidx, qid,
 			dpc->rmbufs[ifidx].m_table, MAX_PKT_BURST);
 #if (USE_LRO || USE_DGRO)
 	px_parse_batch(ifidx, qid, dpc->rmbufs[ifidx].m_table, ret, !JUMBO_FRAME, 1);
@@ -299,7 +299,7 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 	};
 	ret = rte_gro_reassemble_burst(dpc->rmbufs[ifidx].m_table, ret, &gro_param);
 #endif
-	px_update_stats((uint8_t)ifidx, qid, dpc->rmbufs[ifidx].m_table, ret, NULL);
+	px_update_rx_stats(ifidx, qid, dpc->rmbufs[ifidx].m_table, ret);
 #endif
 	dpc->rmbufs[ifidx].len = ret;
 
@@ -648,6 +648,14 @@ dpdk_load_module_lower_half(void)
 					rte_exit(EXIT_FAILURE, "rte_eth_rx_queue_setup: "
 										   "err=%d, port=%u, queue_id for data: %d\n",
 										   ret, (unsigned) portid, rxlcore_id);
+#if USE_CGRO
+				ret = px_init(portid, rxlcore_id,
+							  MAX_PKT_BURST,
+							  !JUMBO_FRAME ? 4096 : 0,
+							  STALL_TIMEOUT_NS, NULL, NULL, USE_LINK);
+				if (ret < 0)
+					rte_exit(EXIT_FAILURE, "px_init failed\n");
+#endif
 
 				cpu_qid_map[portid][rxlcore_id] = queue_id;
 				queue_id++;
@@ -678,33 +686,7 @@ dpdk_load_module_lower_half(void)
 
 			printf("done: \n");
 			rte_eth_promiscuous_enable(portid);
-#if USE_CGRO
-			/* make patterns */
-			struct rte_flow_item_ipv4 ipv4_mask;
-			memset(&ipv4_mask, 0, sizeof(struct rte_flow_item_ipv4));
-			ipv4_mask.hdr.src_addr = UINT32_MAX;
-			ipv4_mask.hdr.dst_addr = UINT32_MAX;
-			struct px_pattern patterns[2];
-			patterns[0].type = RTE_FLOW_ITEM_TYPE_IPV4;
-			patterns[0].mask = &ipv4_mask;
-			struct rte_flow_item_tcp tcp_mask;
-			memset(&tcp_mask, 0, sizeof(struct rte_flow_item_tcp));
-			tcp_mask.hdr.src_port = UINT16_MAX;
-			tcp_mask.hdr.dst_port = UINT16_MAX;
-			patterns[1].type = RTE_FLOW_ITEM_TYPE_TCP;
-			patterns[1].mask = &tcp_mask;
-			/* make actions */
-			struct px_action actions[2];
-			actions[0].type = RTE_FLOW_ACTION_TYPE_VOID;
-			actions[1].type = RTE_FLOW_ACTION_TYPE_VOID;
-			for (uint16_t qid = 0; qid < g_config.mos->num_cores; qid++)
-			{
-				if (px_init(portid, qid, MAX_PKT_BURST, !JUMBO_FRAME ? 4096 : 0, STALL_TIMEOUT_NS, NULL, NULL, USE_LINK) < 0)
-					rte_exit(EXIT_FAILURE, "px_init failed\n");
-				if (px_add_rule(portid, qid, patterns, 2, actions, 2) < 0)
-					rte_exit(EXIT_FAILURE, "px_add_rule failed\n");
-			}
-#endif
+
 			/* retrieve current flow control settings per port */
 			memset(&fc_conf, 0, sizeof(fc_conf));
 			ret = rte_eth_dev_flow_ctrl_get(portid, &fc_conf);

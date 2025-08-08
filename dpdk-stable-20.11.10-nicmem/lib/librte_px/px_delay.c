@@ -115,7 +115,7 @@ int iat_destroy_ctx(struct px_iat_ctx *ctx)
     void *next_data;
     uint32_t iter = 0;
 
-    if (!ctx->initialized)
+    if (!ctx || !ctx->initialized)
     {
         return 0;
     }
@@ -150,7 +150,7 @@ int iat_update_entry(struct px_iat_ctx *ctx,
                      int64_t timeout_ns)
 {
     struct four_tuple *key = get_four_tuple(pkt);
-    rte_mbuf_timestamp_t *ts_ptr = get_rx_hw_timestamp(pkt);
+    rte_mbuf_timestamp_t *ts_ptr;
     struct flow_iat_entry *entry;
     int64_t delta = 0;
     // uint16_t nb_segs = get_data_len(pkt) /
@@ -159,6 +159,12 @@ int iat_update_entry(struct px_iat_ctx *ctx,
     // {
     //     nb_segs = 1; // Avoid division by zero
     // }
+    if (!ctx || !ctx->initialized)
+    {
+        fprintf(stderr, "IAT context not initialized\n");
+        return 0;
+    }
+    ts_ptr = get_rx_hw_timestamp(pkt);
 
     /* try update first */
     if (rte_hash_lookup_data(ctx->tbl, key, (void **)&entry) >= 0)
@@ -172,7 +178,8 @@ int iat_update_entry(struct px_iat_ctx *ctx,
              */
             // delta = (*ts_ptr - entry->last_timestamp) / nb_segs;
             delta = (*ts_ptr - entry->last_timestamp);
-            // if (!entry->last_delta || delta < entry->last_delta * 2)
+            // if (!entry->last_delta || delta < entry->last_delta * 100)
+            // if (!entry->avg_iat || delta < entry->avg_iat * 100)
             if (delta < timeout_ns)
             {
                 entry->avg_iat = ctx->ewma_alpha * delta +
@@ -216,14 +223,20 @@ int iat_search_entry(struct px_iat_ctx *ctx,
     struct flow_iat_entry *entry;
     struct four_tuple *key = get_four_tuple(pkt);
 
+    if (!ctx || !ctx->initialized)
+    {
+        fprintf(stderr, "IAT context not initialized\n");
+        return 0;
+    }
+
     /* try update first */
     if (rte_hash_lookup_data(ctx->tbl, key, (void **)&entry) >= 0)
     {
         if (entry->avg_iat > timeout_ns)
         {
-            // printf("Flow IAT too high: %f ns\n", entry->avg_iat);
+            printf("Flow IAT too high: %f ns\n", entry->avg_iat);
             *avg_iat = 0;
-            return -1; // Flow IAT too high
+            return 0; // Flow IAT too high
         }
         *avg_iat = entry->avg_iat;
         return 0;
@@ -254,3 +267,4 @@ void iat_flush_timeout(struct px_iat_ctx *ctx)
         }
     }
 }
+/*----------------------------------------------------------------------------*/

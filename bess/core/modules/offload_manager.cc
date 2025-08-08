@@ -39,27 +39,12 @@ void OffloadManager::ProcessBatch(Context *ctx, bess::PacketBatch *batch) {
   for (int i = 0; i < batch->cnt(); i++) {
     bess::Packet *p = batch->pkts()[i];
 
-    struct ri_node node;
-    node.key = (struct four_tuple) {
-      .src_ip = get_attr<uint32_t>(this, src_ip_id, p),
-      .dst_ip = get_attr<uint32_t>(this, dst_ip_id, p),
-      .src_port = get_attr<uint16_t>(this, src_port_id, p),
-      .dst_port = get_attr<uint16_t>(this, dst_port_id, p)
-    };
-    node.pkt = reinterpret_cast<rte_mbuf *>(p);
-
     hexdump("backup 4 tuple",
             (uint8_t *)search_four_tuple(reinterpret_cast<rte_mbuf *>(p)),
             sizeof(struct four_tuple));
 
     /* now create new rule */
-    if ((node.key.src_port + node.key.dst_port) % 5 < 5) // offload 100% of flows
-    // if ((node.key.src_port + node.key.dst_port) % 5 < 4) // offload 80% of flows
-    // if ((node.key.src_port + node.key.dst_port) % 5 < 3) // offload 60% of flows
-    // if ((node.key.src_port + node.key.dst_port) % 5 < 2) // offload 40% of flows
-    // if ((node.key.src_port + node.key.dst_port) % 5 < 1) // offload 20% of flows
-    // if ((node.key.src_port + node.key.dst_port) % 5 < 0) // offload 0% of flows
-    if (hp_create_rule(ctx->wid, &node) < 0)
+    if (px_flow_create(ctx->wid, reinterpret_cast<rte_mbuf *>(p)) < 0)
       break;
   }
 
@@ -68,8 +53,8 @@ void OffloadManager::ProcessBatch(Context *ctx, bess::PacketBatch *batch) {
 /*----------------------------------------------------------------------------*/
 std::string OffloadManager::GetDesc() const {
   return bess::utils::Format("%zu of %zu cached",
-                              hp_nic_cache_stat(),
-                              hp_host_hash_stat());
+                              px_flow_nic_cache_stat(),
+                              px_flow_host_cache_stat());
 }
 /*----------------------------------------------------------------------------*/
 ADD_MODULE(OffloadManager, "OffloadManager",

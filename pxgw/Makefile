@@ -5,7 +5,7 @@ SRCS    := pxgw.c
 OBJS    := $(SRCS:.c=.o)
 
 CC      := gcc
-CFLAGS  := -O3 -g -Wall -march=native -D_GNU_SOURCE
+CFLAGS  := -O3 -g -Wall -march=native -D_GNU_SOURCE -Wno-deprecated-declarations
 PKGCONF := $(shell which pkg-config)
 DPDK_CFLAGS := $(shell $(PKGCONF) --cflags libdpdk)
 DPDK_LDFLAGS := $(shell $(PKGCONF) --libs libdpdk)
@@ -39,13 +39,13 @@ CFLAGS += -D USE_LRO=1
 # CFLAGS += -D USE_DGRO=1
 
 # 2. CUSTOM GRO on, no latent RXQ, no stall
-# CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=1 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
+CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=1 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
 
 # 3. CUSTOM GRO on, no stall
 # CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
 
 # 4. CUSTOM GRO on, stall 72us
-CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=108000 -D USE_LINK=0
+# CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=120000 -D USE_LINK=0
 
 # 6. CUSTOM GRO + LINKING
 # CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=1
@@ -53,15 +53,21 @@ CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=108000 -D USE_LI
 ################################################################################
 
 # To use nicmem, make sure to use DPDK version 20.11
-# CFLAGS += -D NICMEM=0
-CFLAGS += -D NICMEM=1
+CFLAGS += -D NICMEM=0
+# CFLAGS += -D NICMEM=1
 
 ################################################################################
 
 # Choose one of below
 
+# 1. Hairpin off
 CFLAGS += -D NUM_HAIRPIN_Q=0
+
+# 2. Hairpin on (1 queue)
 # CFLAGS += -D NUM_HAIRPIN_Q=1
+
+# 3. Hairpin on (1 queue, opt-out mode)
+# CFLAGS += -D NUM_HAIRPIN_Q=1 -D USE_OPTOUT=1
 
 # (not supported yet) if want to use rte_flow_async API, use below
 # To use rte_flow_async API, make sure to use DPDK version 22.11

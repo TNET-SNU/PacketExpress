@@ -1,12 +1,12 @@
 #ifndef PX_MSS_H_
 #define PX_MSS_H_
-
-#include "px_common.h"
-
+/*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 extern "C"
 {
 #endif
+/*----------------------------------------------------------------------------*/
+#include "px_common.h"
 /*----------------------------------------------------------------------------*/
 #define DEFAULT_eMSS (DEFAULT_eMTU -                \
                       sizeof(struct rte_ipv4_hdr) - \
@@ -14,7 +14,7 @@ extern "C"
 #define DEFAULT_iMSS (DEFAULT_iMTU -                \
                       sizeof(struct rte_ipv4_hdr) - \
                       sizeof(struct rte_tcp_hdr))
-
+/*----------------------------------------------------------------------------*/
 #define MSS_THREAD_PERIOD 10
 #define MSS_TIMEOUT 300
 /*----------------------------------------------------------------------------*/
@@ -110,5 +110,5 @@ int mss_evict_entry(struct px_mss_ctx *ctx,
 #ifdef __cplusplus
 }
 #endif
-
+/*----------------------------------------------------------------------------*/
 #endif // PX_MSS_H_

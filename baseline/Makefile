@@ -5,7 +5,7 @@ SRCS    := gw.c
 OBJS    := $(SRCS:.c=.o)
 
 CC      := gcc
-CFLAGS  := -O3 -g -Wall -march=native -D_GNU_SOURCE
+CFLAGS  := -O3 -g -Wall -march=native -D_GNU_SOURCE -Wno-deprecated-declarations
 PKGCONF := $(shell which pkg-config)
 DPDK_CFLAGS := $(shell $(PKGCONF) --cflags libdpdk)
 DPDK_LDFLAGS := $(shell $(PKGCONF) --libs libdpdk)
@@ -15,10 +15,20 @@ DPDK_LDFLAGS := $(shell $(PKGCONF) --libs libdpdk)
 # Choose one of below
 
 # 1. Using 1500B MTU for incoming packets
-CFLAGS += -D HW_CSUM=0
+# CFLAGS += -D HW_CSUM=0
 
 # 2. Using 9000B MTU for incoming packets
-# CFLAGS += -D HW_CSUM=1
+CFLAGS += -D HW_CSUM=1
+
+################################################################################
+
+# Choose one of below
+
+# 1. Using 1500B MTU for incoming packets
+# CFLAGS += -D SG_DMA=0
+
+# 2. Using 9000B MTU for incoming packets
+CFLAGS += -D SG_DMA=1
 
 ################################################################################
 

@@ -14,7 +14,8 @@ MTCP_HDR = mtcp_api.h mos_api.h mtcp_epoll.h mtcp_util.h
 
 ### GCC ###
 GCC = gcc
-GCC_OPT = -m64 -Wall -fPIC -DNEWEV -fgnu89-inline -Werror -fcommon -Wno-error=deprecated-declarations
+GCC_OPT = -m64 -Wall -fPIC -DNEWEV -fgnu89-inline -Werror -fcommon \
+           -Wno-error=deprecated-declarations -Wno-deprecated-declarations
 
 #DBG_OPT = -DDBGMSG -DDBGFUNC -DSTREAM -DSTATE -DTSTAT -DAPP -DEPOLL
 #DBG_OPT = -DDBGMSG -DDBGFUNC -DSTREAM -DSTATE
@@ -115,8 +116,14 @@ CFLAGS += -D NICMEM=1
 
 # Choose one of below
 
+# 1. Hairpin off
 CFLAGS += -D NUM_HAIRPIN_Q=0
+
+# 2. Hairpin on (1 queue)
 # CFLAGS += -D NUM_HAIRPIN_Q=1
+
+# 3. Hairpin on (1 queue, opt-out mode)
+# CFLAGS += -D NUM_HAIRPIN_Q=1 -D USE_OPTOUT=1
 
 # (not supported yet) if want to use rte_flow_async API, use below
 # To use rte_flow_async API, make sure to use DPDK version 22.11

@@ -34,7 +34,7 @@
 
 void Sink::ProcessBatch(Context *, bess::PacketBatch *batch) {
 #if USE_LINK
-  batch->set_cnt(px_unlink(reinterpret_cast<rte_mbuf **>(batch->pkts()), batch->cnt(), NULL));
+  batch->set_cnt(px_unlink_and_uso(reinterpret_cast<rte_mbuf **>(batch->pkts()), batch->cnt(), NULL));
 #endif
   bess::Packet::Free(batch);
 }

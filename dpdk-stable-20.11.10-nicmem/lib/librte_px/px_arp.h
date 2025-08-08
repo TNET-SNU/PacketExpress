@@ -1,14 +1,14 @@
 #ifndef PX_ARP_H_
 #define PX_ARP_H_
-
-#include "px_common.h"
-
+/*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 extern "C"
 {
 #endif
 /*----------------------------------------------------------------------------*/
-#define MAX_ARP_TABLE_SIZE 1024
+#include "px_common.h"
+/*----------------------------------------------------------------------------*/
+#define MAX_ARP_TABLE_SIZE 64
 /*----------------------------------------------------------------------------*/
 struct px_arp_entry
 {
@@ -24,7 +24,7 @@ struct px_arp_bin
 };
 struct px_arp_ctx
 {
-    struct px_arp_bin *arp_bin_table;
+    struct px_arp_bin arp_bin_table[MAX_ARP_TABLE_SIZE];
     int table_size;
 };
 /*----------------------------------------------------------------------------*/
@@ -39,13 +39,11 @@ struct px_arp_ctx
 int px_arp_configure(struct px_arp_entry *arp_string_table,
                      int arp_string_table_size);
 /*----------------------------------------------------------------------------*/
-void px_free_arp(void);
-/*----------------------------------------------------------------------------*/
 struct rte_ether_addr *
 px_search_arp(uint32_t ip_dst);
 /*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 }
 #endif
-
+/*----------------------------------------------------------------------------*/
 #endif // PX_ARP_H_

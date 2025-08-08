@@ -3,7 +3,7 @@
 # check which parameter should be updated
 setup="
 	HAIRPIN_DATA_BUFFER_LOCK=1 \
-        MEMIC_SIZE_LIMIT=0 \
+        MEMIC_SIZE_LIMIT=1 \
         FLEX_PARSER_PROFILE_ENABLE=3 \
         SRIOV_EN=1 \
         UCTX_EN=1

@@ -1,14 +1,14 @@
 #ifndef PX_CACHE_H_
 #define PX_CACHE_H_
-
-#include "px_common.h"
-#include "px_flow.h"
-#include "px_delay.h"
-
+/*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 extern "C"
 {
 #endif
+/*----------------------------------------------------------------------------*/
+#include "px_common.h"
+#include "px_flow.h"
+#include "px_delay.h"
 /*----------------------------------------------------------------------------*/
 struct cache_manager
 {
@@ -31,6 +31,9 @@ struct cache_manager
 
     /* whether this cache manager is initialized */
     int init;
+
+    /* whether optout policy is used */
+    int optout;
 };
 /*----------------------------------------------------------------------------*/
 int get_nic_cached_size(int port_id);
@@ -41,7 +44,7 @@ void incr_temp_evicted_size(int port_id);
 /*----------------------------------------------------------------------------*/
 void lru_queue_print_all(int port_id);
 /*----------------------------------------------------------------------------*/
-void lru_queue_init(int port_id, size_t num);
+void lru_queue_init(int port_id, size_t num, int optout);
 /*----------------------------------------------------------------------------*/
 int lru_queue_insert_and_destroy_evicted(int port_id,
                                          struct ri_node *node);
@@ -77,5 +80,5 @@ void print_cache_stats(void);
 #ifdef __cplusplus
 }
 #endif
-
+/*----------------------------------------------------------------------------*/
 #endif // PX_OFFLOAD_H_

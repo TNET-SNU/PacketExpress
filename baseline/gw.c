@@ -200,6 +200,9 @@ port_init(uint16_t portid, uint16_t num_queue)
                                 DEV_TX_OFFLOAD_UDP_CKSUM |
                                 DEV_TX_OFFLOAD_TCP_CKSUM;
 #endif
+#if SG_DMA
+    port_conf.txmode.offloads |= DEV_TX_OFFLOAD_MULTI_SEGS;
+#endif
     port_conf.rx_adv_conf.rss_conf.rss_key = g_key;
     port_conf.rx_adv_conf.rss_conf.rss_key_len = sizeof(g_key);
     port_conf.rx_adv_conf.rss_conf.rss_hf = (ETH_RSS_IP | ETH_RSS_UDP | ETH_RSS_TCP);
@@ -267,17 +270,39 @@ port_init(uint16_t portid, uint16_t num_queue)
     }
     printf("done: \n");
 
+    /* retrieve current flow control settings per port */
+    memset(&fc_conf, 0, sizeof(fc_conf));
+    ret = rte_eth_dev_flow_ctrl_get(portid, &fc_conf);
+    if (ret != 0)
+    {
+        rte_exit(EXIT_FAILURE, "Failed to get flow control info!\n");
+    }
+
+    /* and just disable the rx/tx flow control */
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    fc_conf.mode = RTE_FC_NONE;
+#else
+    fc_conf.mode = RTE_ETH_FC_NONE;
+#endif
+    ret = rte_eth_dev_flow_ctrl_set(portid, &fc_conf);
+    if (ret != 0)
+    {
+        rte_exit(EXIT_FAILURE,
+                 "Failed to set flow control info!: errno: %d\n",
+                 ret);
+    }
+
     return 0;
 }
 /*----------------------------------------------------------------------------*/
-void lcore_main(void)
+int lcore_main(void *args)
 {
+    (void)args; // unused
     struct rte_mbuf *rmbufs[RTE_MAX_ETHPORTS][MAX_PKT_BURST] = {{NULL}};
     struct rte_mbuf *wmbufs[RTE_MAX_ETHPORTS][MAX_PKT_BURST] = {{NULL}};
     struct rte_mbuf *m;
     struct rte_ether_addr *dst_mac;
     struct rte_ether_hdr *eth_hdr;
-    struct rte_ipv4_hdr *ip_hdr;
     uint32_t qid = rte_lcore_id();
     uint16_t port_id;
     uint16_t nb_rx[RTE_MAX_ETHPORTS] = {0};
@@ -296,24 +321,44 @@ void lcore_main(void)
         {
             nb_rx[port_id] = rte_eth_rx_burst(port_id, qid, rmbufs[port_id], MAX_PKT_BURST);
 #if HW_CSUM
-            px_parse_batch(port_id, qid, rmbufs[port_id], nb_rx[port_id], 1, 1);
+            px_parse_batch(port_id,
+                           qid,
+                           rmbufs[port_id],
+                           nb_rx[port_id],
+                           1,
+                           1);
 #else
-            px_parse_batch(port_id, qid, rmbufs[port_id], nb_rx[port_id], 1, 0);
+            px_parse_batch(port_id,
+                           qid,
+                           rmbufs[port_id],
+                           nb_rx[port_id],
+                           1,
+                           0);
 #endif
-            nb_rx[port_id] = rte_gro_reassemble_burst(rmbufs[port_id], nb_rx[port_id], &gro_param);
-            px_update_stats(port_id, qid, rmbufs[port_id], nb_rx[port_id], NULL);
+            nb_rx[port_id] =
+                rte_gro_reassemble_burst(rmbufs[port_id],
+                                         nb_rx[port_id],
+                                         &gro_param);
+
+            /* Update RX statistics */
+            px_update_rx_stats(port_id,
+                               qid,
+                               rmbufs[port_id],
+                               nb_rx[port_id]);
 
             for (i = 0; i < nb_rx[port_id]; i++)
             {
                 m = rmbufs[port_id][i];
 
                 eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
-                if (eth_hdr->ether_type != rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4))
+                if (eth_hdr->ether_type !=
+                    rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4))
                 {
                     rte_pktmbuf_free(m);
                     continue;
                 }
 
+#if !SG_DMA
                 /* make chained segments into one large segment */
                 ret = rte_pktmbuf_linearize(m);
                 if (ret < 0)
@@ -323,11 +368,10 @@ void lcore_main(void)
                     rte_pktmbuf_free(m);
                     continue;
                 }
-
-                ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
+#endif
 
                 /* modify DST MAC */
-                dst_mac = px_search_arp(ip_hdr->dst_addr);
+                dst_mac = px_search_arp(*get_dst_ip(m));
                 if (!dst_mac)
                 {
                     /* ignore unknown dst IP */
@@ -356,12 +400,21 @@ void lcore_main(void)
                 wmbufs[port_id][nb_tx[port_id]++] = m;
             }
 
+            /* Update TX statistics */
+            px_update_tx_stats(port_id,
+                               qid,
+                               wmbufs[port_id],
+                               nb_tx[port_id]);
+
             /* Forward to same port (L2 forward) */
-            ret = rte_eth_tx_burst(port_id, qid,
-                                   wmbufs[port_id], nb_tx[port_id]);
+            ret = rte_eth_tx_burst(port_id,
+                                   qid,
+                                   wmbufs[port_id],
+                                   nb_tx[port_id]);
             if (ret < nb_tx[port_id])
             {
-                printf("Port %d: Sent %d packets, but only %d were sent successfully.\n",
+                printf("Port %d: Sent %d packets, "
+                       "but only %d were sent successfully.\n",
                        port_id, nb_tx[port_id], ret);
                 /* Free the mbufs that were not sent */
                 rte_pktmbuf_free_bulk(wmbufs[port_id] + ret,
@@ -371,6 +424,8 @@ void lcore_main(void)
             nb_tx[port_id] = 0;
         }
     }
+
+    return 0;
 }
 /*----------------------------------------------------------------------------*/
 void handle_sigint(int sig)
@@ -427,7 +482,7 @@ int main(int argc, char **argv)
     }
 
     /* --socket-mem=65536,65536 (can be adapted dynamically) */
-    sprintf(socket_mem_arg, "--socket-mem=%d,%d", 65536, 65536); // 32GB per NUMA node
+    sprintf(socket_mem_arg, "--socket-mem=%d,%d", 65536, 65536); // 64GB
 
     /* --n=8 per NUMA node */
     sprintf(mem_channels, "%d", 8);
@@ -469,7 +524,9 @@ int main(int argc, char **argv)
         sprintf(name, "mempool-%d", core_id);
         g_pktmbuf_pool[core_id] =
             rte_mempool_create(name, nb_mbuf / g_num_cores,
-                               MBUF_DATA_SIZE + sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM,
+                               MBUF_DATA_SIZE +
+                                   sizeof(struct rte_mbuf) +
+                                   RTE_PKTMBUF_HEADROOM,
                                RTE_MEMPOOL_CACHE_MAX_SIZE,
                                sizeof(struct rte_pktmbuf_pool_private),
                                rte_pktmbuf_pool_init, NULL,
@@ -509,16 +566,18 @@ int main(int argc, char **argv)
     {
         if (core_id < g_num_cores)
         {
-            rc = rte_eal_remote_launch((lcore_function_t *)lcore_main, NULL, core_id);
+            rc = rte_eal_remote_launch(lcore_main, NULL, core_id);
             if (rc != 0)
             {
-                printf("Failed to launch lcore %u, return code: %d\n", core_id, rc);
+                printf("Failed to launch lcore %u, "
+                       "return code: %d\n",
+                       core_id, rc);
             }
         }
     }
 
     /* main core also runs lcore_main */
-    lcore_main();
+    lcore_main(NULL);
 
     /* wait for all worker cores to finish */
     RTE_LCORE_FOREACH_WORKER(core_id)
@@ -528,9 +587,6 @@ int main(int argc, char **argv)
             rte_eal_wait_lcore(core_id);
         }
     }
-
-    /* cleanup */
-    px_free_arp();
 
     for (i = 0; i < eal_argc; i++)
     {

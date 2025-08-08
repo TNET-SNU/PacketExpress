@@ -1,13 +1,13 @@
 #ifndef PX_RULE_H_
 #define PX_RULE_H_
-
-#include "px_common.h"
-
+/*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 extern "C"
 {
 #endif
-
+/*----------------------------------------------------------------------------*/
+#include "px_common.h"
+/*----------------------------------------------------------------------------*/
 #define MAX_PATTERN_NUM 8
 #define MAX_ACTION_NUM 8
 #define MAX_PX_SET_NUM 8
@@ -61,9 +61,6 @@ struct decoded_pattern
 struct decoded_action
 {
     uint16_t do_concat : 1;
-    uint16_t do_stall : 1;
-    /* add whatever needed for additional feature */
-    uint16_t unused : 14;
     uint16_t decap_size;
 };
 
@@ -91,61 +88,29 @@ struct px_rule
 };
 
 typedef TAILQ_HEAD(queue_head, px_rule) queue_head;
-
+/*----------------------------------------------------------------------------*/
 struct px_rule_set
 {
     /* pattern matching rules */
     queue_head rules;
     uint16_t rule_num;
 };
-
 /*----------------------------------------------------------------------------*/
-static inline int
-rule_insert(struct px_rule_set *rule_set,
-            struct px_rule *rule)
-{
-    /* check queue is full */
-    if ((rule_set->rule_num + 1) == UINT16_MAX)
-    {
-        fprintf(stderr, "rule queue is full\n");
-        return -1;
-    }
-
-    TAILQ_INSERT_TAIL(&rule_set->rules, rule, link);
-    rule_set->rule_num++;
-
-    return 0;
-}
+void rule_init(uint16_t port_id,
+               uint16_t queue_id);
 /*----------------------------------------------------------------------------*/
-static inline void
-rule_remove(struct px_rule_set *rule_set,
-            struct px_rule *rule)
-{
-    /* check if queue is not empty */
-    if (rule_set->rule_num == 0)
-    {
-        return;
-    }
-
-    TAILQ_REMOVE(&rule_set->rules, rule, link);
-    rule_set->rule_num--;
-}
+int rule_insert(uint16_t port_id,
+                uint16_t queue_id,
+                struct px_rule *rule);
 /*----------------------------------------------------------------------------*/
-static inline struct px_rule *
-rule_search(struct px_rule_set *rule_set,
-            int px_id)
-{
-    struct px_rule *walk;
-    TAILQ_FOREACH(walk, &rule_set->rules, link)
-    {
-        if (walk->px_id == px_id)
-        {
-            return walk;
-        }
-    }
-
-    return NULL;
-}
+void rule_remove(uint16_t port_id,
+                 uint16_t queue_id,
+                 struct px_rule *rule);
+/*----------------------------------------------------------------------------*/
+struct px_rule *
+rule_search(uint16_t port_id,
+            uint16_t queue_id,
+            int px_id);
 /*----------------------------------------------------------------------------*/
 int use_rss_hash(struct px_pattern *patterns,
                  int nb_patterns);
@@ -175,9 +140,22 @@ int decode_action_rule(struct decoded_action *rule,
                        struct px_action *actions,
                        uint16_t nb_actions);
 /*----------------------------------------------------------------------------*/
-
+int px_add_rule(uint16_t port_id,
+                uint16_t queue_id,
+                struct px_pattern *patterns,
+                int nb_patterns,
+                struct px_action *actions,
+                int nb_actions);
+/*----------------------------------------------------------------------------*/
+void px_del_rule(uint16_t port_id,
+                 uint16_t queue_id,
+                 int px_id);
+/*----------------------------------------------------------------------------*/
+void px_del_rule_all(uint16_t port_id,
+                     uint16_t queue_id);
+/*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 }
 #endif
-
+/*----------------------------------------------------------------------------*/
 #endif // PX_RULE_H_

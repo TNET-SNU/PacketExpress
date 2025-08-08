@@ -1,30 +1,31 @@
 #ifndef PX_LINK_H_
 #define PX_LINK_H_
-
-#include "px_common.h"
-
+/*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 extern "C"
 {
 #endif
-
+/*----------------------------------------------------------------------------*/
+#include "px_common.h"
+#include "px_ring.h"
+#include "px.h"
+/*----------------------------------------------------------------------------*/
 #define LINK_IDX 5
 #define NB_SEGS_IDX 7
 #define DATA_OFF_IDX 8
 #define EXT_IDX 0
-
 /*----------------------------------------------------------------------------*/
 struct px_link_ext
 {
-	/* link to next item */
-	struct rte_mbuf *link;
-	/* backup for original nb_segs */
-	uint16_t o_nb_segs;
-	/* backup for original pkt_len */
-	uint16_t o_pkt_len;
-	/* backup for original data_off */
-	uint16_t o_data_off;
-	uint16_t unused;
+    /* link to next item */
+    struct rte_mbuf *link;
+    /* backup for original nb_segs */
+    uint16_t o_nb_segs;
+    /* backup for original pkt_len */
+    uint16_t o_pkt_len;
+    /* backup for original data_off */
+    uint16_t o_data_off;
+    uint16_t unused;
 };
 /*----------------------------------------------------------------------------*/
 static inline struct rte_mbuf *
@@ -117,7 +118,7 @@ reflect_encap_and_mac(struct rte_mbuf *cur,
 }
 /*----------------------------------------------------------------------------*/
 void reflect_four_tuple(struct rte_mbuf *cur,
-                    struct rte_mbuf *start);
+                        struct rte_mbuf *start);
 /*----------------------------------------------------------------------------*/
 uint16_t
 px_unlink(struct rte_mbuf **pkts,
@@ -125,9 +126,18 @@ px_unlink(struct rte_mbuf **pkts,
           void (*cb)(struct rte_mbuf *,
                      struct rte_mbuf *));
 /*----------------------------------------------------------------------------*/
-
+uint16_t
+px_unlink_and_uso(struct rte_mbuf **pkts,
+                  uint16_t nb_pkts,
+                  struct rte_mbuf **out,
+                  uint16_t nb_out,
+                  struct px_ring *tx_ring,
+                  struct rte_mempool *clone_pool,
+                  void (*cb)(struct rte_mbuf *,
+                             struct rte_mbuf *));
+/*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 }
 #endif
-
+/*----------------------------------------------------------------------------*/
 #endif // PX_LINK_H_

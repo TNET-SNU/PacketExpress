@@ -1,4 +1,84 @@
 #include "px_rule.h"
+struct px_rule_set g_rule_set[RTE_MAX_ETHPORTS][PX_MAX_QUEUES_PER_PORT] = {0};
+/*----------------------------------------------------------------------------*/
+void rule_init(uint16_t port_id,
+               uint16_t queue_id)
+{
+    struct px_rule_set *rule_set = &g_rule_set[port_id][queue_id];
+
+    /* initialize rule queue */
+    TAILQ_INIT(&rule_set->rules);
+    rule_set->rule_num = 0;
+}
+/*----------------------------------------------------------------------------*/
+int rule_insert(uint16_t port_id,
+                uint16_t queue_id,
+                struct px_rule *rule)
+{
+    struct px_rule_set *rule_set = &g_rule_set[port_id][queue_id];
+
+    /* check queue is full */
+    if ((rule_set->rule_num + 1) == UINT16_MAX)
+    {
+        fprintf(stderr, "rule queue is full\n");
+        return -1;
+    }
+
+    TAILQ_INSERT_TAIL(&rule_set->rules, rule, link);
+    rule_set->rule_num++;
+
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
+void rule_remove(uint16_t port_id,
+                 uint16_t queue_id,
+                 struct px_rule *rule)
+{
+    struct px_rule_set *rule_set = &g_rule_set[port_id][queue_id];
+
+    /* check if queue is not empty */
+    if (rule_set->rule_num == 0)
+    {
+        return;
+    }
+
+    TAILQ_REMOVE(&rule_set->rules, rule, link);
+    rule_set->rule_num--;
+}
+/*----------------------------------------------------------------------------*/
+struct px_rule *
+rule_search(uint16_t port_id,
+            uint16_t queue_id,
+            int px_id)
+{
+    struct px_rule_set *rule_set = &g_rule_set[port_id][queue_id];
+    struct px_rule *walk;
+
+    TAILQ_FOREACH(walk, &rule_set->rules, link)
+    {
+        if (walk->px_id == px_id)
+        {
+            return walk;
+        }
+    }
+
+    return NULL;
+}
+/*----------------------------------------------------------------------------*/
+static struct px_rule *
+first_rule(uint16_t port_id,
+           uint16_t queue_id)
+{
+    struct px_rule_set *rule_set = &g_rule_set[port_id][queue_id];
+
+    /* check if queue is empty */
+    if (rule_set->rule_num == 0)
+    {
+        return NULL;
+    }
+
+    return TAILQ_FIRST(&rule_set->rules);
+}
 /*----------------------------------------------------------------------------*/
 int use_rss_hash(struct px_pattern *patterns,
                  int nb_patterns)
@@ -501,3 +581,109 @@ int decode_action_rule(struct decoded_action *rule,
 
     return 0;
 }
+/*----------------------------------------------------------------------------*/
+int px_add_rule(uint16_t port_id,
+                uint16_t queue_id,
+                struct px_pattern *patterns,
+                int nb_patterns,
+                struct px_action *actions,
+                int nb_actions)
+{
+    struct px_rule *rule;
+    uint16_t id = 0;
+
+    if (nb_patterns > MAX_PATTERN_NUM)
+    {
+        return -1;
+    }
+
+    rule = (struct px_rule *)calloc(1, sizeof(struct px_rule));
+    if (!rule)
+    {
+        return -1;
+    }
+
+    /* give px_rule a unique id */
+    while (rule_search(port_id, queue_id, id++))
+    {
+        ; // skip this id
+    }
+    rule->px_id = id;
+
+    /* copy the rule */
+    rule->nb_patterns = nb_patterns;
+    memcpy(rule->patterns, patterns, sizeof(struct px_pattern) * nb_patterns);
+    rule->nb_actions = nb_actions;
+    memcpy(rule->actions, actions, sizeof(struct px_action) * nb_actions);
+
+    /* decode the rule */
+    if (decode_pattern_rule(&rule->dec_pat,
+                            rule->patterns,
+                            rule->nb_patterns) < 0)
+    {
+        return -1;
+    }
+    if (decode_action_rule(&rule->dec_act,
+                           rule->actions,
+                           rule->nb_actions) < 0)
+    {
+        return -1;
+    }
+
+    /* insert to queue */
+    if (rule_insert(port_id, queue_id, rule) < 0)
+    {
+        return -1;
+    }
+
+    /* return rule id as a handle */
+    return id;
+}
+/*----------------------------------------------------------------------------*/
+void px_del_rule(uint16_t port_id,
+                 uint16_t queue_id,
+                 int px_id)
+{
+    struct px_rule *rule;
+
+    /* search pattern set using px_id */
+    rule = rule_search(port_id, queue_id, px_id);
+    if (rule)
+    {
+        /* remove rule from queue */
+        rule_remove(port_id, queue_id, rule);
+
+        /* free ps */
+        if (rule->dec_pat.vec)
+        {
+            free(rule->dec_pat.vec);
+            rule->dec_pat.vec = NULL;
+        }
+        free(rule);
+        rule = NULL;
+    }
+}
+/*----------------------------------------------------------------------------*/
+void px_del_rule_all(uint16_t port_id,
+                     uint16_t queue_id)
+{
+    struct px_rule *walk, *tmp;
+
+    walk = first_rule(port_id, queue_id);
+    while (walk != NULL)
+    {
+        tmp = TAILQ_NEXT(walk, link);
+
+        /* remove rule from queue */
+        rule_remove(port_id, queue_id, walk);
+
+        if (walk->dec_pat.vec)
+        {
+            free(walk->dec_pat.vec);
+            walk->dec_pat.vec = NULL;
+        }
+        free(walk);
+        walk = tmp;
+    }
+}
+/*----------------------------------------------------------------------------*/

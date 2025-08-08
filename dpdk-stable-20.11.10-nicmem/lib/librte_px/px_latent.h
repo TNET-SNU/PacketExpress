@@ -1,17 +1,18 @@
 #ifndef PX_LATENT_H_
 #define PX_LATENT_H_
-
-#include "px_common.h"
-
+/*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 extern "C"
 {
 #endif
 /*----------------------------------------------------------------------------*/
+#include "px_common.h"
+/*----------------------------------------------------------------------------*/
 #define PX_FLOW_MAX_ACTIONS 10
 #define PX_FLOW_MAX_RETA_SIZE 512
 #define PX_RETA_GROUP_NUM (PX_FLOW_MAX_RETA_SIZE / RTE_RETA_GROUP_SIZE)
 #define RETA_CONF_SIZE (ETH_RSS_RETA_SIZE_512 / RTE_RETA_GROUP_SIZE)
+/*----------------------------------------------------------------------------*/
 struct px_latent_ctx
 {
     int num_rxq;
@@ -46,5 +47,5 @@ void px_dump_reta(struct rte_eth_rss_reta_entry64 *reta_conf,
 #ifdef __cplusplus
 }
 #endif
-
+/*----------------------------------------------------------------------------*/
 #endif // PX_LATENT_H_

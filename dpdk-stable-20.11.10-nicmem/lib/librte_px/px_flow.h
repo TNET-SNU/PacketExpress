@@ -1,21 +1,20 @@
 #ifndef PX_FLOW_H_
 #define PX_FLOW_H_
-
-#include "px_common.h"
-#include "px_latent.h"
-#include "px_arp.h"
-
+/*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 extern "C"
 {
 #endif
-
+/*----------------------------------------------------------------------------*/
+#include "px_common.h"
+#include "px_latent.h"
+#include "px_arp.h"
+/*----------------------------------------------------------------------------*/
 #define MAX_PATTERNS_NUM 8
 #define MAX_ACTIONS_NUM 8
 #define MAX_TEMPLATE_TABLE_NUM 16
-
 #define VALIDATE_FLOW_RULE 1
-
+/*----------------------------------------------------------------------------*/
 enum cache_cmd
 {
     NOOP,
@@ -66,15 +65,6 @@ struct ri_node
 /*----------------------------------------------------------------------------*/
 struct px_hairpin_ctx
 {
-    /* below are for e-switch offloading using rte_flow */
-#if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0) && RTE_FLOW_ASYNC_API
-    int table_id;
-    int num_template_table;
-    struct rte_flow *offload_flow_main[1 << 16];
-    struct rte_flow *offload_flow_ack[1 << 16];
-    struct rte_flow_template_table *template_table_offload[MAX_TEMPLATE_TABLE_NUM];
-#endif
-
     /* below are for hairpin management */
     uint16_t num_rxq;
     uint16_t num_txq;
@@ -90,9 +80,21 @@ struct px_hairpin_ctx
     struct rte_flow_action_rss hp_rss;
     uint16_t hp_rss_queues[RTE_MAX_QUEUES_PER_PORT];
     struct rte_flow *common_offload_rule[MAX_ARP_TABLE_SIZE];
+
+    /* whether optout policy is used */
+    int optout;
+
+    /* below are for asynchronous offloading using rte_flow_async */
+#if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0) && RTE_FLOW_ASYNC_API
+    int table_id;
+    int num_template_table;
+    struct rte_flow *offload_flow_main[1 << 16];
+    struct rte_flow *offload_flow_ack[1 << 16];
+    struct rte_flow_template_table *template_table_offload[MAX_TEMPLATE_TABLE_NUM];
+#endif
 };
 /*----------------------------------------------------------------------------*/
-int px_create_flow_optout(uint16_t port_id);
+int px_flow_create_optout(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 struct rte_flow *
 px_flow_create_static(uint16_t port_id,
@@ -120,5 +122,5 @@ int px_query_flow(uint16_t port_id,
 #ifdef __cplusplus
 }
 #endif
-
+/*----------------------------------------------------------------------------*/
 #endif // PX_FLOW_H_

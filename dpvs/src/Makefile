@@ -49,7 +49,8 @@ INCDIRS += -I $(SRCDIR)/../include
 
 # for dpvs main program.
 CFLAGS += -D __DPVS__ -DDPVS_VERSION=\"$(VERSION_STRING)\" -DDPVS_BUILD_DATE=\"$(DATE_STRING)\"
-CFLAGS += -Wall -Werror -Wstrict-prototypes -Wmissing-prototypes -mcmodel=medium -Wno-error=deprecated-declarations
+CFLAGS += -Wall -Werror -Wstrict-prototypes -Wmissing-prototypes -mcmodel=medium \
+		-Wno-error=deprecated-declarations -Wno-error=address-of-packed-member
 
 ################################################################################
 
@@ -100,8 +101,14 @@ CFLAGS += -D NICMEM=1
 
 # Choose one of below
 
+# 1. Hairpin off
 CFLAGS += -D NUM_HAIRPIN_Q=0
+
+# 2. Hairpin on (1 queue)
 # CFLAGS += -D NUM_HAIRPIN_Q=1
+
+# 3. Hairpin on (1 queue, opt-out mode)
+# CFLAGS += -D NUM_HAIRPIN_Q=1 -D USE_OPTOUT=1
 
 # (not supported yet) if want to use rte_flow_async API, use below
 # To use rte_flow_async API, make sure to use DPDK version 22.11

@@ -1,7 +1,6 @@
 #include "px_offload.h"
 /*----------------------------------------------------------------------------*/
 struct px_hairpin_ctx g_hp_ctx[RTE_MAX_ETHPORTS] = {0};
-extern struct px_dev g_px_dev[RTE_MAX_ETHPORTS];
 /*----------------------------------------------------------------------------*/
 /* below are handles for offload thread */
 static pthread_t g_offload_worker_thread_tid[RTE_MAX_ETHPORTS];
@@ -9,15 +8,31 @@ static int g_thread_core_id = -1;
 static int g_num_cores = 0;
 static volatile int g_shutdown = 0;
 /*----------------------------------------------------------------------------*/
-int hp_create_rule(int core_id, struct ri_node *node)
+int px_flow_create(int core_id, struct rte_mbuf *pkt)
 {
     enum cache_cmd cmd;
     struct ri_node *target, *new;
     struct request req;
     struct rte_mbuf *clone;
+    struct four_tuple *orig_ft = search_four_tuple(pkt);
+
+    /* below is to control flow creation ratio */
+    if ((orig_ft->src_port + orig_ft->dst_port) % 5 >= 5) // create 100% of flows
+    // if ((orig_ft->src_port + orig_ft->dst_port) % 5 >= 4) // create 80% of flows
+    // if ((orig_ft->src_port + orig_ft->dst_port) % 5 >= 3) // create 60% of flows
+    // if ((orig_ft->src_port + orig_ft->dst_port) % 5 >= 2) // create 40% of flows
+    // if ((orig_ft->src_port + orig_ft->dst_port) % 5 >= 1) // create 20% of flows
+    // if ((orig_ft->src_port + orig_ft->dst_port) % 5 >= 0) // create 0% of flows
+    {
+        return 0; // skip this flow
+    }
 
     /* try search on hash table or insert */
-    target = ht_search(core_id, node);
+    struct ri_node node = {
+        .key = *orig_ft,
+        .pkt = pkt,
+    };
+    target = ht_search(core_id, &node);
     if (target)
     {
         /*
@@ -26,8 +41,9 @@ int hp_create_rule(int core_id, struct ri_node *node)
          */
         if (target->flow)
         {
+            printf("why? 2\n");
             /* this rule is already cached on NIC */
-            if (ht_is_same_action(target, node))
+            if (ht_is_same_action(target, &node))
             {
                 /* this rule is completely same with existing rule */
                 cmd = REPORT;
@@ -35,7 +51,7 @@ int hp_create_rule(int core_id, struct ri_node *node)
             else
             {
                 /* this rule should to be updated */
-                clone = get_firstseg_clone(node->pkt);
+                clone = get_firstseg_clone(node.pkt);
                 if (!clone)
                 {
                     return -1;
@@ -50,6 +66,7 @@ int hp_create_rule(int core_id, struct ri_node *node)
         }
         else
         {
+            printf("why? 3\n");
             /* requested, but not cached on NIC yet */
             cmd = CREATE;
         }
@@ -64,8 +81,8 @@ int hp_create_rule(int core_id, struct ri_node *node)
         }
 
         /* copy key */
-        new->key = node->key;
-        clone = get_firstseg_clone(node->pkt);
+        new->key = node.key;
+        clone = get_firstseg_clone(node.pkt);
         if (!clone)
         {
             node_pool_free(core_id, new);
@@ -91,14 +108,19 @@ int hp_create_rule(int core_id, struct ri_node *node)
     return req_ring_put(core_id, target->pkt->port, &req);
 }
 /*----------------------------------------------------------------------------*/
-int hp_delete_rule(int core_id, struct ri_node *node)
+int px_flow_delete(int core_id, struct rte_mbuf *pkt)
 {
     struct ri_node *target;
     struct request req;
     enum cache_cmd cmd;
+    struct four_tuple *orig_ft = search_four_tuple(pkt);
+    struct ri_node node = {
+        .key = *orig_ft,
+        .pkt = pkt,
+    };
 
     /* try search on hash table */
-    target = ht_search(core_id, node);
+    target = ht_search(core_id, &node);
     if (!target)
     {
         return 0;
@@ -123,12 +145,17 @@ int hp_delete_rule(int core_id, struct ri_node *node)
 }
 /*----------------------------------------------------------------------------*/
 static inline struct ri_node *
-hp_search_rule(int core_id, struct ri_node *node)
+px_flow_search(int core_id, struct rte_mbuf *pkt)
 {
     struct ri_node *target;
+    struct four_tuple *orig_ft = search_four_tuple(pkt);
+    struct ri_node node = {
+        .key = *orig_ft,
+        .pkt = pkt,
+    };
 
     /* try search on hash table */
-    target = ht_search(core_id, node);
+    target = ht_search(core_id, &node);
     if (!target)
     {
         return NULL;
@@ -144,13 +171,18 @@ hp_search_rule(int core_id, struct ri_node *node)
     return target;
 }
 /*----------------------------------------------------------------------------*/
-int hp_stat_rule(int core_id, struct ri_node *node, struct count *stat)
+int px_flow_stat(int core_id, struct rte_mbuf *pkt, struct count *stat)
 {
     struct ri_node *target;
     struct rte_flow_query_count query;
+    struct four_tuple *orig_ft = search_four_tuple(pkt);
+    struct ri_node node = {
+        .key = *orig_ft,
+        .pkt = pkt,
+    };
 
     /* try search on hash table */
-    target = ht_search(core_id, node);
+    target = ht_search(core_id, &node);
     if (!target)
     {
         return -1;
@@ -177,7 +209,7 @@ int hp_stat_rule(int core_id, struct ri_node *node, struct count *stat)
 }
 /*----------------------------------------------------------------------------*/
 size_t
-hp_nic_cache_stat(void)
+px_flow_nic_cache_stat(void)
 {
     int port_id;
     size_t total_nic_occupied = 0;
@@ -191,7 +223,7 @@ hp_nic_cache_stat(void)
 }
 /*----------------------------------------------------------------------------*/
 size_t
-hp_host_hash_stat(void)
+px_flow_host_cache_stat(void)
 {
     int core_id;
     size_t total_hash_occupied = 0;
@@ -206,8 +238,7 @@ hp_host_hash_stat(void)
 static void *
 px_flow_slave_main(void *arg)
 {
-    int port_id = *(int *)arg, core_id, reset;
-    struct px_dev *px_dev = &g_px_dev[port_id];
+    int port_id = *(int *)arg, core_id;
     struct request *req;
     struct ri_node *node;
     cpu_set_t set;
@@ -224,25 +255,31 @@ px_flow_slave_main(void *arg)
 
     while (!g_shutdown)
     {
-        reset = check_stat_reset(port_id);
-        if (reset)
-        {
-            /* reset stats */
-            reset_stat(port_id);
-        }
         /* poll request queue for each worker core */
         for (core_id = 0; core_id < g_num_cores; core_id++)
         {
-            while ((req = req_ring_get(core_id, port_id)))
+            if (check_stat_reset(port_id))
+            {
+                /* reset stats */
+                reset_stat(port_id);
+            }
+            req = req_ring_get(core_id, port_id);
+            if (req)
             {
                 /* new request is on ring */
                 node = req->node;
+                
+                printf("px_flow_slave_main, core_id: %d, port_id: %d\n"
+                       "req: %p, cmd: %d, node: %p\n",
+                       core_id, port_id, req, req->cmd, req->node);
+                tupledump(&node->key);
+                tupledump(get_four_tuple(node->pkt));
                 /* make sure this thread is responsible for this request */
                 if (port_id != node->pkt->port)
                 {
                     printf("port_id: %d, node->pkt->port: %d\n", port_id, node->pkt->port);
                 }
-                // assert(port_id == node->pkt->port);
+                assert(port_id == node->pkt->port);
                 switch (req->cmd)
                 {
                 case NOOP:
@@ -254,7 +291,7 @@ px_flow_slave_main(void *arg)
                     if (!node->flow)
                     {
                         /* create flow rule */
-                        if (px_dev[port_id].initialized_optout)
+                        if (g_hp_ctx[port_id].optout)
                         {
                             node->flow = px_flow_create_onload_auto(port_id, &node->key, node->pkt);
                         }
@@ -264,6 +301,9 @@ px_flow_slave_main(void *arg)
                         }
                         if (!node->flow)
                         {
+                            tupledump(&node->key);
+                            tupledump(get_four_tuple(node->pkt));
+                            printf("px_flow_create failed!\n");
                             /* do not consume the ring */
                             continue;
                         }
@@ -298,7 +338,7 @@ px_flow_slave_main(void *arg)
                         incr_temp_evicted_size(port_id);
                     }
                     /* create flow rule */
-                    if (px_dev[port_id].initialized_optout)
+                    if (g_hp_ctx[port_id].optout)
                     {
                         node->flow = px_flow_create_onload_auto(port_id, &node->key, node->pkt);
                     }
@@ -361,7 +401,8 @@ int px_hairpin_configure(uint16_t port_id,
                          uint16_t num_rxq_incr,
                          uint16_t hp_num_rxq,
                          uint16_t hp_num_txq,
-                         struct rte_eth_conf *eth_conf)
+                         struct rte_eth_conf *eth_conf,
+                         int optout)
 {
     struct px_hairpin_ctx *hp_ctx = &g_hp_ctx[port_id];
     int i;
@@ -394,7 +435,7 @@ int px_hairpin_configure(uint16_t port_id,
     hp_ctx->ctr.shared = 0;
     hp_ctx->ctr.id = 0;
 
-    /* setup DMA RSS rule (use the same RSS rule as DMA RSS rule) */
+    /* setup hairpin RSS rule (use the same RSS rule as DMA RSS rule) */
     hp_ctx->hp_rss.func = RTE_ETH_HASH_FUNCTION_DEFAULT;
     hp_ctx->hp_rss.level = 0;
     hp_ctx->hp_rss.types = eth_conf->rx_adv_conf.rss_conf.rss_hf;
@@ -413,11 +454,15 @@ int px_hairpin_configure(uint16_t port_id,
     hp_ctx->hp_ctr.shared = 0;
     hp_ctx->hp_ctr.id = 0;
 
+    /* mark optout */
+    hp_ctx->optout = optout;
+
     return 0;
 }
 /*----------------------------------------------------------------------------*/
 int px_hairpin_setup(uint16_t port_id,
                      uint16_t num_rxq,
+                     uint16_t num_rxq_incr,
                      uint16_t num_txq,
                      uint16_t nb_rx_desc,
                      uint16_t nb_tx_desc)
@@ -426,8 +471,10 @@ int px_hairpin_setup(uint16_t port_id,
     struct rte_eth_hairpin_cap cap;
     struct rte_eth_hairpin_conf hp_rx_conf, hp_tx_conf;
     const struct rte_eth_hairpin_conf *hp_rx_conf_ptr, *hp_tx_conf_ptr;
+    int i, ret;
 
-    if (rte_eth_dev_hairpin_capability_get(port_id, &cap) < 0)
+    ret = rte_eth_dev_hairpin_capability_get(port_id, &cap);
+    if (ret < 0)
     {
         fprintf(stderr, "rte_eth_dev_hairpin_capability_get failed\n");
         return -1;
@@ -469,15 +516,16 @@ int px_hairpin_setup(uint16_t port_id,
     hp_rx_conf.use_locked_device_memory = 1; // 0
     hp_rx_conf.use_rte_memory = 0;
 #endif
-    for (int i = 0; i < hp_ctx->hp_num_rxq; i++)
+    for (i = 0; i < hp_ctx->hp_num_rxq; i++)
     {
         /* one port hairpin, peer is self. */
         hp_rx_conf.peers[0].port = port_id;
         hp_rx_conf.peers[0].queue = num_txq + i;
         hp_rx_conf_ptr = (const struct rte_eth_hairpin_conf *)&hp_rx_conf;
-        if (rte_eth_rx_hairpin_queue_setup(port_id, num_rxq + i,
-                                           nb_rx_desc,
-                                           hp_rx_conf_ptr))
+        ret = rte_eth_rx_hairpin_queue_setup(port_id, num_rxq * num_rxq_incr + i,
+                                             nb_rx_desc,
+                                             hp_rx_conf_ptr);
+        if (ret < 0)
         {
             fprintf(stderr, "rte_eth_rx_hairpin_queue_setup failed\n");
             return -1;
@@ -491,15 +539,16 @@ int px_hairpin_setup(uint16_t port_id,
     hp_tx_conf.use_locked_device_memory = 0;
     hp_tx_conf.use_rte_memory = 1;
 #endif
-    for (int i = 0; i < hp_ctx->hp_num_txq; i++)
+    for (i = 0; i < hp_ctx->hp_num_txq; i++)
     {
         /* one port hairpin, peer is self. */
         hp_tx_conf.peers[0].port = port_id;
-        hp_tx_conf.peers[0].queue = num_rxq + i;
+        hp_tx_conf.peers[0].queue = num_rxq * num_rxq_incr + i;
         hp_tx_conf_ptr = (const struct rte_eth_hairpin_conf *)&hp_tx_conf;
-        if (rte_eth_tx_hairpin_queue_setup(port_id, num_txq + i,
-                                           nb_tx_desc,
-                                           hp_tx_conf_ptr))
+        ret = rte_eth_tx_hairpin_queue_setup(port_id, num_txq + i,
+                                             nb_tx_desc,
+                                             hp_tx_conf_ptr);
+        if (ret < 0)
         {
             fprintf(stderr, "rte_eth_tx_hairpin_queue_setup failed\n");
             return -1;
@@ -513,10 +562,13 @@ int hp_context_init(int thread_core_id,
                     size_t per_core_host_cache_size,
                     size_t per_port_nic_cache_size)
 {
-    int port_id, core_id;
+    int port_id, core_id, ret;
     static int arg[RTE_MAX_ETHPORTS];
     uint16_t port_num = rte_eth_dev_count_avail();
-    g_num_cores = 32; // rte_lcore_count()
+
+    /* caveat! In BESS, rte_lcore_count() sometimes returns 0. debug it. */
+    g_num_cores = rte_lcore_count();
+    // printf("port_num: %d, g_num_cores: %d\n", port_num, g_num_cores);
 
     if (g_thread_core_id != -1)
     {
@@ -530,27 +582,32 @@ int hp_context_init(int thread_core_id,
     for (port_id = 0; port_id < port_num; port_id++)
     {
         arg[port_id] = port_id;
-        if (pthread_create(&g_offload_worker_thread_tid[port_id], NULL,
-                           px_flow_slave_main, &arg[port_id]) < 0)
+        ret = pthread_create(&g_offload_worker_thread_tid[port_id], NULL,
+                             px_flow_slave_main, &arg[port_id]);
+        if (ret < 0)
         {
             perror("pthread_create() failed for worker thread!");
             exit(EXIT_FAILURE);
         }
 
         /* LRU queue for each port */
-        lru_queue_init(port_id, per_port_nic_cache_size);
+        lru_queue_init(port_id,
+                       per_port_nic_cache_size,
+                       g_hp_ctx[port_id].optout);
     }
 
     for (core_id = 0; core_id < g_num_cores; core_id++)
     {
         /* initialize node pool for each core */
-        if (node_pool_create(core_id, per_core_host_cache_size) < 0)
+        ret = node_pool_create(core_id, per_core_host_cache_size);
+        if (ret < 0)
         {
             return -1;
         }
 
         /* initialize hash table for each core */
-        if (ht_create(core_id, per_core_host_cache_size) < 0)
+        ret = ht_create(core_id, per_core_host_cache_size);
+        if (ret < 0)
         {
             return -1;
         }
@@ -558,7 +615,8 @@ int hp_context_init(int thread_core_id,
         /* initialize request ring for each core */
         for (port_id = 0; port_id < port_num; port_id++)
         {
-            if (req_ring_create(core_id, port_id, per_core_host_cache_size) < 0)
+            ret = req_ring_create(core_id, port_id, per_core_host_cache_size);
+            if (ret < 0)
             {
                 return -1;
             }
@@ -571,7 +629,7 @@ int hp_context_init(int thread_core_id,
 void hp_context_destroy(void)
 {
     /* destroy offload threads */
-    int port_id, core_id;
+    int port_id, core_id, ret;
     uint16_t port_num = rte_eth_dev_count_avail();
 
     if (g_thread_core_id == -1)
@@ -583,7 +641,8 @@ void hp_context_destroy(void)
     g_shutdown = 1;
     for (port_id = 0; port_id < port_num; port_id++)
     {
-        if (pthread_join(g_offload_worker_thread_tid[port_id], NULL) < 0)
+        ret = pthread_join(g_offload_worker_thread_tid[port_id], NULL);
+        if (ret < 0)
         {
             perror("pthread_join() failed!");
             exit(EXIT_FAILURE);
@@ -603,3 +662,4 @@ void hp_context_destroy(void)
 
     g_thread_core_id = -1;
 }
+/*----------------------------------------------------------------------------*/

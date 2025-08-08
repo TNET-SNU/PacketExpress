@@ -1812,7 +1812,7 @@ static inline uint16_t netif_rx_burst(portid_t pid, struct netif_queue_conf *qco
         };
         nrx = rte_gro_reassemble_burst(qconf->mbufs, nrx, &gro_param);
 #endif
-        px_update_stats(pid, qconf->id, qconf->mbufs, nrx, NULL);
+        px_update_rx_stats(pid, qconf->id, qconf->mbufs, nrx);
 #endif
     }
 
@@ -2151,7 +2151,7 @@ static inline void netif_tx_burst(lcoreid_t cid, portid_t pid, queueid_t qindex)
         }
     }
 #if USE_LINK
-    px_unlink(txq->mbufs, txq->len, NULL);
+    px_unlink_and_uso(txq->mbufs, txq->len, NULL);
 #endif
 #if USE_CGRO || USE_LRO || USE_DGRO
     px_setup_tso_burst(pid, txq->id, txq->mbufs, txq->len);
@@ -4086,6 +4086,17 @@ int netif_port_start(struct netif_port *port)
                         __func__, port->name, qid);
                 return EDPVS_DPDKAPIFAIL;
             }
+#if USE_CGRO
+            ret = px_init(port->id, qid,
+                          NETIF_MAX_PKT_BURST,
+                          !JUMBO_FRAME ? 4096 : 0,
+                          STALL_TIMEOUT_NS, NULL, NULL, USE_LINK);
+            if (ret < 0) {
+                RTE_LOG(ERR, NETIF, "%s: fail to config %s:rx-queue-%d\n",
+                        __func__, port->name, qid);
+                return EDPVS_DPDKAPIFAIL;
+            }
+#endif
         }
     }
 
@@ -4130,40 +4141,6 @@ int netif_port_start(struct netif_port *port)
         RTE_LOG(ERR, NETIF, "%s: fail to start %s\n", __func__, port->name);
         return EDPVS_DPDKAPIFAIL;
     }
-  
-#if USE_CGRO
-    /* make patterns */
-    struct rte_flow_item_ipv4 ipv4_mask;
-    memset(&ipv4_mask, 0, sizeof(struct rte_flow_item_ipv4));
-    ipv4_mask.hdr.src_addr = UINT32_MAX;
-    ipv4_mask.hdr.dst_addr = UINT32_MAX;
-    struct px_pattern patterns[2];
-    patterns[0].type = RTE_FLOW_ITEM_TYPE_IPV4;
-    patterns[0].mask = &ipv4_mask;
-    struct rte_flow_item_tcp tcp_mask;
-    memset(&tcp_mask, 0, sizeof(struct rte_flow_item_tcp));
-    tcp_mask.hdr.src_port = UINT16_MAX;
-    tcp_mask.hdr.dst_port = UINT16_MAX;
-    patterns[1].type = RTE_FLOW_ITEM_TYPE_TCP;
-    patterns[1].mask = &tcp_mask;
-    /* make actions */
-    struct px_action actions[2];
-    actions[0].type = RTE_FLOW_ACTION_TYPE_VOID;
-    actions[1].type = RTE_FLOW_ACTION_TYPE_VOID;
-    for (qid = 0; qid < port->nrxq; qid++)
-    {
-        if (px_init(port->id, qid, NETIF_MAX_PKT_BURST, !JUMBO_FRAME ? 4096 : 0, STALL_TIMEOUT_NS, NULL, NULL, USE_LINK) < 0) {
-            RTE_LOG(ERR, NETIF, "%s: fail to config %s:rx-queue-%d\n",
-                    __func__, port->name, qid);
-            return EDPVS_DPDKAPIFAIL;
-        }
-        if (px_add_rule(port->id, qid, patterns, 2, actions, 2) < 0) {
-            RTE_LOG(ERR, NETIF, "%s: fail to config %s:rx-queue-%d\n",
-                    __func__, port->name, qid);
-            return EDPVS_DPDKAPIFAIL;
-        }
-    }
-#endif
 
     // wait the device link up
     RTE_LOG(INFO, NETIF, "Waiting for %s link up, be patient ...\n", port->name);

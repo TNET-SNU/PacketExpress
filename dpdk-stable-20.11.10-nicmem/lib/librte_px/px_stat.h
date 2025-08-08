@@ -1,15 +1,15 @@
 #ifndef PX_STAT_H_
 #define PX_STAT_H_
-
-#include "px_common.h"
-#include "px_cache.h"
-#include "px_delay.h"
-
+/*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 extern "C"
 {
 #endif
-
+/*----------------------------------------------------------------------------*/
+#include "px_common.h"
+#include "px_cache.h"
+#include "px_delay.h"
+/*----------------------------------------------------------------------------*/
 /*
  * Ethernet frame overhead
  */
@@ -22,7 +22,7 @@ extern "C"
 
 #define DIST_UNIT (3 * RTE_ETHER_MTU)
 /*----------------------------------------------------------------------------*/
-struct px_stat
+struct px_rx_stat
 {
     int reset;
     int ready;
@@ -39,8 +39,6 @@ struct px_stat
     uint64_t data_pkt_cnt_in_batch;
     uint64_t batch_cnt;
 
-    uint64_t payload_bytes_cnt;
-
 #if PX_MEASURE_DELAY
     /* sum of packets' delay in microsecond */
     // uint64_t delay_us;
@@ -53,12 +51,53 @@ struct px_stat
     uint64_t dist[UINT16_MAX / DIST_UNIT + 1];
 #endif
 };
+struct px_tx_stat
+{
+    int reset;
+    int ready;
+
+    /* every packets */
+    uint64_t bytes_cnt;
+    uint64_t pkt_cnt;
+    uint64_t pkt_cnt_in_batch;
+
+    /* only packets with payload */
+    uint64_t data_bytes_cnt;
+    uint64_t data_pkt_cnt;
+    uint64_t data_pkt_segs_cnt;
+    uint64_t data_pkt_cnt_in_batch;
+    uint64_t batch_cnt;
+
+#if PX_MEASURE_DELAY
+    /* sum of packets' delay in microsecond */
+    // uint64_t delay_us;
+    /* sum of packets' delay in nanosecond */
+    uint64_t delay_ns;
+#endif
+
+#if PX_MEASURE_DIST
+    /* distribution of packets with payload */
+    uint64_t dist[UINT16_MAX / DIST_UNIT + 1];
+#endif
+
+    uint64_t _1_seg_cnt;
+    uint64_t _2_seg_cnt;
+    uint64_t _3_seg_cnt;
+    uint64_t _4_seg_cnt;
+    uint64_t _5_seg_cnt;
+    uint64_t under_iMTU_cnt;
+    uint64_t iMTU_cnt;
+};
 /*----------------------------------------------------------------------------*/
-void px_update_stats(uint16_t port_id,
-                     uint16_t queue_id,
-                     struct rte_mbuf **pkts,
-                     const uint16_t nb_pkts,
-                     struct timespec *now_ns);
+void px_update_rx_stats(uint16_t port_id,
+                        uint16_t queue_id,
+                        struct rte_mbuf **pkts,
+                        const uint16_t nb_pkts);
+/*----------------------------------------------------------------------------*/
+void px_update_tx_stats(uint16_t port_id,
+                        uint16_t queue_id,
+                        struct rte_mbuf **pkts,
+                        const uint16_t nb_pkts);
 /*----------------------------------------------------------------------------*/
 void px_print_stats(int args);
 /*----------------------------------------------------------------------------*/
@@ -71,5 +110,5 @@ int px_stop_print_thread(void);
 #ifdef __cplusplus
 }
 #endif
-
+/*----------------------------------------------------------------------------*/
 #endif // PX_STAT_H_

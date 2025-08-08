@@ -332,7 +332,7 @@ inline void Packet::Free(Packet **pkts, size_t cnt) {
   DCHECK_LE(cnt, PacketBatch::kMaxBurst);
 
 // #if USE_LINK
-//   cnt = px_unlink(reinterpret_cast<struct rte_mbuf **>(pkts), cnt, NULL);
+//   cnt = px_unlink_and_uso(reinterpret_cast<struct rte_mbuf **>(pkts), cnt, NULL);
 // #endif
 
   // rte_mempool_put_bulk() crashes when called with cnt == 0

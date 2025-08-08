@@ -1,12 +1,12 @@
 #ifndef PX_DELAY_H_
 #define PX_DELAY_H_
-
-#include "px_common.h"
-
+/*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 extern "C"
 {
 #endif
+/*----------------------------------------------------------------------------*/
+#include "px_common.h"
 /*----------------------------------------------------------------------------*/
 #define IAT_THREAD_PERIOD 10
 #define IAT_TIMEOUT 300
@@ -27,7 +27,7 @@ struct px_iat_ctx
 struct flow_iat_entry
 {
     rte_mbuf_timestamp_t last_timestamp; /* HW timestamp of last packet */
-    int64_t last_delta;                 /* last delta in ns */
+    int64_t last_delta;                  /* last delta in ns */
     double avg_iat;                      /* avg. IAT (EWMA) */
 };
 /*----------------------------------------------------------------------------*/
@@ -37,7 +37,6 @@ struct flow_iat_entry
  * as it has already configured hardware timestamp in mbuf.
  * ii) For non-MLX5 PMDs, we need to register a dynamic field for timestamp.
  */
-#if !MLX5_ENABLED
 static int rx_hw_timestamp_field_offset = -1;
 static uint64_t rx_hw_timestamp_flag = 0;
 /*----------------------------------------------------------------------------*/
@@ -67,7 +66,6 @@ init_rx_hw_timestamp(void)
 
     return 0;
 }
-#endif
 /*----------------------------------------------------------------------------*/
 static inline int
 is_timestamp_enabled(struct rte_mbuf *mbuf)
@@ -218,9 +216,9 @@ reset_timestamp_on_headroom(struct rte_mbuf *pkt)
 }
 /*----------------------------------------------------------------------------*/
 static inline void
-set_timestamp_batch(struct rte_mbuf **pkts,
-                    uint16_t nb_pkts,
-                    struct timespec *ts)
+px_set_timestamp_batch(struct rte_mbuf **pkts,
+                       uint16_t nb_pkts,
+                       struct timespec *ts)
 {
     struct rte_mbuf *pkt;
     for (int i = 0; i < nb_pkts; i++)
@@ -362,5 +360,5 @@ get_time_factor(uint32_t missing_segs_nb)
 #ifdef __cplusplus
 }
 #endif
-
+/*----------------------------------------------------------------------------*/
 #endif // PX_DELAY_H_

@@ -1,13 +1,13 @@
 #ifndef PX_REQRING_H_
 #define PX_REQRING_H_
-
-#include "px_common.h"
-#include "px_flow.h"
-
+/*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 extern "C"
 {
 #endif
+/*----------------------------------------------------------------------------*/
+#include "px_common.h"
+#include "px_flow.h"
 /*----------------------------------------------------------------------------*/
 /* structures for hashtable with 5-tuple */
 struct ht_element
@@ -89,5 +89,5 @@ void req_ring_consume(int core_id, int queue_id);
 #ifdef __cplusplus
 }
 #endif
-
+/*----------------------------------------------------------------------------*/
 #endif // PX_REQRING_H_

@@ -8,7 +8,7 @@
 #include "../module.h"
 #include "../port.h"
 #include "../drivers/pmd.h"
-#include <px_offload.h>
+#include <px.h>
 /*----------------------------------------------------------------------------------*/
 class OffloadManager final : public Module
 {

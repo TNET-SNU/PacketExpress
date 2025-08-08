@@ -1,8 +1,11 @@
 #include "px.h"
 /*----------------------------------------------------------------------------*/
+/* Below are for managing PX devices (DPDK ports) and PX context */
 struct px_dev g_px_dev[RTE_MAX_ETHPORTS] = {0};
 static struct px_ctx g_pctx[RTE_MAX_ETHPORTS][PX_MAX_QUEUES_PER_PORT] = {0};
 static struct rte_mempool *g_clone_pool[RTE_MAX_NUMA_NODES] = {NULL};
+/*----------------------------------------------------------------------------*/
+/* Below are for default RSS hash */
 static uint8_t *g_rss_key = NULL;
 static int g_rss_key_len = 0;
 static uint8_t g_rss_key_default[] =
@@ -19,6 +22,8 @@ static uint8_t g_rss_key_default[] =
 //      0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A};
 /*----------------------------------------------------------------------------*/
 /**
+ * Below is for default ARP table.
+ * It is initialized with some default entries from px_dev_configure().
  * ToDo: Make an API for receiving dst MAC information from kernel
  * via netlink
  */
@@ -748,10 +753,8 @@ get_crc_hash(struct rte_mbuf *pkt,
     if (rule->dec_pat.use_rss_hash)
     {
         /* use below if RSS hash value is not computed by NIC */
-        // return rte_hash_crc(rte_pktmbuf_mtod_offset(pkt, struct px_flow_key *,
-        //                                             sizeof(struct rte_ether_hdr) +
-        //                                             sizeof(uint32_t) * 3),
-        //                     sizeof(struct px_flow_key), 0);
+        // return rte_hash_crc(get_four_tuple(pkt),
+        //                     sizeof(struct four_tuple), 0);
         return get_rss_hash(pkt);
     }
     vec = rule->dec_pat.vec;
@@ -783,11 +786,7 @@ has_same_key(struct rte_mbuf *pkt,
              struct px_rule *rule)
 {
 #if old
-    return !memcmp(&flow->key,
-                   rte_pktmbuf_mtod_offset(pkt, void *,
-                                           sizeof(struct rte_ether_hdr) +
-                                               sizeof(uint32_t) * 3),
-                   sizeof(struct px_flow_key));
+    return !memcmp(&flow->key, get_four_tuple(pkt), sizeof(struct four_tuple));
 #else
     struct px_mask_vec *vec = rule->dec_pat.vec;
     int offset = 0;
@@ -825,9 +824,7 @@ copy_key(struct rte_mbuf *pkt,
          struct px_rule *rule)
 {
 #if old
-    flow->key = *rte_pktmbuf_mtod_offset(pkt, struct px_flow_key *,
-                                         sizeof(struct rte_ether_hdr) +
-                                             sizeof(uint32_t) * 3);
+    flow->key = *get_four_tuple(pkt);
 #else
     struct px_mask_vec *vec = rule->dec_pat.vec;
     int offset = 0;
@@ -859,7 +856,6 @@ insert_flow(struct px_ctx *pctx,
             struct px_flow *prev_flow)
 {
     struct px_flow *cur_flow;
-    struct px_rule *rule = TAILQ_FIRST(&pctx->rule_set.rules);
 
     if (pctx->flow_num >= pctx->array_size)
     {
@@ -877,7 +873,7 @@ insert_flow(struct px_ctx *pctx,
 
     /* insert new flow */
     cur_flow->next_flow_idx = INVALID_INDEX;
-    copy_key(pkt, cur_flow, rule);
+    copy_key(pkt, cur_flow, pctx->rule);
     cur_flow->start_item_idx = cur_flow->cur_item_idx = pctx->item_num;
     if (prev_flow)
     {
@@ -968,6 +964,7 @@ separate_edge_seg(struct px_ctx *pctx,
                   struct rte_mbuf *pkt,
                   uint32_t last_segsz)
 {
+    struct px_dev *px_dev = &g_px_dev[pctx->port_id];
     struct rte_mempool *clone_pool = g_clone_pool[pctx->socket_id];
     struct rte_mbuf *edge = pkt, *edge_tail = NULL, *edge_head;
     struct rte_mbuf *hdr = pkt, *prev = NULL, *next;
@@ -1045,8 +1042,11 @@ separate_edge_seg(struct px_ctx *pctx,
             seq_diff = prev->data_len - hdr_size + edge->data_len;
 #if PX_MEASURE_DELAY
             copy_timestamp(edge_head, pkt);
-            // put_timestamp_to_headroom(edge_head, &pctx->now_ns);
 #endif
+            if (px_dev->initialized_hairpin)
+            {
+                copy_four_tuple(edge_head, pkt);
+            }
         }
         /* restore the chain to next mbuf */
         prev->next = edge;
@@ -1067,8 +1067,11 @@ separate_edge_seg(struct px_ctx *pctx,
         seq_diff = target_size - hdr_size;
 #if PX_MEASURE_DELAY
         copy_timestamp(edge_head, pkt);
-        // put_timestamp_to_headroom(edge_head, &pctx->now_ns);
 #endif
+        if (px_dev->initialized_hairpin)
+        {
+            copy_four_tuple(edge_head, pkt);
+        }
     }
 
     unmark_decaped(edge_head);
@@ -1157,6 +1160,10 @@ is_stall_needed(struct px_ctx *pctx,
     }
     diff_ns = get_nsec_diff(&pctx->now_ns, timestamp);
     timeout_ns = (int64_t)(avg_iat * factor);
+    if (timeout_ns > g_px_dev[pctx->port_id].timeout_ns)
+    {
+        timeout_ns = g_px_dev[pctx->port_id].timeout_ns; // Cap to max timeout
+    }
     if (print)
     {
         printf("max_seg_nb: %u, missing_segs_nb: %u, "
@@ -1214,6 +1221,7 @@ handle_incomplete(struct px_ctx *pctx,
 
     /* if stall nsec is marginal */
     if (is_stall_needed(pctx, firstseg, timestamp, orig_segsz, target_segsz, 0))
+    // if (is_stall_needed(pctx, firstseg, timestamp, orig_segsz, target_segsz, 1))
     {
         /* can stall, so insert to stalled item array */
         if (insert_stall(pctx,
@@ -1269,7 +1277,6 @@ assemble_udp(struct px_ctx *pctx,
     struct px_flow *cur_flow;
     uint16_t bucket_idx, start_flow_idx;
     uint32_t cmp;
-    struct px_rule *rule = TAILQ_FIRST(&pctx->rule_set.rules);
 
     /* get pointer to key (4-tuple) */
     bucket_idx = get_rss_hash(firstseg) % pctx->bucket_size;
@@ -1285,7 +1292,7 @@ assemble_udp(struct px_ctx *pctx,
 
     /* find flow for the input pkt */
     cur_flow = &pctx->flows[start_flow_idx];
-    while (!has_same_key(firstseg, cur_flow, rule))
+    while (!has_same_key(firstseg, cur_flow, pctx->rule))
     {
         /* this flow is not for input pkt; collision */
         if (cur_flow->next_flow_idx == INVALID_INDEX)
@@ -1372,7 +1379,6 @@ assemble_tcp(struct px_ctx *pctx,
     struct px_flow *cur_flow;
     uint16_t bucket_idx, start_flow_idx;
     uint32_t cmp;
-    struct px_rule *rule = TAILQ_FIRST(&pctx->rule_set.rules);
 
     bucket_idx = get_rss_hash(firstseg) % pctx->bucket_size;
     // bucket_idx = xor_hash((uint32_t *)get_four_tuple(firstseg)) % pctx->bucket_size;
@@ -1388,7 +1394,7 @@ assemble_tcp(struct px_ctx *pctx,
 
     /* find flow for the input pkt */
     cur_flow = &pctx->flows[start_flow_idx];
-    while (!has_same_key(firstseg, cur_flow, rule))
+    while (!has_same_key(firstseg, cur_flow, pctx->rule))
     {
         /* this flow is not for input pkt; collision */
         if (cur_flow->next_flow_idx == INVALID_INDEX)
@@ -1645,7 +1651,9 @@ parse_for_tcp_gro(struct rte_mbuf *pkt,
 int px_parse_packet(struct px_ctx *pctx,
                     struct rte_mbuf *pkt,
                     uint8_t *tcp_flags,
-                    int hwcsum)
+                    int hwcsum,
+                    int (*is_uplink)(struct rte_mbuf *),
+                    int (*is_downlink)(struct rte_mbuf *))
 {
     struct px_ctx *new_pctx;
     struct rte_ipv4_hdr *ipv4_hdr;
@@ -1735,16 +1743,30 @@ int px_parse_packet(struct px_ctx *pctx,
             insert_four_tuple(pkt);
         }
 
+        /* update IAT for delayed merging */
+#if SEMANTIC_TEST
         /* check if the pkt is outgoing */
-        if (pctx->is_uplink(pkt))
+        if (is_uplink(pkt))
         {
             mark_px(pkt);
         }
-        else if (pctx->is_downlink(pkt))
+        else if (is_downlink(pkt))
+        {
+            if (pctx->stalls)
+            {
+                iat_update_entry(pctx->iat_ctx, pkt,
+                                 g_px_dev[pctx->port_id].timeout_ns);
+            }
+        }
+#else
+        (void)is_uplink;
+        (void)is_downlink;
+        if (pctx->stalls)
         {
             iat_update_entry(pctx->iat_ctx, pkt,
                              g_px_dev[pctx->port_id].timeout_ns);
         }
+#endif
 
         /* parse for TCP GRO */
         ret = parse_for_tcp_gro(pkt, tcp_flags);
@@ -1779,16 +1801,30 @@ int px_parse_packet(struct px_ctx *pctx,
             return ret;
         }
 
+        /* update IAT for delayed merging */
+#if SEMANTIC_TEST
         /* check if the pkt is outgoing */
-        if (pctx->is_uplink(pkt))
+        if (is_uplink(pkt))
         {
             mark_px(pkt);
         }
-        else if (pctx->is_downlink(pkt))
+        else if (is_downlink(pkt))
+        {
+            if (pctx->stalls)
+            {
+                iat_update_entry(pctx->iat_ctx, pkt,
+                                 g_px_dev[pctx->port_id].timeout_ns);
+            }
+        }
+#else
+        (void)is_uplink;
+        (void)is_downlink;
+        if (pctx->stalls)
         {
             iat_update_entry(pctx->iat_ctx, pkt,
                              g_px_dev[pctx->port_id].timeout_ns);
         }
+#endif
 
         /* use below when stop UDP GRO */
         // return -1;
@@ -1883,10 +1919,15 @@ void px_parse_batch(uint16_t port_id,
     struct rte_mbuf *pkt;
     uint16_t *mss_ptr;
     uint8_t tcp_flags = 0;
-    for (int i = 0; i < nb_pkts; i++)
+    int i, ret;
+
+    for (i = 0; i < nb_pkts; i++)
     {
         pkt = pkts[i];
-        if (px_parse_packet(pctx, pkt, &tcp_flags, hwcsum) < 0)
+        ret = px_parse_packet(pctx, pkt, &tcp_flags, hwcsum,
+                              is_uplink_default,
+                              is_downlink_default);
+        if (ret < 0)
         {
             /* it cannot be TCP-GROed */
             if (!trans_mtu)
@@ -1905,11 +1946,11 @@ void px_parse_batch(uint16_t port_id,
 
                 /* update MSS */
 #if SEMANTIC_TEST
-                if (pctx->is_uplink(pkt))
+                if (is_uplink_default(pkt))
                 {
                     update_mss(mss_ptr, 0, 0);
                 }
-                else if (pctx->is_downlink(pkt))
+                else if (is_downlink_default(pkt))
                 {
                     update_mss(mss_ptr, 0, 1);
                 }
@@ -1943,11 +1984,11 @@ void px_setup_tso_burst(uint16_t port_id,
         pkt->l4_len = (*get_tcp_doff(pkt) >> 4) << 2;
 
 #if SEMANTIC_TEST
-        if (pctx->is_uplink(pkt))
+        if (is_uplink_default(pkt))
         {
             segsz = (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len);
         }
-        else if (pctx->is_downlink(pkt))
+        else if (is_downlink_default(pkt))
         {
             segsz = (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len) *
                     ((DEFAULT_iMTU - pkt->l3_len - pkt->l4_len) /
@@ -1961,6 +2002,7 @@ void px_setup_tso_burst(uint16_t port_id,
             segsz = (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len);
         }
 #else
+        (void)pctx;
         segsz = (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len) *
                 ((DEFAULT_iMTU - pkt->l3_len - pkt->l4_len) /
                  (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len));
@@ -1974,135 +2016,6 @@ void px_setup_tso_burst(uint16_t port_id,
             unset_tso(pkt);
         }
     }
-}
-/*----------------------------------------------------------------------------*/
-static inline uint16_t
-px_uso_burst(struct px_ctx *pctx,
-             struct rte_mbuf **pkts,
-             uint16_t nb_pkts,
-             struct rte_mbuf **out)
-{
-    struct rte_mempool *clone_pool = g_clone_pool[pctx->socket_id];
-    struct rte_mbuf *pkt, *hdr_clone, *body_clone;
-    uint16_t idx = 0;
-    uint16_t seglen, segnum, last_seglen, offset = 0;
-    uint16_t *iplen, *udplen;
-
-    for (int i = 0; i < nb_pkts; i++)
-    {
-        pkt = pkts[i];
-
-        /* pass non UDP */
-        if (is_udp(pkt))
-        {
-            out[idx++] = pkt;
-            continue;
-        }
-
-        /* check if non-PX, which does not need USO */
-        if (!is_px(pkt))
-        {
-            out[idx++] = pkt;
-            continue;
-        }
-
-        /* this packet is merged by me in RX stack */
-        if (pkt->nb_segs > 1)
-        {
-            out[idx++] = pkt;
-            continue;
-        }
-
-        /* this packet is malformed */
-        if (rte_be_to_cpu_16(*(uint16_t *)get_payload(pkt)) > 4)
-        {
-            out[idx++] = pkt;
-            continue;
-        }
-
-        /* now this packet is PX tunneling packet */
-        seglen = rte_be_to_cpu_16(*((uint16_t *)get_payload(pkt) + 1));
-
-        /* below are for debugging */
-        // if ((seglen + pkt->l3_len + pkt->l4_len > DEFAULT_eMTU) || (seglen < 512))
-        // {
-        //     printf("seglen is invalid: %u\n", seglen);
-        //     printf("l2_len: %u, l3_len: %u, l4_len: %u, pkt_len: %u\n",
-        //            pkt->l2_len, pkt->l3_len, pkt->l4_len, pkt->pkt_len);
-        //     printf("data_len: %u\n",
-        //            pkt->data_len);
-        //     hexdump("pkt dump", (uint8_t *)pkt->buf_addr + pkt->data_off, pkt->data_len);
-        //     rte_pktmbuf_free(pkt);
-
-        //     continue;
-        // }
-
-        segnum = ((get_data_len(pkt) - 2 * sizeof(uint16_t)) + seglen - 1) / seglen;
-        last_seglen = (get_data_len(pkt) - 2 * sizeof(uint16_t)) % seglen;
-
-        /* update header */
-        pkt->data_len = get_hdr_len(pkt);
-        iplen = get_ip_len(pkt);
-        unmark_px(pkt);
-        *iplen = rte_cpu_to_be_16(pkt->l3_len + pkt->l4_len + seglen);
-        udplen = get_udp_len(pkt);
-        *udplen = rte_cpu_to_be_16(pkt->l4_len + seglen);
-
-        offset = get_hdr_len(pkt) + 2 * sizeof(uint16_t);
-        for (int j = 0; j < segnum; j++)
-        {
-            if (last_seglen && (j == segnum - 1))
-            {
-                /* last seg may have different header */
-                hdr_clone = rte_pktmbuf_copy(pkt, clone_pool, 0, get_hdr_len(pkt));
-                if (!hdr_clone)
-                {
-                    fprintf(stderr, "hdr clone failed\n");
-                    continue;
-                }
-                iplen = get_ip_len(hdr_clone);
-                *iplen = rte_cpu_to_be_16(pkt->l3_len + pkt->l4_len + last_seglen);
-                udplen = get_udp_len(hdr_clone);
-                *udplen = rte_cpu_to_be_16(pkt->l4_len + last_seglen);
-#if PX_MEASURE_DELAY
-                copy_timestamp(hdr_clone, pkt);
-#endif
-            }
-            else
-            {
-                hdr_clone = rte_pktmbuf_clone(pkt, clone_pool);
-                if (!hdr_clone)
-                {
-                    fprintf(stderr, "hdr clone failed\n");
-                    continue;
-                }
-            }
-
-            body_clone = rte_pktmbuf_clone(pkt, clone_pool);
-            if (!body_clone)
-            {
-                fprintf(stderr, "body clone failed\n");
-                rte_pktmbuf_free(hdr_clone);
-                continue;
-            }
-            body_clone->data_off += offset;
-            body_clone->data_len = seglen;
-
-            hdr_clone->next = body_clone;
-            hdr_clone->pkt_len = get_hdr_len(pkt) + seglen;
-            hdr_clone->nb_segs = 2;
-
-            /* put to out buffer */
-            out[idx++] = hdr_clone;
-
-            offset += seglen;
-        }
-
-        rte_pktmbuf_free(pkt);
-        pkt = NULL;
-    }
-
-    return idx;
 }
 /*----------------------------------------------------------------------------*/
 static inline uint16_t
@@ -2192,9 +2105,9 @@ link_and_flush(struct px_ctx *pctx,
                 /* check if delayed merging needed and if is from outside */
 #if SEMANTIC_TEST
                 /* only for incoming packets when delayed merging enabled */
-                if (g_px_dev[pctx->port_id].initialized_delay && !is_px(cur_pkt))
+                if (pctx->stalls && !is_px(cur_pkt))
 #else
-                if (g_px_dev[pctx->port_id].initialized_delay)
+                if (pctx->stalls)
 #endif
                 {
                     /* check if previous packet is stalled */
@@ -2323,9 +2236,9 @@ link_and_flush(struct px_ctx *pctx,
                 /* check if delayed merging needed and if is from outside */
 #if SEMANTIC_TEST
                 /* only for incoming packets when delayed merging enabled */
-                if (g_px_dev[pctx->port_id].initialized_delay && !is_px(cur_pkt))
+                if (pctx->stalls && !is_px(cur_pkt))
 #else
-                if (g_px_dev[pctx->port_id].initialized_delay)
+                if (pctx->stalls)
 #endif
                 {
                     if (stall_this_flow)
@@ -2501,11 +2414,10 @@ px_core(struct px_ctx *pctx,
     uint32_t reverse_rss, segsz = 0;
     uint16_t cnt = 0, inner_qid, outer_qid, *mss_ptr;
     uint8_t tcp_flags = 0;
-    int i;
-    struct px_rule *rule = TAILQ_FIRST(&pctx->rule_set.rules);
+    int i, ret;
 
     /* Stage 1: try GRO with stalled items */
-    if (g_px_dev[pctx->port_id].initialized_delay)
+    if (pctx->stalls)
     {
         stall = &pctx->stalls[pctx->latent_id];
         for (i = 0; i < stall->num; i++)
@@ -2535,10 +2447,13 @@ px_core(struct px_ctx *pctx,
         pkt = pkts[i];
 
         /* check packet can be GROed */
-        if (px_parse_packet(pctx, pkt, &tcp_flags, 1) < 0)
+        ret = px_parse_packet(pctx, pkt, &tcp_flags, 1,
+                              pctx->is_uplink,
+                              pctx->is_downlink);
+        if (ret < 0)
         {
             /* it cannot be GROed */
-            if (!rule->dec_act.do_concat && pctx->do_link)
+            if (pctx->do_link)
             {
                 clear_link(pkt);
             }
@@ -2793,28 +2708,14 @@ px_core(struct px_ctx *pctx,
 void px_deinit(uint16_t port_id,
                uint16_t queue_id)
 {
+    printf("Deinitializing PX context for port %u, queue %u\n", port_id, queue_id);
     struct px_ctx *pctx = &g_pctx[port_id][queue_id];
-    struct px_rule *walk, *tmp;
+    struct px_dev *px_dev = &g_px_dev[port_id];
     int i;
 
     /* remove all rules from rules queue */
-    walk = TAILQ_FIRST(&pctx->rule_set.rules);
-    while (walk != NULL)
-    {
-        tmp = TAILQ_NEXT(walk, link);
-
-        /* remove rule from queue */
-        rule_remove(&pctx->rule_set, walk);
-
-        if (walk->dec_pat.vec)
-        {
-            free(walk->dec_pat.vec);
-            walk->dec_pat.vec = NULL;
-        }
-        free(walk);
-        walk = tmp;
-    }
-    TAILQ_INIT(&pctx->rule_set.rules);
+    px_del_rule_all(port_id, queue_id);
+    rule_init(port_id, queue_id);
 
     if (pctx->mss_ctx)
     {
@@ -2855,23 +2756,20 @@ void px_deinit(uint16_t port_id,
         pctx->buckets = NULL;
     }
 
-    if (g_px_dev[port_id].initialized_delay)
+    /* free stalls descriptors */
+    if (pctx->stalls)
     {
-        /* free stalls descriptors */
-        if (pctx->stalls)
+        /* free stall arrays */
+        for (i = 0; i < px_dev->num_rxq_incr; i++)
         {
-            /* free stall arrays */
-            for (i = 0; i < g_px_dev[port_id].num_rxq_incr; i++)
+            if (pctx->stalls[i].items)
             {
-                if (pctx->stalls[i].items)
-                {
-                    free(pctx->stalls[i].items);
-                    pctx->stalls[i].items = NULL;
-                }
+                free(pctx->stalls[i].items);
+                pctx->stalls[i].items = NULL;
             }
-            free(pctx->stalls);
-            pctx->stalls = NULL;
         }
+        free(pctx->stalls);
+        pctx->stalls = NULL;
 
         /* free RX/TX rings */
         px_ring_deinit(&pctx->rx_ring);
@@ -2886,10 +2784,9 @@ void px_deinit(uint16_t port_id,
     //     rte_exit(EXIT_FAILURE, "Error joining stat thread\n");
     // }
 
-    if (g_px_dev[port_id].initialized_hairpin)
+    if (px_dev->initialized_hairpin)
     {
         hp_context_destroy();
-        g_px_dev[port_id].initialized_hairpin = 0;
     }
 }
 /*----------------------------------------------------------------------------*/
@@ -2902,11 +2799,16 @@ int px_init(uint16_t port_id,
             int (*is_downlink)(struct rte_mbuf *),
             int do_link)
 {
+    printf("Initializing PX context for port %u, queue %u\n", port_id, queue_id);
     struct px_dev *px_dev = &g_px_dev[port_id];
     struct px_ctx *pctx;
     struct px_stall *stall;
     uint16_t table_size, num_rxq_incr = px_dev->num_rxq_incr;
-    int i;
+    int i, rule_id;
+    struct px_pattern patterns[2];
+    struct rte_flow_item_ipv4 ipv4_mask;
+    struct rte_flow_item_tcp tcp_mask;
+    struct px_action actions[2];
 
     if (!num_rxq_incr)
     {
@@ -2947,26 +2849,20 @@ int px_init(uint16_t port_id,
         {
             rte_exit(EXIT_FAILURE, "Cannot init MSS ctx\n");
         }
-
-        /* mark MSS table initialized */
-        px_dev->initialized_mss = 1;
     }
-    if (iat_table_size && !pctx->iat_ctx)
+    if (px_dev->timeout_ns && iat_table_size && !pctx->iat_ctx)
     {
         pctx->iat_ctx = iat_init_ctx(port_id, queue_id, iat_table_size, EWMA_ALPHA);
         if (!pctx->iat_ctx)
         {
             rte_exit(EXIT_FAILURE, "Cannot init IAT ctx\n");
         }
-
-        /* mark IAT table initialized */
-        px_dev->initialized_delay = 1;
     }
 
     /* estimate table size */
     // table_size = burst * (px_dev->stall_limit + 1);
 
-    if (px_dev->initialized_delay)
+    if (px_dev->timeout_ns)
     {
         /* ToDo: Use mempool for items, flows, buckets, stalls array
          * estimate the buffer size as BW * Delay */
@@ -2979,19 +2875,24 @@ int px_init(uint16_t port_id,
     pctx->array_size = table_size;
 
     /* alloc items array */
-    pctx->items = (struct px_item *)calloc(pctx->array_size,
-                                           sizeof(struct px_item));
     if (!pctx->items)
     {
-        rte_exit(EXIT_FAILURE, "Cannot alloc items array\n");
+        pctx->items = (struct px_item *)calloc(pctx->array_size,
+                                               sizeof(struct px_item));
+        if (!pctx->items)
+        {
+            rte_exit(EXIT_FAILURE, "Cannot alloc items array\n");
+        }
     }
-
     /* alloc flows array */
-    pctx->flows = (struct px_flow *)calloc(pctx->array_size,
-                                           sizeof(struct px_flow));
     if (!pctx->flows)
     {
-        rte_exit(EXIT_FAILURE, "Cannot alloc flows array\n");
+        pctx->flows = (struct px_flow *)calloc(pctx->array_size,
+                                               sizeof(struct px_flow));
+        if (!pctx->flows)
+        {
+            rte_exit(EXIT_FAILURE, "Cannot alloc flows array\n");
+        }
     }
 
     /* initialize flow, item table */
@@ -3009,9 +2910,10 @@ int px_init(uint16_t port_id,
     memset(pctx->buckets, UINT8_MAX, pctx->bucket_size * sizeof(uint16_t));
 
     /* make rule queue */
-    TAILQ_INIT(&pctx->rule_set.rules);
+    rule_init(port_id, queue_id);
 
-    if (px_dev->initialized_delay)
+    /* initialize delayed merging */
+    if (px_dev->timeout_ns && !pctx->stalls)
     {
         /* make stall queue descriptors */
         pctx->stalls = (struct px_stall *)calloc(num_rxq_incr,
@@ -3048,7 +2950,7 @@ int px_init(uint16_t port_id,
     }
 
     /* initiate hairpin context */
-    if (g_px_dev[port_id].initialized_hairpin)
+    if (px_dev->initialized_hairpin)
     {
         if (hp_context_init(get_num_cpus() - 1,
                             PER_CORE_HOST_CACHE_SIZE,
@@ -3058,6 +2960,32 @@ int px_init(uint16_t port_id,
             return -1;
         }
     }
+
+    /* make default patterns for simple four tuple rule */
+    memset(&ipv4_mask, 0, sizeof(struct rte_flow_item_ipv4));
+    ipv4_mask.hdr.src_addr = UINT32_MAX;
+    ipv4_mask.hdr.dst_addr = UINT32_MAX;
+    patterns[0].type = RTE_FLOW_ITEM_TYPE_IPV4;
+    patterns[0].mask = &ipv4_mask;
+    memset(&tcp_mask, 0, sizeof(struct rte_flow_item_tcp));
+    tcp_mask.hdr.src_port = UINT16_MAX;
+    tcp_mask.hdr.dst_port = UINT16_MAX;
+    patterns[1].type = RTE_FLOW_ITEM_TYPE_TCP;
+    patterns[1].mask = &tcp_mask;
+
+    /* make default actions for simple four tuple rule */
+    actions[0].type = RTE_FLOW_ACTION_TYPE_VOID;
+    actions[1].type = RTE_FLOW_ACTION_TYPE_VOID;
+
+    /* if no rule is added, add a global rule (usuaully four tuple) */
+    rule_id = px_add_rule(port_id, queue_id, patterns, 2, actions, 2);
+    if (rule_id < 0)
+    {
+        rte_exit(EXIT_FAILURE, "px_add_rule failed\n");
+    }
+
+    /* set this rule as primary rule */
+    pctx->rule = rule_search(port_id, queue_id, rule_id);
 
     return 0;
 }
@@ -3329,7 +3257,7 @@ int px_eth_dev_configure(uint16_t port_id,
             rte_exit(EXIT_FAILURE, "px_arp_configure failed: %d\n", ret);
         }
 
-        /* mark arp table */
+        /* mark that ARP table is already initialized */
         px_dev->initialized_arp = 1;
     }
 
@@ -3342,32 +3270,26 @@ int px_eth_dev_configure(uint16_t port_id,
                                    num_rxq_incr,
                                    hp_num_rxq,
                                    hp_num_txq,
-                                   eth_conf);
+                                   eth_conf,
+                                   optout);
         if (ret)
         {
             rte_exit(EXIT_FAILURE, "px_hairpin_configure failed\n");
         }
 
-        /* mark hairpin */
-        px_dev->initialized_hairpin = 1;
-
         /* if use optout rule, create default offload rule for IPv4 */
         if (optout)
         {
-            ret = px_create_flow_optout(port_id);
+            ret = px_flow_create_optout(port_id);
             if (ret < 0)
             {
-                fprintf(stderr, "px_create_flow_optout() failed for port %d\n", port_id);
+                fprintf(stderr, "px_flow_create_optout() failed for port %d\n", port_id);
                 return ret;
             }
+        }
 
-            /* mark optout */
-            px_dev->initialized_optout = 1;
-        }
-        else
-        {
-            px_dev->initialized_optout = 0;
-        }
+        /* mark hairpin */
+        px_dev->initialized_hairpin = 1;
     }
 
     /* thread for stat printing */
@@ -3378,7 +3300,6 @@ int px_eth_dev_configure(uint16_t port_id,
     }
 
     /* init RX hardware timestamp if necessary */
-#if !MLX5_ENABLED
     if (timeout_ns)
     {
         ret = init_rx_hw_timestamp();
@@ -3387,7 +3308,6 @@ int px_eth_dev_configure(uint16_t port_id,
             rte_exit(EXIT_FAILURE, "init_rx_hw_timestamp failed: %d\n", ret);
         }
     }
-#endif
 
     return ret;
 }
@@ -3468,7 +3388,8 @@ int px_eth_rx_queue_setup(uint16_t port_id,
     if (g_px_dev[port_id].initialized_hairpin)
     {
         ret = px_hairpin_setup(port_id,
-                               num_rxq * num_rxq_incr,
+                               num_rxq,
+                               num_rxq_incr,
                                num_txq,
                                //    nb_rx_desc,
                                // //    nb_rx_desc / 2,
@@ -3531,7 +3452,7 @@ rx_and_px(uint16_t port_id,
 
         px_clock_gettime(TIME_FLAG, &pctx->now_ns);
 #if PX_MEASURE_DELAY
-        set_timestamp_batch(rx_pkts + total, recv, &pctx->now_ns);
+        px_set_timestamp_batch(rx_pkts + total, recv, &pctx->now_ns);
 #endif
         // }
         // for (int j = 0; j < recv; j++)
@@ -3588,7 +3509,7 @@ rx_and_px_delayed(uint16_t port_id,
                                     nb_pkts - total_mq - total_sq);
             px_clock_gettime(TIME_FLAG, &pctx->now_ns);
 #if PX_MEASURE_DELAY
-            set_timestamp_batch(rx_pkts + total_mq + total_sq, recv, &pctx->now_ns);
+            px_set_timestamp_batch(rx_pkts + total_mq + total_sq, recv, &pctx->now_ns);
 #endif
             // }
 
@@ -3624,11 +3545,11 @@ px_eth_rx_burst(uint16_t port_id,
     struct px_ctx *pctx = &g_pctx[port_id][queue_id];
     struct px_ring *rx_ring = &pctx->rx_ring;
     uint16_t read_px_rx_ring = 0;
-    uint16_t read_orig_rx_ring = 0;
+    uint16_t read_hw_rx_ring = 0;
     struct rte_mbuf **orig_batch = rx_pkts;
 
     /* stage 1: fetch from time out ring */
-    if (g_px_dev[port_id].initialized_delay)
+    if (g_px_dev[port_id].timeout_ns)
     {
         read_px_rx_ring = px_ring_dequeue(rx_ring, rx_pkts, nb_pkts);
 
@@ -3640,66 +3561,188 @@ px_eth_rx_burst(uint16_t port_id,
     /* stage 2: RX and GRO if batch has more rooms */
     if (nb_pkts)
     {
-        read_orig_rx_ring = rx_and_px(port_id,
-                                      queue_id,
-                                      rx_pkts,
-                                      nb_pkts);
-        // read_orig_rx_ring = rx_and_px_delayed(port_id,
+        read_hw_rx_ring = rx_and_px(port_id,
+                                    queue_id,
+                                    rx_pkts,
+                                    nb_pkts);
+        // read_hw_rx_ring = rx_and_px_delayed(port_id,
         //                                           queue_id,
         //                                           rx_pkts,
         //                                           nb_pkts);
     }
 
     /* stage 3: update stats */
-    px_update_stats(port_id,
-                    queue_id,
-                    orig_batch,
-                    read_px_rx_ring + read_orig_rx_ring,
-                    &pctx->now_ns);
+    px_update_rx_stats(port_id,
+                       queue_id,
+                       orig_batch,
+                       read_px_rx_ring + read_hw_rx_ring);
 
-    return read_px_rx_ring + read_orig_rx_ring;
+    return read_px_rx_ring + read_hw_rx_ring;
 }
 /*----------------------------------------------------------------------------*/
 // uint16_t
-// px_eth_tx_burst(uint16_t port_id,
-//                 uint16_t queue_id,
-//                 struct rte_mbuf **tx_pkts,
-//                 uint16_t nb_pkts)
+// px_eth_tx_burst0(uint16_t port_id,
+//                  uint16_t queue_id,
+//                  struct rte_mbuf **tx_pkts,
+//                  uint16_t nb_pkts)
 // {
+//     struct px_dev *px_dev = &g_px_dev[port_id];
 //     struct px_ctx *pctx = &g_pctx[port_id][queue_id];
 //     struct px_ring *tx_ring = &pctx->tx_ring;
-//     struct px_rule *rule = TAILQ_FIRST(&pctx->rule_set.rules);
-//     struct rte_mbuf *new_batch[512];
-//     uint16_t sent_px_tx_ring = 0;
-//     uint16_t sent_orig_tx_ring = 0;
+//     struct rte_mbuf *temp_batch[PX_TX_BURST];
+//     uint16_t read_px_tx_ring = 0;
+//     uint16_t sent_hw_tx_ring = 0;
+//     uint16_t nb_pkts_after_uso = 0;
+//     int sent_try = 0, offset = 0;
 
-//     /* stage 1: transmit packets in TX ring */
-//     if (tx_ring->)
-
-//     /* stage 2: GSO and TX */
-
-//     px_ring_dequeue(tx_ring, tx_pkts, nb_pkts);
-
-//     /* stage 1: send packets in TX ring first */
-//     sent_px_tx_ring = px_ring_dequeue(tx_ring, );
-
-//     /* if linking is on, do unlink before TX */
-//     if (rule->dec_act.do_link)
+//     /* stage 0: create hairpin flow */
+//     if (px_dev->initialized_hairpin)
 //     {
-//         nb_pkts = px_unlink(tx_pkts, nb_pkts, NULL);
+//         px_flow_create_burst(port_id, queue_id, tx_pkts, nb_pkts);
 //     }
 
-//     /* ToDo: merge below two batch functions into one */
-//     px_setup_tso_burst(tx_pkts, nb_pkts);
+//     /* stage 1: retrieve packets in TX ring first */
+//     read_px_tx_ring = px_ring_dequeue(tx_ring, temp_batch, PX_TX_BURST);
 
-//     nb_pkts = px_uso_burst(pctx, tx_pkts, nb_pkts, new_batch);
+//     /* stage 2: do GSO for packets from app */
+//     if (pctx->do_link)
+//     {
+//         /* if linking is on, do unlinking and USO before TX */
+//         nb_pkts_after_uso = px_unlink_and_uso(tx_pkts,
+//                                               nb_pkts,
+//                                               temp_batch + read_px_tx_ring,
+//                                               PX_TX_BURST - read_px_tx_ring,
+//                                               tx_ring,
+//                                               g_clone_pool[pctx->socket_id],
+//                                               NULL);
+//     }
+//     else
+//     {
+//         /* if linking is off, do only USO before TX */
+//         nb_pkts_after_uso = px_uso_burst(tx_pkts,
+//                                          nb_pkts,
+//                                          temp_batch + read_px_tx_ring,
+//                                          PX_TX_BURST - read_px_tx_ring,
+//                                          tx_ring,
+//                                          g_clone_pool[pctx->socket_id]);
+//     }
 
-//     sent_orig_tx_ring = rte_eth_tx_burst(port_id, queue_id, new_batch, nb_pkts);
+//     /* stage 2: update stats for conversion yield */
+//     px_update_tx_stats(port_id,
+//                        queue_id,
+//                        temp_batch,
+//                        sent_hw_tx_ring);
 
-//     // sent_orig_tx_ring = rte_eth_tx_burst(port_id, queue_id, tx_pkts, nb_pkts);
+//     /* stage 3: send packets */
+//     while (offset < read_px_tx_ring + nb_pkts_after_uso)
+//     {
+//         sent_hw_tx_ring = rte_eth_tx_burst(port_id,
+//                                            queue_id,
+//                                            temp_batch + offset,
+//                                            read_px_tx_ring + nb_pkts_after_uso - offset);
+//         offset += sent_hw_tx_ring;
 
-//     return sent_orig_tx_ring;
+//         /* if not all packets are sent, unlink the rest */
+//         if (++sent_try > 1)
+//         {
+//             printf("rte_eth_tx_burst: sent_try: %d, offset: %d, read_px_tx_ring: %d, nb_pkts_after_uso: %d\n",
+//                    sent_try, offset, read_px_tx_ring, nb_pkts_after_uso);
+//             /* if too many tries, give up sending and reset offset */
+//             break;
+//         }
+//     }
+
+//     return offset;
 // }
+/*----------------------------------------------------------------------------*/
+uint16_t
+px_eth_tx_burst(uint16_t port_id,
+                uint16_t queue_id,
+                struct rte_mbuf **tx_pkts,
+                uint16_t nb_pkts)
+{
+    struct px_dev *px_dev = &g_px_dev[port_id];
+    struct px_ctx *pctx = &g_pctx[port_id][queue_id];
+    struct px_ring *tx_ring = &pctx->tx_ring;
+    struct rte_mbuf *temp_batch[PX_TX_BURST];
+    uint16_t read_px_tx_ring = 0;
+    uint16_t sent_hw_tx_ring = 0;
+    uint16_t nb_pkts_after_uso = 0;
+    int sent_try = 0, offset = 0;
+
+    /* stage 0: create hairpin flow */
+    if (px_dev->initialized_hairpin)
+    {
+        px_flow_create_burst(port_id, queue_id, tx_pkts, nb_pkts);
+    }
+
+    /* stage 1: TX packets from app */
+    if (pctx->do_link)
+    {
+        /* if linking is on, do unlink and USO before TX */
+        nb_pkts_after_uso = px_unlink_and_uso(tx_pkts,
+                                              nb_pkts,
+                                              temp_batch,
+                                              PX_TX_BURST,
+                                              tx_ring,
+                                              g_clone_pool[pctx->socket_id],
+                                              NULL);
+    }
+    else
+    {
+        /* if linking is off, just do USO before TX */
+        nb_pkts_after_uso = px_uso_burst(tx_pkts,
+                                         nb_pkts,
+                                         temp_batch,
+                                         PX_TX_BURST,
+                                         tx_ring,
+                                         g_clone_pool[pctx->socket_id]);
+    }
+    /* TX */
+    while (offset < nb_pkts_after_uso)
+    {
+        offset += rte_eth_tx_burst(port_id,
+                                   queue_id,
+                                   temp_batch + offset,
+                                   nb_pkts_after_uso - offset);
+        if (++sent_try > 1)
+        {
+            printf("rte_eth_tx_burst: sent_try: %d, offset: %d, nb_pkts_after_uso: %d\n",
+                   sent_try, offset, nb_pkts_after_uso);
+            /* if too many tries, give up sending and reset offset */
+            break;
+        }
+    }
+    sent_hw_tx_ring += offset;
+
+    /* stage 2: update stats for conversion yield */
+    px_update_tx_stats(port_id,
+                       queue_id,
+                       temp_batch,
+                       sent_hw_tx_ring);
+
+    /* stage 3: retrieve packets from PX TX ring */
+    offset = 0;
+    sent_try = 0;
+    read_px_tx_ring = px_ring_dequeue(tx_ring, temp_batch, PX_TX_BURST);
+    while (offset < read_px_tx_ring)
+    {
+        offset += rte_eth_tx_burst(port_id,
+                                   queue_id,
+                                   temp_batch + offset,
+                                   read_px_tx_ring - offset);
+        if (++sent_try > 1)
+        {
+            printf("rte_eth_tx_burst: sent_try: %d, offset: %d, read_px_tx_ring: %d\n",
+                   sent_try, offset, read_px_tx_ring);
+            /* if too many tries, give up sending and reset offset */
+            break;
+        }
+    }
+    sent_hw_tx_ring += offset;
+
+    return sent_hw_tx_ring;
+}
 /*----------------------------------------------------------------------------*/
 void px_pktmbuf_free(struct rte_mbuf *pkt)
 {
@@ -3787,88 +3830,3 @@ int px_eth_stats_get(uint16_t port_id,
     return 0;
 }
 /*----------------------------------------------------------------------------*/
-int px_add_rule(uint16_t port_id,
-                uint16_t queue_id,
-                struct px_pattern *patterns,
-                int nb_patterns,
-                struct px_action *actions,
-                int nb_actions)
-{
-    struct px_ctx *pctx;
-    struct px_rule *rule;
-    uint16_t id;
-
-    pctx = &g_pctx[port_id][queue_id];
-    if (nb_patterns > MAX_PATTERN_NUM)
-    {
-        return -1;
-    }
-
-    rule = (struct px_rule *)calloc(1, sizeof(struct px_rule));
-    if (!rule)
-    {
-        return -1;
-    }
-
-    /* insert to queue */
-    if (rule_insert(&pctx->rule_set, rule) < 0)
-    {
-        return -1;
-    }
-
-    /* give px_rule a unique id */
-    id = 0;
-    while (rule_search(&pctx->rule_set, id++))
-    {
-        ; // skip this id
-    }
-    rule->px_id = id;
-
-    /* copy the rule */
-    rule->nb_patterns = nb_patterns;
-    memcpy(rule->patterns, patterns, sizeof(struct px_pattern) * nb_patterns);
-    rule->nb_actions = nb_actions;
-    memcpy(rule->actions, actions, sizeof(struct px_action) * nb_actions);
-
-    /* decode the rule */
-    if (decode_pattern_rule(&rule->dec_pat,
-                            rule->patterns,
-                            rule->nb_patterns) < 0)
-    {
-        return -1;
-    }
-    if (decode_action_rule(&rule->dec_act,
-                           rule->actions,
-                           rule->nb_actions) < 0)
-    {
-        return -1;
-    }
-
-    /* return rule id as a handle */
-    return id;
-}
-/*----------------------------------------------------------------------------*/
-void px_del_rule(uint16_t port_id,
-                 uint16_t queue_id,
-                 int px_id)
-{
-    struct px_ctx *pctx = &g_pctx[port_id][queue_id];
-    struct px_rule *rule;
-
-    /* search pattern set using px_id */
-    rule = rule_search(&pctx->rule_set, px_id);
-    if (rule)
-    {
-        /* remove rule from queue */
-        rule_remove(&pctx->rule_set, rule);
-
-        /* free ps */
-        if (rule->dec_pat.vec)
-        {
-            free(rule->dec_pat.vec);
-            rule->dec_pat.vec = NULL;
-        }
-        free(rule);
-        rule = NULL;
-    }
-}

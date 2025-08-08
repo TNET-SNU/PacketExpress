@@ -1,6 +1,8 @@
 #include "px_cache.h"
+/*----------------------------------------------------------------------------*/
 /* below are for per-port NIC cache management using LRU Queue */
 static struct cache_manager g_cache_manager[RTE_MAX_ETHPORTS];
+extern struct px_dev g_px_dev[RTE_MAX_ETHPORTS];
 /*----------------------------------------------------------------------------*/
 int get_nic_cached_size(int port_id)
 {
@@ -41,7 +43,7 @@ void lru_queue_print_all(int port_id)
     printf("\n");
 }
 /*----------------------------------------------------------------------------*/
-void lru_queue_init(int port_id, size_t num)
+void lru_queue_init(int port_id, size_t num, int optout)
 {
     struct cache_manager *cm = &g_cache_manager[port_id];
     cm->cache_size = num;
@@ -53,6 +55,7 @@ void lru_queue_init(int port_id, size_t num)
     cm->total_cached_size = 0;
     cm->total_evicted_size = 0;
     cm->reset = 0;
+    cm->optout = optout;
 
     cm->init = 1;
 }
@@ -178,7 +181,7 @@ lru_queue_insert(int port_id, struct ri_node *node)
     cm->head.next = node;
     node->prev = &cm->head;
     cm->total_cached_size++;
-    
+
     /* check if LRU queue is full */
     if (cm->current_cached_size < cm->cache_size)
     {
@@ -190,9 +193,15 @@ lru_queue_insert(int port_id, struct ri_node *node)
     /*-------------------------------------------------------*/
     /* choose one of below */
     /* 2-1. evict LRU: remove tail */
-    // evicted = cm->tail.prev;
+    if (cm->optout)
+    {
+        evicted = cm->tail.prev;
+    }
     /* 2-2. evict smallest one: find the smallest flow from tail */
-    evicted = lru_queue_find_smallest(port_id);
+    else
+    {
+        evicted = lru_queue_find_smallest(port_id);
+    }
     /*-------------------------------------------------------*/
     lru_queue_evict(port_id, evicted);
 
@@ -231,10 +240,15 @@ void print_cache_stats(void)
 {
     struct cache_manager *iter, total = {0};
     int port_id;
+    static int initialized_hairpin = 0;
     uint16_t port_num = rte_eth_dev_count_avail();
 
     for (port_id = 0; port_id < port_num; port_id++)
     {
+        if (!g_px_dev[port_id].initialized_hairpin)
+        {
+            continue;
+        }
         iter = &g_cache_manager[port_id];
 
         printf(" |-[P%2d] %ld/sec, cur: %lu, +: %lu, -: %lu, +-: %lu\n",
@@ -253,6 +267,13 @@ void print_cache_stats(void)
 
         /* notify reset to offload threads */
         iter->reset = 1;
+
+        /* if at least one port uses hairpin, mark it */
+        initialized_hairpin = 1;
+    }
+    if (!initialized_hairpin)
+    {
+        return;
     }
     printf("[   TOTAL   ] %ld/sec, cur: %lu, +: %lu, -: %lu, +-: %lu\n",
            (total.temp_cached_size + total.temp_evicted_size),
@@ -261,3 +282,4 @@ void print_cache_stats(void)
            total.total_evicted_size,
            (total.total_cached_size - total.total_evicted_size));
 }
+/*----------------------------------------------------------------------------*/

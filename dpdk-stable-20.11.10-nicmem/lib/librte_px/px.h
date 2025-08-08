@@ -1,6 +1,11 @@
 #ifndef PX_GRO_H_
 #define PX_GRO_H_
-
+/*----------------------------------------------------------------------------*/
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+/*----------------------------------------------------------------------------*/
 #include "px_common.h"
 #include "px_link.h"
 #include "px_rule.h"
@@ -17,12 +22,7 @@
 #include "rte_gro.h"
 #include "rte_gso.h"
 #include "rte_thash.h"
-
-#ifdef __cplusplus
-extern "C"
-{
-#endif
-
+/*----------------------------------------------------------------------------*/
 #define LIMIT_64K 0
 #define LIMIT_NB_SEGS 1
 
@@ -32,25 +32,14 @@ extern "C"
 
 #define IP_VERSION_IHL 0x45
 #define NB_CLONE_MBUF ((1 << 15) - 1)
-
 /*----------------------------------------------------------------------------*/
+struct px_flow
+{
 #define old 0
 #if old
-/* Header fields representing a TCP/IPv4 flow */
-struct px_flow_key
-{
-    uint32_t ip[2];
-    uint16_t port[2];
-} __attribute__((packed));
-struct px_flow
-{
     /* If the value is NULL, it means the flow is empty */
-    struct px_flow_key key;
-    /* whether TCP or UDP; do not make it pointer as it is only 2B */
-    uint16_t protoid;
+    struct four_tuple key;
 #else
-struct px_flow
-{
     /* key chunks */
     uint8_t chunk_byte[MAX_KEY_LEN];
 #endif
@@ -144,8 +133,8 @@ struct px_ctx
     struct px_ring rx_ring;
     struct px_ring tx_ring;
 
-    /* pattern matching rules */
-    struct px_rule_set rule_set;
+    /* first pattern matching rule */
+    struct px_rule *rule;
 
     /* mss table */
     struct px_mss_ctx *mss_ctx;
@@ -570,16 +559,150 @@ px_fill_ipv4_l4_cksum(struct rte_mbuf *m, int hwcsum)
     return 0;
 }
 /*----------------------------------------------------------------------------*/
-struct rte_eth_conf
-px_eth_conf(uint16_t port_id,
-            struct rte_eth_conf *conf,
-            uint8_t *rss_key,
-            int rss_key_len,
-            int pkt_size,
-            int is_lro,
-            int is_gro,
-            int is_delayed,
-            int is_nicmem);
+static inline uint16_t
+px_uso_burst(struct rte_mbuf **pkts,
+             uint16_t nb_pkts,
+             struct rte_mbuf **out,
+             uint16_t nb_out,
+             struct px_ring *tx_ring,
+             struct rte_mempool *clone_pool)
+{
+    struct rte_mbuf *pkt, *hdr_clone, *body_clone;
+    uint16_t idx = 0;
+    uint16_t seglen, segnum, last_seglen, offset = 0;
+    uint16_t *iplen, *udplen;
+    int i, j;
+
+    for (i = 0; i < nb_pkts; i++)
+    {
+        pkt = pkts[i];
+
+        /* pass non UDP */
+        if (!is_udp(pkt) ||
+            !is_px(pkt) ||
+            !(pkt->nb_segs > 1) ||
+            (rte_be_to_cpu_16(*(uint16_t *)get_payload(pkt)) > 4))
+        {
+            /* flush */
+            if (idx == nb_out)
+            {
+                /* given batch is full, so enqueue to stall ring */
+                if (px_ring_enqueue(tx_ring, &pkt, 1) != 1)
+                {
+                    /* enqueue failed, drop the packet */
+                    fprintf(stderr, "ring overflow\n");
+                    rte_pktmbuf_free(pkt);
+                    pkt = NULL;
+                }
+            }
+            else
+            {
+                out[idx++] = pkt;
+            }
+            continue;
+        }
+
+        /* now this packet is PX tunneling packet */
+        seglen = rte_be_to_cpu_16(*((uint16_t *)get_payload(pkt) + 1));
+
+        /* below are for debugging */
+        // if ((seglen + pkt->l3_len + pkt->l4_len > DEFAULT_eMTU) || (seglen < 512))
+        // {
+        //     printf("seglen is invalid: %u\n", seglen);
+        //     printf("l2_len: %u, l3_len: %u, l4_len: %u, pkt_len: %u\n",
+        //            pkt->l2_len, pkt->l3_len, pkt->l4_len, pkt->pkt_len);
+        //     printf("data_len: %u\n",
+        //            pkt->data_len);
+        //     hexdump("pkt dump", (uint8_t *)pkt->buf_addr + pkt->data_off, pkt->data_len);
+        //     rte_pktmbuf_free(pkt);
+
+        //     continue;
+        // }
+
+        segnum = ((get_data_len(pkt) - 2 * sizeof(uint16_t)) + seglen - 1) / seglen;
+        last_seglen = (get_data_len(pkt) - 2 * sizeof(uint16_t)) % seglen;
+
+        /* update header */
+        pkt->data_len = get_hdr_len(pkt);
+        iplen = get_ip_len(pkt);
+        unmark_px(pkt);
+        *iplen = rte_cpu_to_be_16(pkt->l3_len + pkt->l4_len + seglen);
+        udplen = get_udp_len(pkt);
+        *udplen = rte_cpu_to_be_16(pkt->l4_len + seglen);
+
+        offset = get_hdr_len(pkt) + 2 * sizeof(uint16_t);
+        for (j = 0; j < segnum; j++)
+        {
+            if (last_seglen && (j == segnum - 1))
+            {
+                /* last seg may have different header */
+                hdr_clone = rte_pktmbuf_copy(pkt, clone_pool, 0, get_hdr_len(pkt));
+                if (!hdr_clone)
+                {
+                    fprintf(stderr, "hdr clone failed\n");
+                    continue;
+                }
+                iplen = get_ip_len(hdr_clone);
+                *iplen = rte_cpu_to_be_16(pkt->l3_len + pkt->l4_len + last_seglen);
+                udplen = get_udp_len(hdr_clone);
+                *udplen = rte_cpu_to_be_16(pkt->l4_len + last_seglen);
+#if PX_MEASURE_DELAY
+                copy_timestamp(hdr_clone, pkt);
+#endif
+            }
+            else
+            {
+                hdr_clone = rte_pktmbuf_clone(pkt, clone_pool);
+                if (!hdr_clone)
+                {
+                    fprintf(stderr, "hdr clone failed\n");
+                    continue;
+                }
+            }
+
+            body_clone = rte_pktmbuf_clone(pkt, clone_pool);
+            if (!body_clone)
+            {
+                fprintf(stderr, "body clone failed\n");
+                rte_pktmbuf_free(hdr_clone);
+                continue;
+            }
+            body_clone->data_off += offset;
+            body_clone->data_len = seglen;
+
+            hdr_clone->next = body_clone;
+            hdr_clone->pkt_len = get_hdr_len(pkt) + seglen;
+            hdr_clone->nb_segs = 2;
+
+            /* flush hdr_clone to out buffer */
+            if (idx == nb_out)
+            {
+                /* given batch is full, so enqueue to stall ring */
+                if (px_ring_enqueue(tx_ring, &hdr_clone, 1) != 1)
+                {
+                    /* enqueue failed, drop the packet */
+                    fprintf(stderr, "ring overflow\n");
+                    rte_pktmbuf_free(hdr_clone);
+                    hdr_clone = NULL;
+                }
+            }
+            else
+            {
+                out[idx++] = hdr_clone;
+            }
+
+            offset += seglen;
+        }
+
+        rte_pktmbuf_free(pkt);
+        pkt = NULL;
+    }
+
+    return idx;
+}
+/*----------------------------------------------------------------------------*/
+void px_deinit(uint16_t port_id,
+               uint16_t queue_id);
 /*----------------------------------------------------------------------------*/
 int px_init(uint16_t port_id,
             uint16_t queue_id,
@@ -590,19 +713,16 @@ int px_init(uint16_t port_id,
             int (*is_downlink)(struct rte_mbuf *),
             int do_link);
 /*----------------------------------------------------------------------------*/
-void px_deinit(uint16_t port_id,
-               uint16_t queue_id);
-/*----------------------------------------------------------------------------*/
-int px_add_rule(uint16_t port_id,
-                uint16_t queue_id,
-                struct px_pattern *patterns,
-                int nb_patterns,
-                struct px_action *actions,
-                int nb_actions);
-/*----------------------------------------------------------------------------*/
-void px_del_rule(uint16_t port_id,
-                 uint16_t queue_id,
-                 int px_id);
+struct rte_eth_conf
+px_eth_conf(uint16_t port_id,
+            struct rte_eth_conf *conf,
+            uint8_t *rss_key,
+            int rss_key_len,
+            int pkt_size,
+            int is_lro,
+            int is_gro,
+            int is_delayed,
+            int is_nicmem);
 /*----------------------------------------------------------------------------*/
 int px_eth_dev_configure(uint16_t port_id,
                          uint16_t num_rxq,
@@ -652,7 +772,9 @@ void px_pktmbuf_free_bulk(struct rte_mbuf **pkts,
 int px_parse_packet(struct px_ctx *pctx,
                     struct rte_mbuf *pkt,
                     uint8_t *tcp_flags,
-                    int hwcsum);
+                    int hwcsum,
+                    int (*is_uplink)(struct rte_mbuf *),
+                    int (*is_downlink)(struct rte_mbuf *));
 /*----------------------------------------------------------------------------*/
 /* below are for testing baselines (e.g., DPDK GRO) */
 void px_parse_batch(uint16_t port_id,
@@ -667,9 +789,26 @@ void px_setup_tso_burst(uint16_t port_id,
                         struct rte_mbuf **pkts,
                         uint16_t nb_pkts);
 /*----------------------------------------------------------------------------*/
-
+static inline void
+px_flow_create_burst(uint16_t port_id,
+                     uint16_t queue_id,
+                     struct rte_mbuf **pkts,
+                     uint16_t nb_pkts)
+{
+    int ret, i;
+    for (i = 0; i < nb_pkts; i++)
+    {
+        ret = px_flow_create(queue_id, pkts[i]);
+        if (ret < 0)
+        {
+            printf("Port %d: Failed to create flow for packet %d\n",
+                   port_id, i);
+        }
+    }
+}
+/*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 }
 #endif
-
+/*----------------------------------------------------------------------------*/
 #endif // PX_GRO_H_

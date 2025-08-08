@@ -145,7 +145,7 @@ CXXFLAGS += -D USE_LRO=1
 # CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=0
 
 # 4. CUSTOM GRO on, stall 72us
-CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=1 -D STALL_TIMEOUT_NS=12000 -D USE_LINK=0
+CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=108000 -D USE_LINK=0
 
 # 6. CUSTOM GRO + LINKING
 # CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D STALL_TIMEOUT_NS=0 -D USE_LINK=1
@@ -170,8 +170,14 @@ CXXFLAGS += -D NICMEM=1
 
 # Choose one of below
 
+# 1. Hairpin off
 CXXFLAGS += -D NUM_HAIRPIN_Q=0
+
+# 2. Hairpin on (1 queue)
 # CXXFLAGS += -D NUM_HAIRPIN_Q=1
+
+# 3. Hairpin on (1 queue, opt-out mode)
+# CXXFLAGS += -D NUM_HAIRPIN_Q=1 -D USE_OPTOUT=1
 
 # (not supported yet) if want to use rte_flow_async API, use below
 # To use rte_flow_async API, make sure to use DPDK version 22.11

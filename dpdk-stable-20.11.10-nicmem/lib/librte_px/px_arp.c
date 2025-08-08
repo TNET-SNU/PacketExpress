@@ -50,13 +50,6 @@ int px_arp_configure(struct px_arp_entry *arp_string_table,
         return -1;
     }
 
-    arp_ctx->arp_bin_table = calloc(arp_string_table_size, sizeof(struct px_arp_bin));
-    if (!arp_ctx->arp_bin_table)
-    {
-        printf("Failed to allocate ARP binary table\n");
-        return -1;
-    }
-
     for (i = 0; i < arp_string_table_size; i++)
     {
         ret = ip_str_to_bin(arp_string_table[i].ip_string,
@@ -65,8 +58,6 @@ int px_arp_configure(struct px_arp_entry *arp_string_table,
         {
             printf("Failed to translate IP string: %s\n",
                    arp_string_table[i].ip_string);
-            free(arp_ctx->arp_bin_table);
-            arp_ctx->arp_bin_table = NULL;
             return -1;
         }
         ret = mac_str_to_bin(arp_string_table[i].mac_string,
@@ -75,8 +66,6 @@ int px_arp_configure(struct px_arp_entry *arp_string_table,
         {
             printf("Failed to translate MAC string: %s\n",
                    arp_string_table[i].mac_string);
-            free(arp_ctx->arp_bin_table);
-            arp_ctx->arp_bin_table = NULL;
             return -1;
         }
     }
@@ -84,17 +73,6 @@ int px_arp_configure(struct px_arp_entry *arp_string_table,
     arp_ctx->table_size = arp_string_table_size;
 
     return 0;
-}
-/*----------------------------------------------------------------------------*/
-void px_free_arp(void)
-{
-    // struct px_arp_ctx *arp_ctx = &g_arp_ctx[port_id];
-    struct px_arp_ctx *arp_ctx = &g_arp_ctx;
-    if (arp_ctx->arp_bin_table)
-    {
-        free(arp_ctx->arp_bin_table);
-        arp_ctx->arp_bin_table = NULL;
-    }
 }
 /*----------------------------------------------------------------------------*/
 struct rte_ether_addr *
@@ -121,3 +99,4 @@ px_search_arp(uint32_t ip_dst)
 
     return NULL;
 }
+/*----------------------------------------------------------------------------*/

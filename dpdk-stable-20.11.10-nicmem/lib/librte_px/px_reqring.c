@@ -8,7 +8,7 @@ int get_host_cached_size(int core_id)
     {
         return -1;
     }
-    
+
     return g_rule_manager[core_id].ht->ht_count;
 }
 /*----------------------------------------------------------------------------*/
@@ -250,8 +250,10 @@ int req_ring_put(int core_id, int queue_id, struct request *req)
         rr->tail -= rr->size;
     }
     // printf("req_ring_put, core_id: %d, queue_id: %d\n"
-    //        "rr: %p, head: %d, tail: %d\n",
-    //        core_id, queue_id, rr, rr->head, rr->tail);
+    //        "head: %d, tail: %d, cmd: %d\n",
+    //        core_id, queue_id, rr->head, rr->tail, req->cmd);
+    // tupledump(&((struct ri_node *)req->node)->key);
+    // tupledump(get_four_tuple(((struct ri_node *)req->node)->pkt));
 
     return 0;
 }
@@ -262,12 +264,9 @@ req_ring_get(int core_id, int queue_id)
     struct rule_manager *rm = &g_rule_manager[core_id];
     struct req_ring *rr = &rm->request_ring[queue_id];
 
-    // if (queue_id == 1)
-    // {
-    //     printf("req_ring_get, core_id: %d, queue_id: %d\n"
-    //            "rr: %p, head: %d, tail: %d\n",
-    //            core_id, queue_id, rr, rr->head, rr->tail);
-    // }
+    // printf("req_ring_get, core_id: %d, queue_id: %d\n"
+    //        "rr: %p, head: %d, tail: %d\n",
+    //        core_id, queue_id, rr, rr->head, rr->tail);
 
     /* check ring has new request */
     if (rr->head == rr->tail)
