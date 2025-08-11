@@ -347,7 +347,8 @@ int mss_destroy_ctx(struct px_mss_ctx *ctx)
 int mss_search_entry(struct px_mss_ctx *ctx,
                      uint32_t rss,
                      struct four_tuple *key,
-                     uint32_t *mss)
+                     uint32_t *mss,
+                     struct timespec *now)
 {
     struct flow_mss_entry *entry;
 
@@ -366,8 +367,8 @@ int mss_search_entry(struct px_mss_ctx *ctx,
     }
 
     /* Update time and return the MSS */
-    entry->last_update = time(NULL);
     *mss = entry->mss;
+    entry->last_update = *now;
 
     return 0;
 }
@@ -375,7 +376,8 @@ int mss_search_entry(struct px_mss_ctx *ctx,
 int mss_insert_entry(struct px_mss_ctx *ctx,
                      uint32_t rss,
                      struct four_tuple *key,
-                     uint32_t mss)
+                     uint32_t mss,
+                     struct timespec *now)
 {
     struct flow_mss_entry *entry;
 
@@ -413,7 +415,7 @@ int mss_insert_entry(struct px_mss_ctx *ctx,
 
     /* copy update mss */
     entry->mss = mss;
-    entry->last_update = time(NULL);
+    entry->last_update = *now;
 
     /* Insert into the hash table */
     if (rte_hash_add_key_data(ctx->tbl, key, entry) < 0)
@@ -465,14 +467,15 @@ void mss_flush_timeout(struct px_mss_ctx *ctx)
     const void *next_key;
     void *next_data;
     uint32_t iter = 0;
-    time_t current_time = time(NULL);
+    struct timespec now;
+    px_clock_gettime(TIME_FLAG, &now);
 
     /* Iterate through the hash table and remove old entries */
     while (rte_hash_iterate(ctx->tbl, &next_key, &next_data, &iter) >= 0)
     {
         entry = (struct flow_mss_entry *)next_data;
 
-        if (difftime(current_time, entry->last_update) > MSS_TIMEOUT)
+        if (get_nsec_diff(&now, &entry->last_update) / E9 >  MSS_TIMEOUT)
         {
             printf("Removing flow due to timeout\n");
             rte_hash_del_key(ctx->tbl, next_key);

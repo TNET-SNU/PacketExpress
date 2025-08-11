@@ -29,6 +29,7 @@ struct flow_iat_entry
     rte_mbuf_timestamp_t last_timestamp; /* HW timestamp of last packet */
     int64_t last_delta;                  /* last delta in ns */
     double avg_iat;                      /* avg. IAT (EWMA) */
+    struct timespec last_update;         /* SW timestamp of this entry */
 };
 /*----------------------------------------------------------------------------*/
 /**
@@ -253,12 +254,17 @@ int iat_destroy_ctx(struct px_iat_ctx *ctx);
 /*----------------------------------------------------------------------------*/
 int iat_update_entry(struct px_iat_ctx *ctx,
                      struct rte_mbuf *pkt,
-                     int64_t cutoff_ns);
+                     int64_t cutoff_ns,
+                     struct timespec *now);
 /*----------------------------------------------------------------------------*/
 int iat_search_entry(struct px_iat_ctx *ctx,
                      struct rte_mbuf *pkt,
                      int64_t cutoff_ns,
-                     double *avg_iat);
+                     double *avg_iat,
+                     struct timespec *now);
+/*----------------------------------------------------------------------------*/
+int iat_evict_entry(struct px_iat_ctx *ctx,
+                    struct four_tuple *key);
 /*----------------------------------------------------------------------------*/
 void iat_flush_timeout(struct px_iat_ctx *ctx);
 /*----------------------------------------------------------------------------*/

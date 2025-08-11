@@ -7,6 +7,7 @@ extern "C"
 #endif
 /*----------------------------------------------------------------------------*/
 #include "px_common.h"
+#include "px_delay.h"
 /*----------------------------------------------------------------------------*/
 #define DEFAULT_eMSS (DEFAULT_eMTU -                \
                       sizeof(struct rte_ipv4_hdr) - \
@@ -37,7 +38,7 @@ struct px_mss_ctx
 struct flow_mss_entry
 {
     uint32_t mss;
-    time_t last_update;
+    struct timespec last_update;
 };
 /*----------------------------------------------------------------------------*/
 static inline uint16_t
@@ -74,7 +75,8 @@ void mss_flush_timeout(struct px_mss_ctx *ctx);
 int mss_search_entry(struct px_mss_ctx *ctx,
                      uint32_t rss,
                      struct four_tuple *key,
-                     uint32_t *mss);
+                     uint32_t *mss,
+                     struct timespec *now);
 /*----------------------------------------------------------------------------*/
 uint8_t *mss_bloom_init(void);
 /*----------------------------------------------------------------------------*/
@@ -101,7 +103,8 @@ int mss_destroy_ctx(struct px_mss_ctx *ctx);
 int mss_insert_entry(struct px_mss_ctx *ctx,
                      uint32_t rss,
                      struct four_tuple *key,
-                     uint32_t mss);
+                     uint32_t mss,
+                     struct timespec *now);
 /*----------------------------------------------------------------------------*/
 int mss_evict_entry(struct px_mss_ctx *ctx,
                     uint32_t rss,

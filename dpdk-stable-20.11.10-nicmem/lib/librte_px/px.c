@@ -1152,7 +1152,8 @@ is_stall_needed(struct px_ctx *pctx,
     ret = iat_search_entry(pctx->iat_ctx,
                            cur_pkt,
                            g_px_dev[pctx->port_id].cutoff_ns,
-                           &avg_iat);
+                           &avg_iat,
+                           &pctx->now_ns);
     if (ret < 0)
     {
         fprintf(stderr, "iat table search failed\n");
@@ -1761,7 +1762,8 @@ int px_parse_packet(struct px_ctx *pctx,
             if (pctx->stalls)
             {
                 iat_update_entry(pctx->iat_ctx, pkt,
-                                 g_px_dev[pctx->port_id].cutoff_ns);
+                                 g_px_dev[pctx->port_id].cutoff_ns,
+                                 &pctx->now_ns);
             }
         }
 #else
@@ -1770,7 +1772,8 @@ int px_parse_packet(struct px_ctx *pctx,
         if (pctx->stalls)
         {
             iat_update_entry(pctx->iat_ctx, pkt,
-                             g_px_dev[pctx->port_id].cutoff_ns);
+                             g_px_dev[pctx->port_id].cutoff_ns,
+                             &pctx->now_ns);
         }
 #endif
 
@@ -1819,7 +1822,8 @@ int px_parse_packet(struct px_ctx *pctx,
             if (pctx->stalls)
             {
                 iat_update_entry(pctx->iat_ctx, pkt,
-                                 g_px_dev[pctx->port_id].cutoff_ns);
+                                 g_px_dev[pctx->port_id].cutoff_ns,
+                                 &pctx->now_ns);
             }
         }
 #else
@@ -1828,7 +1832,8 @@ int px_parse_packet(struct px_ctx *pctx,
         if (pctx->stalls)
         {
             iat_update_entry(pctx->iat_ctx, pkt,
-                             g_px_dev[pctx->port_id].cutoff_ns);
+                             g_px_dev[pctx->port_id].cutoff_ns,
+                             &pctx->now_ns);
         }
 #endif
 
@@ -1880,7 +1885,8 @@ int px_parse_packet(struct px_ctx *pctx,
             mss_insert_entry(new_pctx->mss_ctx,
                              reverse_rss,
                              &reverse_key,
-                             next_hop_mtu);
+                             next_hop_mtu,
+                             &pctx->now_ns);
 
             /* modify the next-hop MTU */
             update_dtb(pkt, DEFAULT_iMTU);
@@ -2066,7 +2072,8 @@ link_and_flush(struct px_ctx *pctx,
                 mss_search_entry(pctx->mss_ctx,
                                  tmp->hash.rss,
                                  get_four_tuple(tmp),
-                                 &saved_segsz);
+                                 &saved_segsz,
+                                 &pctx->now_ns);
             }
         }
 
@@ -2513,7 +2520,8 @@ px_core(struct px_ctx *pctx,
                         mss_insert_entry(new_pctx->mss_ctx,
                                          reverse_rss,
                                          &reverse_key,
-                                         rte_be_to_cpu_16(*mss_ptr));
+                                         rte_be_to_cpu_16(*mss_ptr),
+                                         &pctx->now_ns);
                         // printf("[SYN/SYNACK] mss: %u\n", rte_be_to_cpu_16(*mss_ptr));
 
                         /* update MSS */
@@ -2564,7 +2572,8 @@ px_core(struct px_ctx *pctx,
                         mss_search_entry(pctx->mss_ctx,
                                          pkt->hash.rss,
                                          key,
-                                         &segsz);
+                                         &segsz,
+                                         &pctx->now_ns);
                         if (segsz)
                         {
                             /* subtract TCP option length */
@@ -2604,7 +2613,8 @@ px_core(struct px_ctx *pctx,
                         mss_search_entry(pctx->mss_ctx,
                                          pkt->hash.rss,
                                          key,
-                                         &segsz);
+                                         &segsz,
+                                         &pctx->now_ns);
                         if (!segsz)
                         {
                             segsz = DEFAULT_eMSS;
@@ -2658,7 +2668,8 @@ px_core(struct px_ctx *pctx,
                         mss_search_entry(pctx->mss_ctx,
                                          pkt->hash.rss,
                                          key,
-                                         &segsz);
+                                         &segsz,
+                                         &pctx->now_ns);
                         if (segsz)
                         {
                             /* subtract TCP option length */
@@ -3564,7 +3575,7 @@ px_eth_tx_burst(uint16_t port_id,
                        queue_id,
                        temp_batch,
                        nb_pkts_after_uso);
-    
+
     /* TX */
     while (offset < nb_pkts_after_uso)
     {

@@ -147,7 +147,8 @@ int iat_destroy_ctx(struct px_iat_ctx *ctx)
 /*----------------------------------------------------------------------------*/
 int iat_update_entry(struct px_iat_ctx *ctx,
                      struct rte_mbuf *pkt,
-                     int64_t cutoff_ns)
+                     int64_t cutoff_ns,
+                     struct timespec *now)
 {
     struct four_tuple *key = get_four_tuple(pkt);
     rte_mbuf_timestamp_t *ts_ptr;
@@ -188,6 +189,7 @@ int iat_update_entry(struct px_iat_ctx *ctx,
         }
         entry->last_timestamp = *ts_ptr;
         entry->last_delta = delta;
+        entry->last_update = *now;
 
         return 0;
     }
@@ -203,6 +205,7 @@ int iat_update_entry(struct px_iat_ctx *ctx,
     entry->last_timestamp = *ts_ptr;
     entry->last_delta = 0;
     entry->avg_iat = 0.0;
+    entry->last_update = *now;
 
     /* Insert into the hash table */
     if (rte_hash_add_key_data(ctx->tbl, key, entry) < 0)
@@ -218,7 +221,8 @@ int iat_update_entry(struct px_iat_ctx *ctx,
 int iat_search_entry(struct px_iat_ctx *ctx,
                      struct rte_mbuf *pkt,
                      int64_t cutoff_ns,
-                     double *avg_iat)
+                     double *avg_iat,
+                     struct timespec *now)
 {
     struct flow_iat_entry *entry;
     struct four_tuple *key = get_four_tuple(pkt);
@@ -239,11 +243,39 @@ int iat_search_entry(struct px_iat_ctx *ctx,
             return 0; // Flow IAT too high
         }
         *avg_iat = entry->avg_iat;
+        entry->last_update = *now;
+
         return 0;
     }
 
     *avg_iat = 0;
     return -1; // Not found
+}
+/*----------------------------------------------------------------------------*/
+int iat_evict_entry(struct px_iat_ctx *ctx,
+                    struct four_tuple *key)
+{
+    struct flow_iat_entry *entry;
+
+    if (rte_hash_lookup_data(ctx->tbl, key, (void **)&entry) >= 0)
+    {
+        /* Remove the entry from the hash table */
+        rte_hash_del_key(ctx->tbl, key);
+
+        /* Free the entry back to the mempool */
+        rte_mempool_put(ctx->pool, entry);
+        
+        return 0;
+    }
+    else
+    {
+        if (errno == ENOENT)
+        {
+            return 0;
+        }
+
+        return -1;
+    }
 }
 /*----------------------------------------------------------------------------*/
 void iat_flush_timeout(struct px_iat_ctx *ctx)
@@ -252,14 +284,15 @@ void iat_flush_timeout(struct px_iat_ctx *ctx)
     const void *next_key;
     void *next_data;
     uint32_t iter = 0;
-    time_t current_time = time(NULL);
+    struct timespec now;
+    px_clock_gettime(TIME_FLAG, &now);
 
     /* Iterate through the hash table and remove old entries */
     while (rte_hash_iterate(ctx->tbl, &next_key, &next_data, &iter) >= 0)
     {
         entry = (struct flow_iat_entry *)next_data;
 
-        if (difftime(current_time, entry->last_timestamp) > IAT_TIMEOUT)
+        if (get_nsec_diff(&now, &entry->last_update) / E9 > IAT_TIMEOUT)
         {
             printf("Removing flow due to timeout\n");
             rte_hash_del_key(ctx->tbl, next_key);
