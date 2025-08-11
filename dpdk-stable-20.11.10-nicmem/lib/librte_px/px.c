@@ -1709,18 +1709,27 @@ int px_parse_packet(struct px_ctx *pctx,
 
     /* parse HW timestamp and TCP timestamp */
     // rte_mbuf_timestamp_t *rx_timestamp = get_rx_hw_timestamp(pkt);
-    // uint64_t *ts = get_tcp_timestamp(pkt);
-    // if (rx_timestamp && ts)
+    // if (rx_timestamp)
     // {
-    //     uint32_t tsval, tsecr;
-    //     tsval = rte_be_to_cpu_32(*(uint32_t *)ts);
-    //     tsecr = rte_be_to_cpu_32(*((uint32_t *)ts + 1));
+    //     uint64_t *ts = get_tcp_timestamp(pkt);
+    //     if (ts)
+    //     {
+    //         uint32_t tsval, tsecr;
+    //         tsval = rte_be_to_cpu_32(*(uint32_t *)ts);
+    //         tsecr = rte_be_to_cpu_32(*((uint32_t *)ts + 1));
 
-    //     printf("[port %d] RX HW timestamp: 0x%016lx, "
-    //            "TCP timestamp: 0x%016lx (tsval: %10u, tsecr: %10u) %s\n",
-    //            pctx->port_id, *rx_timestamp,
-    //            rte_be_to_cpu_64(*ts), tsval, tsecr,
-    //            pkt->ol_flags & PKT_RX_LRO ? "(LROed)" : "(not LROed)");
+    //         printf("[port %d] RX HW timestamp: 0x%016lx, "
+    //                "TCP timestamp: 0x%016lx (tsval: %10u, tsecr: %10u) %s\n",
+    //                pctx->port_id, *rx_timestamp,
+    //                rte_be_to_cpu_64(*ts), tsval, tsecr,
+    //                pkt->ol_flags & PKT_RX_LRO ? "(LROed)" : "(not LROed)");
+    //     }
+    //     else
+    //     {
+    //         printf("[port %d] RX HW timestamp: 0x%016lx %s\n",
+    //                pctx->port_id, *rx_timestamp,
+    //                pkt->ol_flags & PKT_RX_LRO ? "(LROed)" : "(not LROed)");
+    //     }
     // }
 
     /* parse L4 */
@@ -3147,7 +3156,7 @@ int px_eth_dev_configure(uint16_t port_id,
     px_dev->num_rxq = num_rxq;
     px_dev->num_rxq_incr = num_rxq_incr;
     px_dev->num_txq = num_txq;
-    px_dev->cutoff_ns= cutoff_ns;
+    px_dev->cutoff_ns = cutoff_ns;
 
     /* get MAC address */
     ret = rte_eth_macaddr_get(port_id, &px_dev->mac);
@@ -3433,12 +3442,7 @@ rx_and_px(uint16_t port_id,
     /* RX and PX for every latent queue */
     for (int i = 0; i < rxq_incr; i++)
     {
-        /* busy wait for batching */
-        // busy_wait_for(10000);
-
         inner_qid = queue_id * rxq_incr + pctx->latent_id;
-        // if (rte_eth_rx_queue_count(port_id, inner_qid) > 0)
-        // {
         recv = rte_eth_rx_burst(port_id,
                                 inner_qid,
                                 rx_pkts + total,
@@ -3448,15 +3452,6 @@ rx_and_px(uint16_t port_id,
 #if PX_MEASURE_DELAY
         px_set_timestamp_batch(rx_pkts + total, recv, &pctx->now_ns);
 #endif
-        // }
-        // for (int j = 0; j < recv; j++)
-        // {
-        //     if (port_id != rx_pkts[total + j]->port)
-        //     {
-        //         printf("port_id: %u from real port %u\n",
-        //                rx_pkts[total + j]->port, port_id);
-        //     }
-        // }
         total += px_core(pctx, rx_pkts + total, recv);
 
         if (++pctx->latent_id == rxq_incr)
@@ -3474,60 +3469,6 @@ rx_and_px(uint16_t port_id,
     }
 
     return total;
-}
-/*----------------------------------------------------------------------------*/
-static inline uint16_t
-rx_and_px_delayed(uint16_t port_id,
-                  uint16_t queue_id,
-                  struct rte_mbuf **rx_pkts,
-                  uint16_t nb_pkts)
-{
-    struct px_ctx *pctx = &g_pctx[port_id][queue_id];
-    uint16_t recv = 0, total_sq = 0, total_mq = 0;
-    uint16_t rxq_incr = g_px_dev[port_id].num_rxq_incr;
-    uint16_t inner_qid;
-    int i;
-
-    /* RX and PX for every latent queue */
-    for (i = 0; i < rxq_incr; i++)
-    {
-        total_sq = 0;
-        while (total_mq + total_sq < nb_pkts)
-        {
-            inner_qid = queue_id * rxq_incr + pctx->latent_id;
-            // if (rte_eth_rx_queue_count(port_id, inner_qid) > 0)
-            // {
-            recv = rte_eth_rx_burst(port_id,
-                                    inner_qid,
-                                    rx_pkts + total_mq + total_sq,
-                                    nb_pkts - total_mq - total_sq);
-            px_clock_gettime(TIME_FLAG, &pctx->now_ns);
-#if PX_MEASURE_DELAY
-            px_set_timestamp_batch(rx_pkts + total_mq + total_sq, recv, &pctx->now_ns);
-#endif
-            // }
-
-            if (!recv)
-            {
-                break;
-            }
-            total_sq += recv;
-            /* busy wait for batching */
-            // busy_wait_for(1000);
-        }
-        total_mq += px_core(pctx, rx_pkts + total_mq, total_sq);
-
-        if (++pctx->latent_id == rxq_incr)
-        {
-            pctx->latent_id = 0;
-        }
-        if (total_mq >= nb_pkts)
-        {
-            return total_mq;
-        }
-    }
-
-    return total_mq;
 }
 /*----------------------------------------------------------------------------*/
 uint16_t
@@ -3617,6 +3558,13 @@ px_eth_tx_burst(uint16_t port_id,
                                          tx_ring,
                                          g_clone_pool[pctx->socket_id]);
     }
+
+    /* stage 2: update stats for conversion yield */
+    px_update_tx_stats(port_id,
+                       queue_id,
+                       temp_batch,
+                       nb_pkts_after_uso);
+    
     /* TX */
     while (offset < nb_pkts_after_uso)
     {
@@ -3634,16 +3582,17 @@ px_eth_tx_burst(uint16_t port_id,
     }
     sent_hw_tx_ring += offset;
 
-    /* stage 2: update stats for conversion yield */
-    px_update_tx_stats(port_id,
-                       queue_id,
-                       temp_batch,
-                       sent_hw_tx_ring);
-
     /* stage 3: retrieve packets from PX TX ring */
     offset = 0;
     sent_try = 0;
     read_px_tx_ring = px_ring_dequeue(tx_ring, temp_batch, PX_TX_BURST);
+
+    /* stage 4: update stats for conversion yield */
+    px_update_tx_stats(port_id,
+                       queue_id,
+                       temp_batch,
+                       read_px_tx_ring);
+
     while (offset < read_px_tx_ring)
     {
         offset += rte_eth_tx_burst(port_id,

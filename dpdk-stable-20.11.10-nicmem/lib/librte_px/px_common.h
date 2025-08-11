@@ -88,8 +88,8 @@ extern "C"
 
 /* Choose one of below */
 // #define TIME_FLAG (CLOCK_REALTIME)
-#define TIME_FLAG (CLOCK_MONOTONIC)
-// #define TIME_FLAG (CLOCK_CPU_TIMESTAMP)
+// #define TIME_FLAG (CLOCK_MONOTONIC)
+#define TIME_FLAG (CLOCK_CPU_TIMESTAMP)
 // #define TIME_FLAG (CLOCK_NIC_TIMESTAMP)
 /*----------------------------------------------------------------------------*/
 #define E9 ((long)1e9)

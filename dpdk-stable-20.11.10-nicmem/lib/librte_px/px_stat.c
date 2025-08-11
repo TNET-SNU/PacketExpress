@@ -113,6 +113,7 @@ void px_update_tx_stats(uint16_t port_id,
             px_clock_gettime(TIME_FLAG, &now_ns);
             diff = get_nsec_diff(&now_ns,
                                  get_timestamp_from_headroom(pkt));
+            reset_timestamp_on_headroom(pkt);
             if (diff > 0)
             {
                 tx_stat->delay_ns += diff;

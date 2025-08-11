@@ -37,12 +37,12 @@ struct flow_iat_entry
  * as it has already configured hardware timestamp in mbuf.
  * ii) For non-MLX5 PMDs, we need to register a dynamic field for timestamp.
  */
-static int rx_hw_timestamp_field_offset = -1;
-static uint64_t rx_hw_timestamp_flag = 0;
 /*----------------------------------------------------------------------------*/
 static inline int
 init_rx_hw_timestamp(void)
 {
+    static int rx_hw_timestamp_field_offset = -1;
+    static uint64_t rx_hw_timestamp_flag = 0;
     static int done = 0;
     int ret;
 
@@ -133,6 +133,12 @@ static inline int64_t
 get_nsec_diff(struct timespec *end,
               struct timespec *start)
 {
+    // if ((end->tv_sec - start->tv_sec) * E9 +
+    //        (end->tv_nsec - start->tv_nsec) > 100000)
+    // {
+    //     printf("get_nsec_diff: end: %ld.%09ld, start: %ld.%09ld\n",
+    //            end->tv_sec, end->tv_nsec, start->tv_sec, start->tv_nsec);
+    // }
     return (end->tv_sec - start->tv_sec) * E9 +
            (end->tv_nsec - start->tv_nsec);
 }
@@ -195,7 +201,7 @@ put_timestamp_to_headroom(struct rte_mbuf *pkt,
                           struct timespec *timestamp)
 {
     /* backup the tuple in the headroom */
-    memcpy((uint8_t *)pkt->buf_addr + sizeof(struct four_tuple),
+    memcpy((uint8_t *)pkt->buf_addr + pkt->data_off - sizeof(struct timespec),
            timestamp, sizeof(struct timespec));
 }
 /*----------------------------------------------------------------------------*/
@@ -203,16 +209,15 @@ static inline struct timespec *
 get_timestamp_from_headroom(struct rte_mbuf *pkt)
 {
     return (struct timespec *)((uint8_t *)pkt->buf_addr +
-                               sizeof(struct four_tuple));
+                               pkt->data_off - sizeof(struct timespec));
 }
 /*----------------------------------------------------------------------------*/
 static inline void
 reset_timestamp_on_headroom(struct rte_mbuf *pkt)
 {
     struct timespec *timestamp;
-
     timestamp = (struct timespec *)((uint8_t *)pkt->buf_addr +
-                                    sizeof(struct four_tuple));
+                                    pkt->data_off - sizeof(struct timespec));
     memset(timestamp, 0, sizeof(struct timespec));
 }
 /*----------------------------------------------------------------------------*/
@@ -235,11 +240,6 @@ copy_timestamp(struct rte_mbuf *dst,
 {
     struct timespec *ts;
     ts = get_timestamp_from_headroom(src);
-    if (!ts)
-    {
-        reset_timestamp_on_headroom(dst);
-        return;
-    }
     put_timestamp_to_headroom(dst, ts);
 }
 /*----------------------------------------------------------------------------*/
