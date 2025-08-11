@@ -111,7 +111,8 @@ static uint16_t g_num_sockets = 1;
 static uint16_t g_num_cores = 1;
 static uint16_t g_num_ports = 0;
 static struct rte_ether_addr port_mac[RTE_MAX_ETHPORTS] = {{{0}}};
-static struct rte_mempool *g_pktmbuf_pool[RTE_MAX_LCORE] = {NULL};
+// static struct rte_mempool *g_pktmbuf_pool[RTE_MAX_LCORE] = {NULL};
+static struct rte_mempool *g_pktmbuf_pool[RTE_MAX_NUMA_NODES] = {NULL};
 static struct rte_eth_dev_info g_dev_info[RTE_MAX_ETHPORTS];
 /*----------------------------------------------------------------------------*/
 static void
@@ -120,7 +121,7 @@ check_all_ports_link_status(uint8_t port_num, uint32_t port_mask)
 #define CHECK_INTERVAL 100 /* 100ms */
 #define MAX_CHECK_TIME 90  /* 9s (90 * 100ms) in total */
 
-    uint8_t portid, count, all_ports_up, print_flag = 0;
+    uint8_t port_id, count, all_ports_up, print_flag = 0;
     struct rte_eth_link link;
 
     printf("\nChecking link status\n");
@@ -128,14 +129,14 @@ check_all_ports_link_status(uint8_t port_num, uint32_t port_mask)
     for (count = 0; count <= MAX_CHECK_TIME; count++)
     {
         all_ports_up = 1;
-        for (portid = 0; portid < port_num; portid++)
+        for (port_id = 0; port_id < port_num; port_id++)
         {
-            if ((port_mask & (1 << portid)) == 0)
+            if ((port_mask & (1 << port_id)) == 0)
             {
                 continue;
             }
             memset(&link, 0, sizeof(link));
-            rte_eth_link_get_nowait(portid, &link);
+            rte_eth_link_get_nowait(port_id, &link);
             /* print link status if flag set */
             if (print_flag == 1)
             {
@@ -144,7 +145,7 @@ check_all_ports_link_status(uint8_t port_num, uint32_t port_mask)
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
                     printf("Port %d Link Up - speed %u "
                            "Mbps - %s\n",
-                           (uint8_t)portid,
+                           (uint8_t)port_id,
                            (unsigned)link.link_speed,
                            (link.link_duplex == ETH_LINK_FULL_DUPLEX)
                                ? ("full-duplex")
@@ -152,7 +153,7 @@ check_all_ports_link_status(uint8_t port_num, uint32_t port_mask)
 #else
                     printf("Port %d Link Up - speed %u "
                            "Mbps - %s\n",
-                           (uint8_t)portid,
+                           (uint8_t)port_id,
                            (unsigned)link.link_speed,
                            (link.link_duplex == RTE_ETH_LINK_FULL_DUPLEX)
                                ? ("full-duplex")
@@ -190,57 +191,57 @@ check_all_ports_link_status(uint8_t port_num, uint32_t port_mask)
 }
 /*----------------------------------------------------------------------------*/
 static int
-port_init(uint16_t portid, uint16_t num_queue)
+port_init(uint16_t port_id, uint16_t num_queue)
 {
     int sid, ret;
     uint16_t queue_id;
     struct rte_eth_conf port_conf = {0};
     struct rte_eth_fc_conf fc_conf; /* for Ethernet flow control settings */
-    rte_eth_dev_info_get(portid, &g_dev_info[portid]);
+    rte_eth_dev_info_get(port_id, &g_dev_info[port_id]);
 
     printf("max_rx_queues: %u\n",
-           g_dev_info[portid].max_rx_queues);
+           g_dev_info[port_id].max_rx_queues);
     printf("max_tx_queues: %u\n",
-           g_dev_info[portid].max_tx_queues);
+           g_dev_info[port_id].max_tx_queues);
     printf("rx_desc_lim.nb_max: %u\n",
-           g_dev_info[portid].rx_desc_lim.nb_max);
+           g_dev_info[port_id].rx_desc_lim.nb_max);
     printf("rx_desc_lim.nb_min: %u\n",
-           g_dev_info[portid].rx_desc_lim.nb_min);
+           g_dev_info[port_id].rx_desc_lim.nb_min);
     printf("rx_desc_lim.nb_align: %u\n",
-           g_dev_info[portid].rx_desc_lim.nb_align);
+           g_dev_info[port_id].rx_desc_lim.nb_align);
     printf("rx_desc_lim.nb_seg_max: %u\n",
-           g_dev_info[portid].rx_desc_lim.nb_seg_max);
+           g_dev_info[port_id].rx_desc_lim.nb_seg_max);
     printf("rx_desc_lim.nb_mtu_seg_max: %u\n",
-           g_dev_info[portid].rx_desc_lim.nb_mtu_seg_max);
+           g_dev_info[port_id].rx_desc_lim.nb_mtu_seg_max);
     printf("tx_desc_lim.nb_max: %u\n",
-           g_dev_info[portid].tx_desc_lim.nb_max);
+           g_dev_info[port_id].tx_desc_lim.nb_max);
     printf("tx_desc_lim.nb_min: %u\n",
-           g_dev_info[portid].tx_desc_lim.nb_min);
+           g_dev_info[port_id].tx_desc_lim.nb_min);
     printf("tx_desc_lim.nb_align: %u\n",
-           g_dev_info[portid].tx_desc_lim.nb_align);
+           g_dev_info[port_id].tx_desc_lim.nb_align);
     printf("tx_desc_lim.nb_seg_max: %u\n",
-           g_dev_info[portid].tx_desc_lim.nb_seg_max);
+           g_dev_info[port_id].tx_desc_lim.nb_seg_max);
     printf("tx_desc_lim.nb_mtu_seg_max: %u\n",
-           g_dev_info[portid].tx_desc_lim.nb_mtu_seg_max);
+           g_dev_info[port_id].tx_desc_lim.nb_mtu_seg_max);
     printf("min_mtu: %u\n",
-           g_dev_info[portid].min_mtu);
+           g_dev_info[port_id].min_mtu);
     printf("max_mtu: %u\n",
-           g_dev_info[portid].max_mtu);
+           g_dev_info[port_id].max_mtu);
     printf("reta_size: %u\n",
-           g_dev_info[portid].reta_size);
+           g_dev_info[port_id].reta_size);
     printf("rx_offload_capa: 0x%08lx\n",
-           g_dev_info[portid].rx_offload_capa);
+           g_dev_info[port_id].rx_offload_capa);
     printf("tx_offload_capa: 0x%08lx\n",
-           g_dev_info[portid].tx_offload_capa);
+           g_dev_info[port_id].tx_offload_capa);
     printf("flow_type_rss_offloads: 0x%08lx\n",
-           g_dev_info[portid].flow_type_rss_offloads);
+           g_dev_info[port_id].flow_type_rss_offloads);
     printf("rx_queue_offload_capa: 0x%08lx\n",
-           g_dev_info[portid].rx_queue_offload_capa);
+           g_dev_info[port_id].rx_queue_offload_capa);
     printf("tx_queue_offload_capa: 0x%08lx\n",
-           g_dev_info[portid].tx_queue_offload_capa);
+           g_dev_info[port_id].tx_queue_offload_capa);
 
     /* re-adjust rss_hf */
-    port_conf = px_eth_conf(portid, NULL, NULL, 0, MBUF_DATA_SIZE,
+    port_conf = px_eth_conf(port_id, NULL, NULL, 0, MBUF_DATA_SIZE,
 #if USE_LRO
                             1,
 #else
@@ -264,10 +265,10 @@ port_init(uint16_t portid, uint16_t num_queue)
     );
 
     /* init port */
-    printf("[port %u] Initializing port... \n", (unsigned)portid);
+    printf("[port %u] Initializing port... \n", (unsigned)port_id);
     fflush(stdout);
 #if (USE_CGRO || NICMEM || NUM_HAIRPIN_Q)
-    ret = px_eth_dev_configure(portid,
+    ret = px_eth_dev_configure(port_id,
                                num_queue,
                                num_queue,
 #if USE_CGRO
@@ -297,7 +298,7 @@ port_init(uint16_t portid, uint16_t num_queue)
 #endif
     );
 #else
-    ret = rte_eth_dev_configure(portid,
+    ret = rte_eth_dev_configure(port_id,
                                 num_queue,
                                 num_queue,
                                 &port_conf);
@@ -315,45 +316,57 @@ port_init(uint16_t portid, uint16_t num_queue)
     {
         rte_exit(EXIT_FAILURE, "Cannot configure device:"
                                "err=%d, port=%u\n",
-                 ret, (unsigned)portid);
+                 ret, (unsigned)port_id);
     }
 
     fflush(stdout);
 
-    rte_eth_macaddr_get(portid, &port_mac[portid]);
+    rte_eth_macaddr_get(port_id, &port_mac[port_id]);
 
     for (queue_id = 0; queue_id < num_queue; queue_id++)
     {
-        sid = rte_lcore_to_socket_id(queue_id);
+        // sid = rte_lcore_to_socket_id(queue_id);
+        sid = rte_eth_dev_socket_id(port_id);
 
         /* init RX queue on each port per CPU */
 #if (USE_CGRO || NICMEM || NUM_HAIRPIN_Q)
-        ret = px_eth_rx_queue_setup(portid, queue_id, nb_rxd, sid,
-                                    &g_dev_info[portid].default_rxconf,
-                                    g_pktmbuf_pool[queue_id]);
+        // ret = px_eth_rx_queue_setup(port_id, queue_id, nb_rxd, sid,
+        //                             &g_dev_info[port_id].default_rxconf,
+        //                             g_pktmbuf_pool[queue_id]);
+        ret = px_eth_rx_queue_setup(port_id, queue_id, nb_rxd, sid,
+                                    &g_dev_info[port_id].default_rxconf,
+                                    g_pktmbuf_pool[sid]);
 #else
-        ret = rte_eth_rx_queue_setup(portid, queue_id, nb_rxd, sid,
-                                     &g_dev_info[portid].default_rxconf,
-                                     g_pktmbuf_pool[queue_id]);
+        // ret = rte_eth_rx_queue_setup(port_id, queue_id, nb_rxd, sid,
+        //                              &g_dev_info[port_id].default_rxconf,
+        //                              g_pktmbuf_pool[queue_id]);
+        ret = rte_eth_rx_queue_setup(port_id, queue_id, nb_rxd, sid,
+                                     &g_dev_info[port_id].default_rxconf,
+                                     g_pktmbuf_pool[sid]);
 #endif
         if (ret < 0)
         {
             rte_exit(EXIT_FAILURE, "rte_eth_rx_queue_setup: "
                                    "err=%d, port=%u, queue_id for data: %d\n",
-                     ret, (unsigned)portid, queue_id);
+                     ret, (unsigned)port_id, queue_id);
         }
 
         /* init TX queue on each port per CPU */
-        ret = rte_eth_tx_queue_setup(portid, queue_id, nb_txd, sid,
-                                     &g_dev_info[portid].default_txconf);
+#if (USE_CGRO || NICMEM || NUM_HAIRPIN_Q)
+        ret = px_eth_tx_queue_setup(port_id, queue_id, nb_txd, sid,
+                                    &g_dev_info[port_id].default_txconf);
+#else
+        ret = rte_eth_tx_queue_setup(port_id, queue_id, nb_txd, sid,
+                                     &g_dev_info[port_id].default_txconf);
+#endif
         if (ret < 0)
         {
             rte_exit(EXIT_FAILURE, "rte_eth_tx_queue_setup: "
                                    "err=%d, port=%u, queue_id: %d\n",
-                     ret, (unsigned)portid, queue_id);
+                     ret, (unsigned)port_id, queue_id);
         }
 #if USE_CGRO
-        ret = px_init(portid, queue_id, MAX_PKT_BURST,
+        ret = px_init(port_id, queue_id, MAX_PKT_BURST,
                       !JUMBO_FRAME ? 4096 : 0,
                       CUTOFF_NS ? 4096 : 0,
                       is_uplink, is_downlink, USE_LINK);
@@ -365,20 +378,20 @@ port_init(uint16_t portid, uint16_t num_queue)
     }
 
     /* Start device */
-    ret = rte_eth_dev_start(portid);
+    ret = rte_eth_dev_start(port_id);
     if (ret < 0)
     {
         rte_exit(EXIT_FAILURE,
                  "rte_eth_dev_start:err=%d, port=%u\n",
                  ret,
-                 (unsigned)portid);
+                 (unsigned)port_id);
     }
-    rte_eth_promiscuous_enable(portid);
+    rte_eth_promiscuous_enable(port_id);
     printf("done: \n");
 
     /* retrieve current flow control settings per port */
     memset(&fc_conf, 0, sizeof(fc_conf));
-    ret = rte_eth_dev_flow_ctrl_get(portid, &fc_conf);
+    ret = rte_eth_dev_flow_ctrl_get(port_id, &fc_conf);
     if (ret != 0)
     {
         rte_exit(EXIT_FAILURE, "Failed to get flow control info!\n");
@@ -390,7 +403,7 @@ port_init(uint16_t portid, uint16_t num_queue)
 #else
     fc_conf.mode = RTE_ETH_FC_NONE;
 #endif
-    ret = rte_eth_dev_flow_ctrl_set(portid, &fc_conf);
+    ret = rte_eth_dev_flow_ctrl_set(port_id, &fc_conf);
     if (ret != 0)
     {
         rte_exit(EXIT_FAILURE,
@@ -660,13 +673,12 @@ int main(int argc, char **argv)
     // printf("device_count: %u\n", g_num_ports);
 
     /* mbuf pool creation */
-    for (core_id = 0; core_id < g_num_cores; core_id++)
+    for (sid = 0; sid < g_num_sockets; sid++)
     {
         char name[MAX_NAME_SIZE];
-        sid = rte_lcore_to_socket_id(core_id);
-        sprintf(name, "mempool-%d", core_id);
-        g_pktmbuf_pool[core_id] =
-            rte_mempool_create(name, nb_mbuf / g_num_cores,
+        sprintf(name, "mempool-%d", sid);
+        g_pktmbuf_pool[sid] =
+            rte_mempool_create(name, nb_mbuf / g_num_sockets,
 #if NICMEM
                                NICMEM_DMA_SIZE +
                                    sizeof(struct rte_mbuf) +
@@ -680,8 +692,8 @@ int main(int argc, char **argv)
                                sizeof(struct rte_pktmbuf_pool_private),
                                rte_pktmbuf_pool_init, NULL,
                                rte_pktmbuf_init, NULL,
-                               sid, MEMPOOL_F_SP_PUT | MEMPOOL_F_SC_GET);
-        if (!g_pktmbuf_pool[core_id])
+                               sid, 0);
+        if (!g_pktmbuf_pool[sid])
         {
             rte_exit(EXIT_FAILURE,
                      "Cannot init data mbuf pool in sid: %d\n", sid);
