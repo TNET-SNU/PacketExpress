@@ -4017,7 +4017,7 @@ int netif_port_start(struct netif_port *port)
 #else
                                  0,
 #endif
-#if STALL_TIMEOUT_NS
+#if CUTOFF_NS
                                  1,
 #else
                                  0,
@@ -4043,7 +4043,7 @@ int netif_port_start(struct netif_port *port)
                                0,
 #endif
 #if USE_CGRO
-                               STALL_TIMEOUT_NS,
+                               CUTOFF_NS,
 #else
                                0,
 #endif
@@ -4090,7 +4090,8 @@ int netif_port_start(struct netif_port *port)
             ret = px_init(port->id, qid,
                           NETIF_MAX_PKT_BURST,
                           !JUMBO_FRAME ? 4096 : 0,
-                          STALL_TIMEOUT_NS, NULL, NULL, USE_LINK);
+                          CUTOFF_NS ? 4096: 0,
+                          NULL, NULL, USE_LINK);
             if (ret < 0) {
                 RTE_LOG(ERR, NETIF, "%s: fail to config %s:rx-queue-%d\n",
                         __func__, port->name, qid);

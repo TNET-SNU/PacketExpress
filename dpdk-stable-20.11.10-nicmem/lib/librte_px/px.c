@@ -1151,18 +1151,18 @@ is_stall_needed(struct px_ctx *pctx,
 #endif
     ret = iat_search_entry(pctx->iat_ctx,
                            cur_pkt,
-                           g_px_dev[pctx->port_id].timeout_ns,
+                           g_px_dev[pctx->port_id].cutoff_ns,
                            &avg_iat);
     if (ret < 0)
     {
         fprintf(stderr, "iat table search failed\n");
-        // avg_iat = g_px_dev[pctx->port_id].timeout_ns; // Use default timeout
+        // avg_iat = g_px_dev[pctx->port_id].cutoff_ns; // Use cutoff
     }
     diff_ns = get_nsec_diff(&pctx->now_ns, timestamp);
     timeout_ns = (int64_t)(avg_iat * factor);
-    if (timeout_ns > g_px_dev[pctx->port_id].timeout_ns)
+    if (timeout_ns > g_px_dev[pctx->port_id].cutoff_ns)
     {
-        timeout_ns = g_px_dev[pctx->port_id].timeout_ns; // Cap to max timeout
+        timeout_ns = g_px_dev[pctx->port_id].cutoff_ns; // Cap to cutoff
     }
     if (print)
     {
@@ -1708,22 +1708,19 @@ int px_parse_packet(struct px_ctx *pctx,
     }
 
     /* parse HW timestamp and TCP timestamp */
-    // if (pctx->is_downlink(pkt))
+    // rte_mbuf_timestamp_t *rx_timestamp = get_rx_hw_timestamp(pkt);
+    // uint64_t *ts = get_tcp_timestamp(pkt);
+    // if (rx_timestamp && ts)
     // {
-    //     rte_mbuf_timestamp_t *rx_timestamp = get_rx_hw_timestamp(pkt);
-    //     uint64_t *ts = get_tcp_timestamp(pkt);
-    //     if (rx_timestamp && ts)
-    //     {
-    //         uint32_t tsval, tsecr;
-    //         tsval = rte_be_to_cpu_32(*(uint32_t *)ts);
-    //         tsecr = rte_be_to_cpu_32(*((uint32_t *)ts + 1));
+    //     uint32_t tsval, tsecr;
+    //     tsval = rte_be_to_cpu_32(*(uint32_t *)ts);
+    //     tsecr = rte_be_to_cpu_32(*((uint32_t *)ts + 1));
 
-    //         printf("[port %d] RX HW timestamp: 0x%016lx, "
-    //                "TCP timestamp: 0x%016lx (tsval: %10u, tsecr: %10u) %s\n",
-    //                pctx->port_id, *rx_timestamp,
-    //                rte_be_to_cpu_64(*ts), tsval, tsecr,
-    //                pkt->ol_flags & PKT_RX_LRO ? "(LROed)" : "(not LROed)");
-    //     }
+    //     printf("[port %d] RX HW timestamp: 0x%016lx, "
+    //            "TCP timestamp: 0x%016lx (tsval: %10u, tsecr: %10u) %s\n",
+    //            pctx->port_id, *rx_timestamp,
+    //            rte_be_to_cpu_64(*ts), tsval, tsecr,
+    //            pkt->ol_flags & PKT_RX_LRO ? "(LROed)" : "(not LROed)");
     // }
 
     /* parse L4 */
@@ -1755,7 +1752,7 @@ int px_parse_packet(struct px_ctx *pctx,
             if (pctx->stalls)
             {
                 iat_update_entry(pctx->iat_ctx, pkt,
-                                 g_px_dev[pctx->port_id].timeout_ns);
+                                 g_px_dev[pctx->port_id].cutoff_ns);
             }
         }
 #else
@@ -1764,7 +1761,7 @@ int px_parse_packet(struct px_ctx *pctx,
         if (pctx->stalls)
         {
             iat_update_entry(pctx->iat_ctx, pkt,
-                             g_px_dev[pctx->port_id].timeout_ns);
+                             g_px_dev[pctx->port_id].cutoff_ns);
         }
 #endif
 
@@ -1813,7 +1810,7 @@ int px_parse_packet(struct px_ctx *pctx,
             if (pctx->stalls)
             {
                 iat_update_entry(pctx->iat_ctx, pkt,
-                                 g_px_dev[pctx->port_id].timeout_ns);
+                                 g_px_dev[pctx->port_id].cutoff_ns);
             }
         }
 #else
@@ -1822,7 +1819,7 @@ int px_parse_packet(struct px_ctx *pctx,
         if (pctx->stalls)
         {
             iat_update_entry(pctx->iat_ctx, pkt,
-                             g_px_dev[pctx->port_id].timeout_ns);
+                             g_px_dev[pctx->port_id].cutoff_ns);
         }
 #endif
 
@@ -2850,7 +2847,7 @@ int px_init(uint16_t port_id,
             rte_exit(EXIT_FAILURE, "Cannot init MSS ctx\n");
         }
     }
-    if (px_dev->timeout_ns && iat_table_size && !pctx->iat_ctx)
+    if (px_dev->cutoff_ns && iat_table_size && !pctx->iat_ctx)
     {
         pctx->iat_ctx = iat_init_ctx(port_id, queue_id, iat_table_size, EWMA_ALPHA);
         if (!pctx->iat_ctx)
@@ -2862,7 +2859,7 @@ int px_init(uint16_t port_id,
     /* estimate table size */
     // table_size = burst * (px_dev->stall_limit + 1);
 
-    if (px_dev->timeout_ns)
+    if (px_dev->cutoff_ns)
     {
         /* ToDo: Use mempool for items, flows, buckets, stalls array
          * estimate the buffer size as BW * Delay */
@@ -2913,7 +2910,7 @@ int px_init(uint16_t port_id,
     rule_init(port_id, queue_id);
 
     /* initialize delayed merging */
-    if (px_dev->timeout_ns && !pctx->stalls)
+    if (px_dev->cutoff_ns && !pctx->stalls)
     {
         /* make stall queue descriptors */
         pctx->stalls = (struct px_stall *)calloc(num_rxq_incr,
@@ -3123,7 +3120,7 @@ int px_eth_dev_configure(uint16_t port_id,
                          uint16_t num_txq,
                          uint16_t num_rxq_incr,
                          unsigned int num_nicmem,
-                         unsigned int timeout_ns,
+                         unsigned int cutoff_ns,
                          uint16_t hp_num_rxq,
                          uint16_t hp_num_txq,
                          struct rte_eth_conf *eth_conf,
@@ -3150,7 +3147,7 @@ int px_eth_dev_configure(uint16_t port_id,
     px_dev->num_rxq = num_rxq;
     px_dev->num_rxq_incr = num_rxq_incr;
     px_dev->num_txq = num_txq;
-    px_dev->timeout_ns = timeout_ns;
+    px_dev->cutoff_ns= cutoff_ns;
 
     /* get MAC address */
     ret = rte_eth_macaddr_get(port_id, &px_dev->mac);
@@ -3300,13 +3297,10 @@ int px_eth_dev_configure(uint16_t port_id,
     }
 
     /* init RX hardware timestamp if necessary */
-    if (timeout_ns)
+    ret = init_rx_hw_timestamp();
+    if (ret < 0)
     {
-        ret = init_rx_hw_timestamp();
-        if (ret < 0)
-        {
-            rte_exit(EXIT_FAILURE, "init_rx_hw_timestamp failed: %d\n", ret);
-        }
+        rte_exit(EXIT_FAILURE, "init_rx_hw_timestamp failed: %d\n", ret);
     }
 
     return ret;
@@ -3549,7 +3543,7 @@ px_eth_rx_burst(uint16_t port_id,
     struct rte_mbuf **orig_batch = rx_pkts;
 
     /* stage 1: fetch from time out ring */
-    if (g_px_dev[port_id].timeout_ns)
+    if (g_px_dev[port_id].cutoff_ns)
     {
         read_px_rx_ring = px_ring_dequeue(rx_ring, rx_pkts, nb_pkts);
 
@@ -3579,81 +3573,6 @@ px_eth_rx_burst(uint16_t port_id,
 
     return read_px_rx_ring + read_hw_rx_ring;
 }
-/*----------------------------------------------------------------------------*/
-// uint16_t
-// px_eth_tx_burst0(uint16_t port_id,
-//                  uint16_t queue_id,
-//                  struct rte_mbuf **tx_pkts,
-//                  uint16_t nb_pkts)
-// {
-//     struct px_dev *px_dev = &g_px_dev[port_id];
-//     struct px_ctx *pctx = &g_pctx[port_id][queue_id];
-//     struct px_ring *tx_ring = &pctx->tx_ring;
-//     struct rte_mbuf *temp_batch[PX_TX_BURST];
-//     uint16_t read_px_tx_ring = 0;
-//     uint16_t sent_hw_tx_ring = 0;
-//     uint16_t nb_pkts_after_uso = 0;
-//     int sent_try = 0, offset = 0;
-
-//     /* stage 0: create hairpin flow */
-//     if (px_dev->initialized_hairpin)
-//     {
-//         px_flow_create_burst(port_id, queue_id, tx_pkts, nb_pkts);
-//     }
-
-//     /* stage 1: retrieve packets in TX ring first */
-//     read_px_tx_ring = px_ring_dequeue(tx_ring, temp_batch, PX_TX_BURST);
-
-//     /* stage 2: do GSO for packets from app */
-//     if (pctx->do_link)
-//     {
-//         /* if linking is on, do unlinking and USO before TX */
-//         nb_pkts_after_uso = px_unlink_and_uso(tx_pkts,
-//                                               nb_pkts,
-//                                               temp_batch + read_px_tx_ring,
-//                                               PX_TX_BURST - read_px_tx_ring,
-//                                               tx_ring,
-//                                               g_clone_pool[pctx->socket_id],
-//                                               NULL);
-//     }
-//     else
-//     {
-//         /* if linking is off, do only USO before TX */
-//         nb_pkts_after_uso = px_uso_burst(tx_pkts,
-//                                          nb_pkts,
-//                                          temp_batch + read_px_tx_ring,
-//                                          PX_TX_BURST - read_px_tx_ring,
-//                                          tx_ring,
-//                                          g_clone_pool[pctx->socket_id]);
-//     }
-
-//     /* stage 2: update stats for conversion yield */
-//     px_update_tx_stats(port_id,
-//                        queue_id,
-//                        temp_batch,
-//                        sent_hw_tx_ring);
-
-//     /* stage 3: send packets */
-//     while (offset < read_px_tx_ring + nb_pkts_after_uso)
-//     {
-//         sent_hw_tx_ring = rte_eth_tx_burst(port_id,
-//                                            queue_id,
-//                                            temp_batch + offset,
-//                                            read_px_tx_ring + nb_pkts_after_uso - offset);
-//         offset += sent_hw_tx_ring;
-
-//         /* if not all packets are sent, unlink the rest */
-//         if (++sent_try > 1)
-//         {
-//             printf("rte_eth_tx_burst: sent_try: %d, offset: %d, read_px_tx_ring: %d, nb_pkts_after_uso: %d\n",
-//                    sent_try, offset, read_px_tx_ring, nb_pkts_after_uso);
-//             /* if too many tries, give up sending and reset offset */
-//             break;
-//         }
-//     }
-
-//     return offset;
-// }
 /*----------------------------------------------------------------------------*/
 uint16_t
 px_eth_tx_burst(uint16_t port_id,

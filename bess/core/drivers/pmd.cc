@@ -571,7 +571,7 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
 #else
                          0,
 #endif
-#if STALL_TIMEOUT_NS
+#if CUTOFF_NS
                          1,
 #else
                          0,
@@ -600,7 +600,7 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
                              0,
 #endif
 #if USE_CGRO
-                             STALL_TIMEOUT_NS,
+                             CUTOFF_NS,
 #else
                              0,
 #endif
@@ -675,7 +675,7 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
     if (px_init(dpdk_port_id_, i,
                 bess::PacketBatch::kMaxBurst,
                 !JUMBO_FRAME ? 4096 : 0,
-                STALL_TIMEOUT_NS, NULL, NULL, USE_LINK) < 0) {
+                CUTOFF_NS ? 4096 : 0, NULL, NULL, USE_LINK) < 0) {
       return CommandFailure(ENOMEM, "px_init failed");
     }
   }
@@ -986,7 +986,8 @@ int PMDPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   stats.dropped += dropped;
   stats.requested_hist[cnt]++;
   stats.actual_hist[sent]++;
-  stats.diff_hist[dropped]++;
+  if (dropped > 0)
+    stats.diff_hist[dropped]++;
   return sent;
 }
 

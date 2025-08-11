@@ -251,7 +251,7 @@ port_init(uint16_t portid, uint16_t num_queue)
 #else
                             0,
 #endif
-#if STALL_TIMEOUT_NS
+#if CUTOFF_NS
                             1,
 #else
                             0,
@@ -281,7 +281,7 @@ port_init(uint16_t portid, uint16_t num_queue)
                                0,
 #endif
 #if USE_CGRO
-                               STALL_TIMEOUT_NS,
+                               CUTOFF_NS,
 #else
                                0,
 #endif
@@ -355,7 +355,8 @@ port_init(uint16_t portid, uint16_t num_queue)
 #if USE_CGRO
         ret = px_init(portid, queue_id, MAX_PKT_BURST,
                       !JUMBO_FRAME ? 4096 : 0,
-                      STALL_TIMEOUT_NS, is_uplink, is_downlink, USE_LINK);
+                      CUTOFF_NS ? 4096 : 0,
+                      is_uplink, is_downlink, USE_LINK);
         if (ret < 0)
         {
             rte_exit(EXIT_FAILURE, "px_init failed\n");

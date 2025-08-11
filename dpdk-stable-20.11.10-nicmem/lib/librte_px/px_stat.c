@@ -129,6 +129,10 @@ void px_update_tx_stats(uint16_t port_id,
                 data_len / target_segsz;
             leftover = data_len % target_segsz;
 
+            /* below are for conversion yield type 1 */
+            tx_stat->under_iMTU_cnt += leftover > 128 ? 1 : 0;
+
+            /* below are for conversion yield type 2 */
             if (leftover > 5 * orig_segsz)
             {
                 tx_stat->iMTU_cnt++;
@@ -153,7 +157,6 @@ void px_update_tx_stats(uint16_t port_id,
             {
                 tx_stat->_1_seg_cnt++;
             }
-            tx_stat->under_iMTU_cnt += leftover > 128 ? 1 : 0;
         }
     }
 }
@@ -171,7 +174,7 @@ void px_print_stats(int args)
         {
             rx_iter = &g_px_rx_stat[port_id][queue_id];
             tx_iter = &g_px_tx_stat[port_id][queue_id];
-            if (!rx_iter->data_pkt_cnt)
+            if (!rx_iter->data_pkt_cnt && !tx_iter->data_pkt_cnt)
             {
                 continue;
             }
@@ -240,10 +243,6 @@ void px_print_stats(int args)
 #endif
             rx_total.pkt_cnt += rx_iter->pkt_cnt;
             rx_total.bytes_cnt += rx_iter->bytes_cnt;
-#if PX_MEASURE_DELAY
-            tx_total.delay_ns += tx_iter->delay_ns;
-            tx_total.data_pkt_cnt += tx_iter->data_pkt_cnt;
-#endif
             rx_total.data_bytes_cnt += rx_iter->data_bytes_cnt;
             rx_total.data_pkt_cnt += rx_iter->data_pkt_cnt;
             rx_total.data_pkt_segs_cnt += rx_iter->data_pkt_segs_cnt;
@@ -257,6 +256,10 @@ void px_print_stats(int args)
             tx_total._5_seg_cnt += tx_iter->_5_seg_cnt;
             tx_total.under_iMTU_cnt += tx_iter->under_iMTU_cnt;
             tx_total.iMTU_cnt += tx_iter->iMTU_cnt;
+#if PX_MEASURE_DELAY
+            tx_total.delay_ns += tx_iter->delay_ns;
+            tx_total.data_pkt_cnt += tx_iter->data_pkt_cnt;
+#endif
 
             /* notify reset to workers */
             rx_iter->reset = 1;
@@ -284,7 +287,7 @@ void px_print_stats(int args)
            //        ? (double)tx_total.iMTU_cnt /
            //              (tx_total.iMTU_cnt + tx_total.under_iMTU_cnt) * 100
            //        : 0,
-           (tx_total._1_seg_cnt + tx_total._2_seg_cnt * 2 +
+           (tx_total._1_seg_cnt * 1 + tx_total._2_seg_cnt * 2 +
             tx_total._3_seg_cnt * 3 + tx_total._4_seg_cnt * 4 +
             tx_total._5_seg_cnt * 5 + tx_total.iMTU_cnt * 6)
                ? (double)tx_total.iMTU_cnt * 6 /

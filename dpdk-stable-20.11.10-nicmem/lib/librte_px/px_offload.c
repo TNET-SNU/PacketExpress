@@ -5,7 +5,8 @@ struct px_hairpin_ctx g_hp_ctx[RTE_MAX_ETHPORTS] = {0};
 /* below are handles for offload thread */
 static pthread_t g_offload_worker_thread_tid[RTE_MAX_ETHPORTS];
 static int g_thread_core_id = -1;
-static int g_num_cores = 0;
+static uint16_t g_num_ports = 0;
+static uint16_t g_num_cores = 0;
 static volatile int g_shutdown = 0;
 /*----------------------------------------------------------------------------*/
 int px_flow_create(int core_id, struct rte_mbuf *pkt)
@@ -17,15 +18,14 @@ int px_flow_create(int core_id, struct rte_mbuf *pkt)
     struct four_tuple *orig_ft = search_four_tuple(pkt);
 
     /* below is to control flow creation ratio */
-    if ((orig_ft->src_port + orig_ft->dst_port) % 5 >= 5) // create 100% of flows
     // if ((orig_ft->src_port + orig_ft->dst_port) % 5 >= 4) // create 80% of flows
     // if ((orig_ft->src_port + orig_ft->dst_port) % 5 >= 3) // create 60% of flows
     // if ((orig_ft->src_port + orig_ft->dst_port) % 5 >= 2) // create 40% of flows
     // if ((orig_ft->src_port + orig_ft->dst_port) % 5 >= 1) // create 20% of flows
     // if ((orig_ft->src_port + orig_ft->dst_port) % 5 >= 0) // create 0% of flows
-    {
-        return 0; // skip this flow
-    }
+    // {
+    //     return 0; // skip this flow
+    // }
 
     /* try search on hash table or insert */
     struct ri_node node = {
@@ -41,7 +41,6 @@ int px_flow_create(int core_id, struct rte_mbuf *pkt)
          */
         if (target->flow)
         {
-            printf("why? 2\n");
             /* this rule is already cached on NIC */
             if (ht_is_same_action(target, &node))
             {
@@ -66,7 +65,6 @@ int px_flow_create(int core_id, struct rte_mbuf *pkt)
         }
         else
         {
-            printf("why? 3\n");
             /* requested, but not cached on NIC yet */
             cmd = CREATE;
         }
@@ -213,8 +211,7 @@ px_flow_nic_cache_stat(void)
 {
     int port_id;
     size_t total_nic_occupied = 0;
-    uint16_t port_num = rte_eth_dev_count_avail();
-    for (port_id = 0; port_id < port_num; port_id++)
+    for (port_id = 0; port_id < g_num_ports; port_id++)
     {
         total_nic_occupied += get_nic_cached_size(port_id);
     }
@@ -564,11 +561,11 @@ int hp_context_init(int thread_core_id,
 {
     int port_id, core_id, ret;
     static int arg[RTE_MAX_ETHPORTS];
-    uint16_t port_num = rte_eth_dev_count_avail();
+    g_num_ports = rte_eth_dev_count_avail();
 
     /* caveat! In BESS, rte_lcore_count() sometimes returns 0. debug it. */
     g_num_cores = rte_lcore_count();
-    // printf("port_num: %d, g_num_cores: %d\n", port_num, g_num_cores);
+    // printf("g_num_ports: %d, g_num_cores: %d\n", g_num_ports, g_num_cores);
 
     if (g_thread_core_id != -1)
     {
@@ -579,7 +576,7 @@ int hp_context_init(int thread_core_id,
 
     /* create px_flow threads per port */
     g_shutdown = 0;
-    for (port_id = 0; port_id < port_num; port_id++)
+    for (port_id = 0; port_id < g_num_ports; port_id++)
     {
         arg[port_id] = port_id;
         ret = pthread_create(&g_offload_worker_thread_tid[port_id], NULL,
@@ -613,7 +610,7 @@ int hp_context_init(int thread_core_id,
         }
 
         /* initialize request ring for each core */
-        for (port_id = 0; port_id < port_num; port_id++)
+        for (port_id = 0; port_id < g_num_ports; port_id++)
         {
             ret = req_ring_create(core_id, port_id, per_core_host_cache_size);
             if (ret < 0)
@@ -630,7 +627,6 @@ void hp_context_destroy(void)
 {
     /* destroy offload threads */
     int port_id, core_id, ret;
-    uint16_t port_num = rte_eth_dev_count_avail();
 
     if (g_thread_core_id == -1)
     {
@@ -639,7 +635,7 @@ void hp_context_destroy(void)
 
     /* join px_flow threads */
     g_shutdown = 1;
-    for (port_id = 0; port_id < port_num; port_id++)
+    for (port_id = 0; port_id < g_num_ports; port_id++)
     {
         ret = pthread_join(g_offload_worker_thread_tid[port_id], NULL);
         if (ret < 0)
@@ -654,7 +650,7 @@ void hp_context_destroy(void)
     {
         ht_destroy(core_id);
         node_pool_destroy(core_id);
-        for (port_id = 0; port_id < port_num; port_id++)
+        for (port_id = 0; port_id < g_num_ports; port_id++)
         {
             req_ring_destroy(core_id, port_id);
         }

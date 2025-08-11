@@ -32,7 +32,7 @@ struct flow_iat_entry
 };
 /*----------------------------------------------------------------------------*/
 /**
- * We handle MLX5 and non-MLX5 cases differently.
+ * We should handle MLX5 and non-MLX5 cases differently.
  * i) For MLX5 PMD, we do not need to register a dynamic field for timestamp
  * as it has already configured hardware timestamp in mbuf.
  * ii) For non-MLX5 PMDs, we need to register a dynamic field for timestamp.
@@ -182,11 +182,12 @@ update_timestamp(struct timespec *orig_timestamp,
 
     return;
 }
+/*----------------------------------------------------------------------------*/
 /**
  * Below functions are used when timestamping in SW without hardware support.
  * They are used to put timestamp in the headroom of mbuf, and get timestamp
  * from the headroom of mbuf.
- * Note that the timestamp is stored after the four_tuple.
+ * Note that the timestamp is stored after the original four_tuple.
  */
 /*----------------------------------------------------------------------------*/
 static inline void
@@ -252,11 +253,11 @@ int iat_destroy_ctx(struct px_iat_ctx *ctx);
 /*----------------------------------------------------------------------------*/
 int iat_update_entry(struct px_iat_ctx *ctx,
                      struct rte_mbuf *pkt,
-                     int64_t timeout_ns);
+                     int64_t cutoff_ns);
 /*----------------------------------------------------------------------------*/
 int iat_search_entry(struct px_iat_ctx *ctx,
                      struct rte_mbuf *pkt,
-                     int64_t timeout_ns,
+                     int64_t cutoff_ns,
                      double *avg_iat);
 /*----------------------------------------------------------------------------*/
 void iat_flush_timeout(struct px_iat_ctx *ctx);

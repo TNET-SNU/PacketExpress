@@ -45,7 +45,7 @@ iat_init_ctx(uint16_t port_id,
     struct px_iat_ctx *ctx = &g_iat_ctx[port_id][queue_id];
     char name[MAX_NAME_SIZE];
 
-    /* make every port shares the IAT context */
+    /* make every port share the IAT context */
     if (ctx->initialized)
     {
         return ctx;
@@ -147,7 +147,7 @@ int iat_destroy_ctx(struct px_iat_ctx *ctx)
 /*----------------------------------------------------------------------------*/
 int iat_update_entry(struct px_iat_ctx *ctx,
                      struct rte_mbuf *pkt,
-                     int64_t timeout_ns)
+                     int64_t cutoff_ns)
 {
     struct four_tuple *key = get_four_tuple(pkt);
     rte_mbuf_timestamp_t *ts_ptr;
@@ -180,7 +180,7 @@ int iat_update_entry(struct px_iat_ctx *ctx,
             delta = (*ts_ptr - entry->last_timestamp);
             // if (!entry->last_delta || delta < entry->last_delta * 100)
             // if (!entry->avg_iat || delta < entry->avg_iat * 100)
-            if (delta < timeout_ns)
+            if (delta < cutoff_ns)
             {
                 entry->avg_iat = ctx->ewma_alpha * delta +
                                  (1.0 - ctx->ewma_alpha) * entry->avg_iat;
@@ -217,7 +217,7 @@ int iat_update_entry(struct px_iat_ctx *ctx,
 /*----------------------------------------------------------------------------*/
 int iat_search_entry(struct px_iat_ctx *ctx,
                      struct rte_mbuf *pkt,
-                     int64_t timeout_ns,
+                     int64_t cutoff_ns,
                      double *avg_iat)
 {
     struct flow_iat_entry *entry;
@@ -232,7 +232,7 @@ int iat_search_entry(struct px_iat_ctx *ctx,
     /* try update first */
     if (rte_hash_lookup_data(ctx->tbl, key, (void **)&entry) >= 0)
     {
-        if (entry->avg_iat > timeout_ns)
+        if (entry->avg_iat > cutoff_ns)
         {
             printf("Flow IAT too high: %f ns\n", entry->avg_iat);
             *avg_iat = 0;

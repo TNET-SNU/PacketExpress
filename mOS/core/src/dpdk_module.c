@@ -563,7 +563,7 @@ dpdk_load_module_lower_half(void)
 #else
 									0,
 #endif
-#if STALL_TIMEOUT_NS
+#if CUTOFF_NS
                         			1,
 #else
                         			0,
@@ -596,7 +596,7 @@ dpdk_load_module_lower_half(void)
 									   0,
 #endif
 #if USE_CGRO
-									   STALL_TIMEOUT_NS,
+									   CUTOFF_NS,
 #else
 									   0,
 #endif
@@ -652,7 +652,8 @@ dpdk_load_module_lower_half(void)
 				ret = px_init(portid, rxlcore_id,
 							  MAX_PKT_BURST,
 							  !JUMBO_FRAME ? 4096 : 0,
-							  STALL_TIMEOUT_NS, NULL, NULL, USE_LINK);
+							  CUTOFF_NS ? 4096 : 0,
+							  NULL, NULL, USE_LINK);
 				if (ret < 0)
 					rte_exit(EXIT_FAILURE, "px_init failed\n");
 #endif

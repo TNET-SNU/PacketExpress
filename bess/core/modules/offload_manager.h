@@ -25,10 +25,6 @@ public:
   std::string GetDesc() const override;
 
 private:
-  int src_ip_id = -1;
-  int dst_ip_id = -1;
-  int src_port_id = -1;
-  int dst_port_id = -1;
 };
 /*----------------------------------------------------------------------------------*/
 #endif // BESS_MODULES_OFFLOAD_MANAGER_H_
