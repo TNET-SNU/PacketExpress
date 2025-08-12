@@ -1,6 +1,6 @@
 # PacketExpress
 This repository provides the implementation of PacketExpress library and its applications (e.g., Gateway, NAT, L4LB, or UPF). PacketExpress (PX) provides APIs for efficient packet I/O using several techniques based on LRO and GRO.
-Most of the main logic is implemented as a independent DPDK library. Take a look.
+Most of the main logic is implemented as a DPDK library. Take a look.
 
 ## Prerequisites
 Use Ubuntu 22.04.
@@ -12,7 +12,7 @@ Use Ubuntu 22.04.
                   libc-ares-dev libbenchmark-dev libelf-dev libdwarf-dev zlib1g-dev libnl-3-dev libnl-genl-3-dev libpopt-dev
    pip install protobuf==3.19.6 grpcio scapy flask iptools mitogen psutil pyroute2==0.8.1
    ```
-For details, please refer to prerequisites of BESS, DPDK (data plane) and UPF-EPC (control plane).
+For details, please refer to prerequisites of DPDK, BESS (data plane of UPF), UPF-EPC (control plane of UPF), mOS, and DPVS.
 
 ## Building PX library on DPDK
 Clients and servers' ARP tables should be set up correctly.
@@ -39,12 +39,13 @@ Clients and servers' ARP tables should be set up correctly.
    ```
 
 ## Configuring and building PX GW
-1. Move to gateway directory and build pxgw.
+1. Move to pxgw directory and build pxgw.
    ```Bash
-   cd $rootdir/gateway
+   cd $rootdir/pxgw
    ```
-2. Modify the ARP table in pxgw.c to make it fit to your environment.
-3. Build pxgw.
+2. Modify the ARP table, is_uplink(), and is_downlink() in pxgw.c to make it fit to your environment.
+3. Modify Makefile to choose build options.
+4. Build pxgw.
    ```Bash
    make -j
    ```
@@ -52,6 +53,26 @@ Clients and servers' ARP tables should be set up correctly.
 ## Running PX GW
    ```Bash
    sudo ./pxgw -c 32
+   ```
+   You can configure the number of worker cores using -c option.
+
+## Configuring and building baseline GW
+
+For naïve implementation, go to $rootdir/gw and do the same thing.
+1. Move to gw directory and build gw.
+   ```Bash
+   cd $rootdir/gw
+   ```
+2. Modify the ARP table in gw.c to make it fit to your environment.
+3. Modify Makefile to choose build options.
+4. Build gw
+   ```Bash
+   make -j
+   ```
+
+## Running GW
+   ```Bash
+   sudo ./gw -c 32
    ```
    You can configure the number of worker cores using -c option.
 
@@ -68,7 +89,7 @@ Our prototype UPF is implemented as modular network functions on BESS. So, build
    cd $rootdir/upf-epc/pfcpiface
    go build
    ```
-6. (Optional) If you want hairpin setup, modify upf-epc/scripts/hairpin_setup.sh and run it. It makes the firmwares to prepare hairpin setup. Note that hairpin_setup.sh requires sudo.
+6. (Optional) If you want to use hairpin, modify upf-epc/scripts/hairpin_setup.sh and run it. It makes the firmwares to prepare hairpin setup. Note that hairpin_setup.sh requires sudo.
    ```Bash
    cd $rootdir/upf-epc/scripts
    sudo ./hairpin_setup.sh
