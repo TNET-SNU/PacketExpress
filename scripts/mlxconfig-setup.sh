@@ -1,22 +1,22 @@
 #!/bin/bash
 
 # check which parameter should be updated
-# default="
-#       LRO_LOG_TIMEOUT0=6
-#       LRO_LOG_TIMEOUT1=7
-#       LRO_LOG_TIMEOUT2=8
-#       LRO_LOG_TIMEOUT3=13
-#"
-
 setup="
-	LRO_LOG_TIMEOUT0=6
-	LRO_LOG_TIMEOUT1=7
-	LRO_LOG_TIMEOUT2=8
+	REAL_TIME_CLOCK_ENABLE=1 \
+	LARGE_MTU_TWEAK_64=1 \
+	HAIRPIN_DATA_BUFFER_LOCK=1 \
+	MEMIC_SIZE_LIMIT=1 \
+	FLEX_PARSER_PROFILE_ENABLE=3 \
+	SRIOV_EN=1 \
+	UCTX_EN=1 \
+	LRO_LOG_TIMEOUT0=6 \
+	LRO_LOG_TIMEOUT1=7 \
+	LRO_LOG_TIMEOUT2=8 \
 	LRO_LOG_TIMEOUT3=13
 "
 
 # check the name of device in /dev/mst/
-devname="mt4125"
+devname="mt4129"
 
 # check the number of device
 devnum=4
@@ -28,8 +28,8 @@ mst start
 i=0
 while [ "$i" -lt $devnum ]
 do
-	eval yes | mlxconfig -d /dev/mst/$devname"_pciconf"$i set $setup
-	eval yes | mlxfwreset -d /dev/mst/$devname"_pciconf"$i reset
+    mlxconfig -d /dev/mst/$devname"_pciconf"$i -y set $setup
+	mlxfwreset -d /dev/mst/$devname"_pciconf"$i -y reset
 	i=$(expr $i + 1)
 done
 

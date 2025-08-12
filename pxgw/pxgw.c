@@ -34,12 +34,12 @@
 /*----------------------------------------------------------------------------*/
 /* Essential macros */
 #if NICMEM
-// #define MBUF_DATA_SIZE (49152 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM)
+/* Make sure you setup LARGE_MTU_TWEAK_64 as 1 */
 #define MBUF_DATA_SIZE (65536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
 #define NB_MBUF ((2 * 1024 * 1024) - 1)
 #else
 #if USE_LRO
-// #define MBUF_DATA_SIZE (49152 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM)
+/* Make sure you setup LARGE_MTU_TWEAK_64 as 1 */
 #define MBUF_DATA_SIZE (65536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
 #define NB_MBUF ((1024 * 1024) - 1)
 #else
