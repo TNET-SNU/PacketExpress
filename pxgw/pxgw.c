@@ -89,6 +89,53 @@ static struct px_arp_entry g_arp_entries[] = {
     {"10.3.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
     {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
 };
+static struct px_arp_entry g_arp_entries_two_hops[] = {
+    {"10.1.90.2", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
+    {"10.2.90.2", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
+    {"10.3.90.2", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
+    {"10.4.90.2", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
+
+    {"10.1.95.2", "a0:88:c2:d6:9d:d2"}, // stream2
+    {"10.2.95.2", "58:a2:e1:a7:a8:b6"}, // stream4
+    {"10.3.95.2", "58:a2:e1:a7:aa:7e"}, // stream6
+    {"10.4.95.2", "58:a2:e1:a7:aa:86"}, // stream8
+
+    {"10.1.90.1", "58:a2:e1:a7:a8:46"}, // rapids1.eth0
+    {"10.2.90.1", "58:a2:e1:a7:a9:be"}, // rapids1.eth1
+    {"10.3.90.1", "58:a2:e1:a7:a8:c6"}, // rapids1.eth2
+    {"10.4.90.1", "a0:88:c2:d7:81:0e"}, // rapids1.eth3
+
+    {"10.1.95.1", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
+    {"10.2.95.1", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
+    {"10.3.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
+    {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
+};
+static struct px_arp_entry g_arp_entries_two_hops_dpvs[] = {
+    {"10.1.90.10", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
+    {"10.2.90.10", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
+    {"10.3.90.10", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
+    {"10.4.90.10", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
+
+    {"10.1.90.20", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
+    {"10.2.90.20", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
+    {"10.3.90.20", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
+    {"10.4.90.20", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
+
+    {"10.1.95.2", "a0:88:c2:d6:9d:d2"}, // stream2
+    {"10.2.95.2", "58:a2:e1:a7:a8:b6"}, // stream4
+    {"10.3.95.2", "58:a2:e1:a7:aa:7e"}, // stream6
+    {"10.4.95.2", "58:a2:e1:a7:aa:86"}, // stream8
+
+    {"10.1.90.1", "58:a2:e1:a7:a8:46"}, // rapids1.eth0
+    {"10.2.90.1", "58:a2:e1:a7:a9:be"}, // rapids1.eth1
+    {"10.3.90.1", "58:a2:e1:a7:a8:c6"}, // rapids1.eth2
+    {"10.4.90.1", "a0:88:c2:d7:81:0e"}, // rapids1.eth3
+
+    {"10.1.95.1", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
+    {"10.2.95.1", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
+    {"10.3.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
+    {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
+};
 /*----------------------------------------------------------------------------*/
 /* static routing table configuration */
 static int

@@ -1,5 +1,10 @@
 #!/bin/bash
 
+set -o pipefail
+set -e
+set -x
+# set -v
+
 # check which parameter should be updated
 setup="
 	REAL_TIME_CLOCK_ENABLE=1 \

@@ -569,6 +569,7 @@ int hp_context_init(int thread_core_id,
 
     if (g_thread_core_id != -1)
     {
+        /* already initialized */
         return 0;
     }
 

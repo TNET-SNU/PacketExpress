@@ -4,6 +4,7 @@
 struct px_dev g_px_dev[RTE_MAX_ETHPORTS] = {0};
 static struct px_ctx g_pctx[RTE_MAX_ETHPORTS][PX_MAX_QUEUES_PER_PORT] = {0};
 static struct rte_mempool *g_clone_pool[RTE_MAX_NUMA_NODES] = {NULL};
+int g_is_semantic_test = 0;
 /*----------------------------------------------------------------------------*/
 /* Below are for default RSS hash */
 static uint8_t *g_rss_key = NULL;
@@ -1133,22 +1134,17 @@ is_stall_needed(struct px_ctx *pctx,
     float factor;
     double avg_iat;
     int ret;
-#if ADAPTIVE_TIMEOUT
+    uint32_t max_seg_nb, missing_segs_nb;
 
-    uint32_t max_seg_nb = target_segsz / orig_segsz;
+    max_seg_nb = target_segsz / orig_segsz;
     if ((max_seg_nb == 0) || (get_data_len(cur_pkt) >= target_segsz))
     {
         /* no need to stall */
         return 0;
     }
-
-    uint32_t missing_segs_nb = (target_segsz - get_data_len(cur_pkt)) /
-                               orig_segsz;
-
+    missing_segs_nb = (target_segsz - get_data_len(cur_pkt)) /
+                      orig_segsz;
     factor = get_time_factor(missing_segs_nb);
-#else
-    factor = 1.0f; // Default factor for non-adaptive timeout
-#endif
     ret = iat_search_entry(pctx->iat_ctx,
                            cur_pkt,
                            g_px_dev[pctx->port_id].cutoff_ns,
@@ -1157,7 +1153,6 @@ is_stall_needed(struct px_ctx *pctx,
     if (ret < 0)
     {
         fprintf(stderr, "iat table search failed\n");
-        // avg_iat = g_px_dev[pctx->port_id].cutoff_ns; // Use cutoff
     }
     diff_ns = get_nsec_diff(&pctx->now_ns, timestamp);
     timeout_ns = (int64_t)(avg_iat * factor);
@@ -1751,13 +1746,24 @@ int px_parse_packet(struct px_ctx *pctx,
         }
 
         /* update IAT for delayed merging */
-#if SEMANTIC_TEST
-        /* check if the pkt is outgoing */
-        if (is_uplink(pkt))
+        if (g_is_semantic_test)
         {
-            mark_px(pkt);
+            /* check if the pkt is outgoing */
+            if (is_uplink(pkt))
+            {
+                mark_px(pkt);
+            }
+            else if (is_downlink(pkt))
+            {
+                if (pctx->stalls)
+                {
+                    iat_update_entry(pctx->iat_ctx, pkt,
+                                     g_px_dev[pctx->port_id].cutoff_ns,
+                                     &pctx->now_ns);
+                }
+            }
         }
-        else if (is_downlink(pkt))
+        else
         {
             if (pctx->stalls)
             {
@@ -1766,16 +1772,6 @@ int px_parse_packet(struct px_ctx *pctx,
                                  &pctx->now_ns);
             }
         }
-#else
-        (void)is_uplink;
-        (void)is_downlink;
-        if (pctx->stalls)
-        {
-            iat_update_entry(pctx->iat_ctx, pkt,
-                             g_px_dev[pctx->port_id].cutoff_ns,
-                             &pctx->now_ns);
-        }
-#endif
 
         /* parse for TCP GRO */
         ret = parse_for_tcp_gro(pkt, tcp_flags);
@@ -1811,13 +1807,24 @@ int px_parse_packet(struct px_ctx *pctx,
         }
 
         /* update IAT for delayed merging */
-#if SEMANTIC_TEST
-        /* check if the pkt is outgoing */
-        if (is_uplink(pkt))
+        if (g_is_semantic_test)
         {
-            mark_px(pkt);
+            /* check if the pkt is outgoing */
+            if (is_uplink(pkt))
+            {
+                mark_px(pkt);
+            }
+            else if (is_downlink(pkt))
+            {
+                if (pctx->stalls)
+                {
+                    iat_update_entry(pctx->iat_ctx, pkt,
+                                     g_px_dev[pctx->port_id].cutoff_ns,
+                                     &pctx->now_ns);
+                }
+            }
         }
-        else if (is_downlink(pkt))
+        else
         {
             if (pctx->stalls)
             {
@@ -1826,16 +1833,6 @@ int px_parse_packet(struct px_ctx *pctx,
                                  &pctx->now_ns);
             }
         }
-#else
-        (void)is_uplink;
-        (void)is_downlink;
-        if (pctx->stalls)
-        {
-            iat_update_entry(pctx->iat_ctx, pkt,
-                             g_px_dev[pctx->port_id].cutoff_ns,
-                             &pctx->now_ns);
-        }
-#endif
 
         /* use below when stop UDP GRO */
         // return -1;
@@ -1925,7 +1922,8 @@ void px_parse_batch(uint16_t port_id,
                     struct rte_mbuf **pkts,
                     uint16_t nb_pkts,
                     int trans_mtu,
-                    int hwcsum)
+                    int hwcsum,
+                    int is_semantic_test)
 {
     struct px_ctx *pctx = &g_pctx[port_id][queue_id];
     struct rte_mbuf *pkt;
@@ -1957,18 +1955,21 @@ void px_parse_batch(uint16_t port_id,
                 }
 
                 /* update MSS */
-#if SEMANTIC_TEST
-                if (is_uplink_default(pkt))
+                if (is_semantic_test)
                 {
-                    update_mss(mss_ptr, 0, 0);
+                    if (is_uplink_default(pkt))
+                    {
+                        update_mss(mss_ptr, 0, 0);
+                    }
+                    else if (is_downlink_default(pkt))
+                    {
+                        update_mss(mss_ptr, 0, 1);
+                    }
                 }
-                else if (is_downlink_default(pkt))
+                else
                 {
                     update_mss(mss_ptr, 0, 1);
                 }
-#else
-                update_mss(mss_ptr, 0, 1);
-#endif
             }
         }
     }
@@ -1977,9 +1978,11 @@ void px_parse_batch(uint16_t port_id,
 void px_setup_tso_burst(uint16_t port_id,
                         uint16_t queue_id,
                         struct rte_mbuf **pkts,
-                        uint16_t nb_pkts)
+                        uint16_t nb_pkts,
+                        int is_semantic_test)
 {
     struct px_ctx *pctx = &g_pctx[port_id][queue_id];
+    (void)pctx;
     struct rte_mbuf *pkt;
     uint16_t segsz;
     uint16_t i;
@@ -1995,30 +1998,32 @@ void px_setup_tso_burst(uint16_t port_id,
         }
         pkt->l4_len = (*get_tcp_doff(pkt) >> 4) << 2;
 
-#if SEMANTIC_TEST
-        if (is_uplink_default(pkt))
+        if (is_semantic_test)
         {
-            segsz = (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len);
+            if (is_uplink_default(pkt))
+            {
+                segsz = (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len);
+            }
+            else if (is_downlink_default(pkt))
+            {
+                segsz = (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len) *
+                        ((DEFAULT_iMTU - pkt->l3_len - pkt->l4_len) /
+                         (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len));
+            }
+            else
+            {
+                /* unknown direction */
+                fprintf(stderr, "Unknown direction. "
+                                "Assume 1500B MTU for TSO segment size.\n");
+                segsz = (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len);
+            }
         }
-        else if (is_downlink_default(pkt))
+        else
         {
             segsz = (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len) *
                     ((DEFAULT_iMTU - pkt->l3_len - pkt->l4_len) /
                      (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len));
         }
-        else
-        {
-            /* unknown direction */
-            fprintf(stderr, "Unknown direction. "
-                            "Assume 1500B MTU for TSO segment size.\n");
-            segsz = (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len);
-        }
-#else
-        (void)pctx;
-        segsz = (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len) *
-                ((DEFAULT_iMTU - pkt->l3_len - pkt->l4_len) /
-                 (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len));
-#endif
         if (get_data_len(pkt) > segsz)
         {
             setup_tso(pkt, segsz);
@@ -2094,8 +2099,7 @@ link_and_flush(struct px_ctx *pctx,
                 }
                 else
                 {
-#if SEMANTIC_TEST
-                    if (is_px(cur_pkt))
+                    if (g_is_semantic_test && is_px(cur_pkt))
                     {
                         orig_segsz = get_data_len(cur_pkt);
                         target_segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len);
@@ -2107,21 +2111,15 @@ link_and_flush(struct px_ctx *pctx,
                                        ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
                                         orig_segsz);
                     }
-#else
-                    orig_segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len);
-                    target_segsz = orig_segsz *
-                                   ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
-                                    orig_segsz);
-#endif
                 }
 
                 /* check if delayed merging needed and if is from outside */
-#if SEMANTIC_TEST
+                if (g_is_semantic_test && is_px(cur_pkt))
+                {
+                    goto No_stall_tcp;
+                }
                 /* only for incoming packets when delayed merging enabled */
-                if (pctx->stalls && !is_px(cur_pkt))
-#else
                 if (pctx->stalls)
-#endif
                 {
                     /* check if previous packet is stalled */
                     if (stall_this_flow)
@@ -2190,23 +2188,46 @@ link_and_flush(struct px_ctx *pctx,
                         }
                     }
                 }
+            No_stall_tcp:
                 // printf("target_segsz: %d\n", target_segsz);
                 update_tcp(cur_pkt, target_segsz);
             }
             else if (is_udp(cur_pkt))
             {
-#if SEMANTIC_TEST
-                /* if outgoing packet */
-                if (is_px(cur_pkt))
+                if (g_is_semantic_test)
                 {
-                    orig_segsz = get_data_len(cur_pkt);
-                    /* ToDo: Get the eMTU size from the PX header */
-                    target_segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len);
+                    /* if outgoing packet */
+                    if (is_px(cur_pkt))
+                    {
+                        orig_segsz = get_data_len(cur_pkt);
+                        /* ToDo: Get the eMTU size from the PX header */
+                        target_segsz = (DEFAULT_eMTU - cur_pkt->l3_len - cur_pkt->l4_len);
+                    }
+                    /* if incoming packet */
+                    else
+                    {
+                        // if (g_px_dev[pctx->port_id].nm_ctx.num_nicmem > 0)
+                        if (!cur_pkt->next || !is_nicmem(cur_pkt->next))
+                        {
+                            // printf("is not nicmem\n");
+                            orig_segsz = cur_pkt->data_len - get_hdr_len(cur_pkt);
+                        }
+                        else
+                        {
+                            // printf("is nicmem\n");
+                            orig_segsz = cur_pkt->data_len + cur_pkt->next->data_len -
+                                         get_hdr_len(cur_pkt);
+                        }
+                        target_segsz = orig_segsz *
+                                       ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
+                                        orig_segsz);
+                        assert((int)target_segsz <= DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len);
+                        // printf("orig_segsz: %d, data_len: %d, next->data_len: %d, target_segsz: %d\n",
+                        //        orig_segsz, cur_pkt->data_len, cur_pkt->next->data_len, target_segsz);
+                    }
                 }
-                /* if incoming packet */
                 else
                 {
-                    // if (g_px_dev[pctx->port_id].nm_ctx.num_nicmem > 0)
                     if (!cur_pkt->next || !is_nicmem(cur_pkt->next))
                     {
                         // printf("is not nicmem\n");
@@ -2225,34 +2246,15 @@ link_and_flush(struct px_ctx *pctx,
                     // printf("orig_segsz: %d, data_len: %d, next->data_len: %d, target_segsz: %d\n",
                     //        orig_segsz, cur_pkt->data_len, cur_pkt->next->data_len, target_segsz);
                 }
-#else
-                if (!cur_pkt->next || !is_nicmem(cur_pkt->next))
-                {
-                    // printf("is not nicmem\n");
-                    orig_segsz = cur_pkt->data_len - get_hdr_len(cur_pkt);
-                }
-                else
-                {
-                    // printf("is nicmem\n");
-                    orig_segsz = cur_pkt->data_len + cur_pkt->next->data_len -
-                                 get_hdr_len(cur_pkt);
-                }
-                target_segsz = orig_segsz *
-                               ((DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len) /
-                                orig_segsz);
-                assert((int)target_segsz <= DEFAULT_iMTU - cur_pkt->l3_len - cur_pkt->l4_len);
-                // printf("orig_segsz: %d, data_len: %d, next->data_len: %d, target_segsz: %d\n",
-                //        orig_segsz, cur_pkt->data_len, cur_pkt->next->data_len, target_segsz);
-#endif
                 // printf("orig_segsz: %d, target_segsz: %d\n", orig_segsz, target_segsz);
 
                 /* check if delayed merging needed and if is from outside */
-#if SEMANTIC_TEST
+                if (g_is_semantic_test && is_px(cur_pkt))
+                {
+                    goto No_stall_udp;
+                }
                 /* only for incoming packets when delayed merging enabled */
-                if (pctx->stalls && !is_px(cur_pkt))
-#else
                 if (pctx->stalls)
-#endif
                 {
                     if (stall_this_flow)
                     {
@@ -2290,6 +2292,7 @@ link_and_flush(struct px_ctx *pctx,
                     }
                     // printf("get_data_len(cur_pkt): %d, target_segsz: %d\n", get_data_len(cur_pkt), target_segsz);
                 }
+            No_stall_udp:
                 update_udp(cur_pkt);
 
                 /* make UDP packets continuous for UDP_GRO at endpoints */
@@ -2677,8 +2680,7 @@ px_core(struct px_ctx *pctx,
                         }
                         else
                         {
-#if SEMANTIC_TEST
-                            if (is_px(pkt))
+                            if (g_is_semantic_test && is_px(pkt))
                             {
                                 segsz = (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len);
                             }
@@ -2688,11 +2690,6 @@ px_core(struct px_ctx *pctx,
                                         ((DEFAULT_iMTU - pkt->l3_len - pkt->l4_len) /
                                          (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len));
                             }
-#else
-                            segsz = (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len) *
-                                    ((DEFAULT_iMTU - pkt->l3_len - pkt->l4_len) /
-                                     (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len));
-#endif
                         }
 
                         /* update MSS */
@@ -2722,110 +2719,113 @@ px_core(struct px_ctx *pctx,
     return cnt;
 }
 /*----------------------------------------------------------------------------*/
-void px_deinit(uint16_t port_id,
-               uint16_t queue_id)
+void px_deinit(uint16_t port_id)
 {
-    printf("Deinitializing PX context for port %u, queue %u\n", port_id, queue_id);
-    struct px_ctx *pctx = &g_pctx[port_id][queue_id];
     struct px_dev *px_dev = &g_px_dev[port_id];
+    struct px_ctx *pctx;
     int i;
+    uint16_t queue_id;
 
-    /* remove all rules from rules queue */
-    px_del_rule_all(port_id, queue_id);
-    rule_init(port_id, queue_id);
-
-    if (pctx->mss_ctx)
+    if (px_stop_print_thread() < 0)
     {
-        if (mss_destroy_ctx(pctx->mss_ctx) < 0)
-        {
-            rte_exit(EXIT_FAILURE, "Cannot destroy MSS ctx\n");
-        }
-        pctx->mss_ctx = NULL;
+        rte_exit(EXIT_FAILURE, "Error joining stat thread\n");
     }
-
-    if (pctx->iat_ctx)
-    {
-        if (iat_destroy_ctx(pctx->iat_ctx) < 0)
-        {
-            rte_exit(EXIT_FAILURE, "Cannot destroy IAT ctx\n");
-        }
-        pctx->iat_ctx = NULL;
-    }
-
-    /* free items array */
-    if (pctx->items)
-    {
-        free(pctx->items);
-        pctx->items = NULL;
-    }
-
-    /* free flows array */
-    if (pctx->flows)
-    {
-        free(pctx->flows);
-        pctx->flows = NULL;
-    }
-
-    /* free buckets array */
-    if (pctx->buckets)
-    {
-        free(pctx->buckets);
-        pctx->buckets = NULL;
-    }
-
-    /* free stalls descriptors */
-    if (pctx->stalls)
-    {
-        /* free stall arrays */
-        for (i = 0; i < px_dev->num_rxq_incr; i++)
-        {
-            if (pctx->stalls[i].items)
-            {
-                free(pctx->stalls[i].items);
-                pctx->stalls[i].items = NULL;
-            }
-        }
-        free(pctx->stalls);
-        pctx->stalls = NULL;
-
-        /* free RX/TX rings */
-        px_ring_deinit(&pctx->rx_ring);
-        px_ring_deinit(&pctx->tx_ring);
-    }
-
-    /* reset pctx */
-    memset(pctx, 0, sizeof(*pctx));
-
-    // if (px_stop_print_thread() < 0)
-    // {
-    //     rte_exit(EXIT_FAILURE, "Error joining stat thread\n");
-    // }
 
     if (px_dev->initialized_hairpin)
     {
         hp_context_destroy();
     }
+
+    for (queue_id = 0; queue_id < px_dev->num_rxq; queue_id++)
+    {
+        pctx = &g_pctx[port_id][queue_id];
+        /* remove all rules from rules queue */
+        px_del_rule_all(port_id, queue_id);
+        rule_init(port_id, queue_id);
+
+        if (pctx->mss_ctx)
+        {
+            if (mss_destroy_ctx(pctx->mss_ctx) < 0)
+            {
+                rte_exit(EXIT_FAILURE, "Cannot destroy MSS ctx\n");
+            }
+            pctx->mss_ctx = NULL;
+        }
+
+        if (pctx->iat_ctx)
+        {
+            if (iat_destroy_ctx(pctx->iat_ctx) < 0)
+            {
+                rte_exit(EXIT_FAILURE, "Cannot destroy IAT ctx\n");
+            }
+            pctx->iat_ctx = NULL;
+        }
+
+        /* free items array */
+        if (pctx->items)
+        {
+            free(pctx->items);
+            pctx->items = NULL;
+        }
+
+        /* free flows array */
+        if (pctx->flows)
+        {
+            free(pctx->flows);
+            pctx->flows = NULL;
+        }
+
+        /* free buckets array */
+        if (pctx->buckets)
+        {
+            free(pctx->buckets);
+            pctx->buckets = NULL;
+        }
+
+        /* free stalls descriptors */
+        if (pctx->stalls)
+        {
+            /* free stall arrays */
+            for (i = 0; i < px_dev->num_rxq_incr; i++)
+            {
+                if (pctx->stalls[i].items)
+                {
+                    free(pctx->stalls[i].items);
+                    pctx->stalls[i].items = NULL;
+                }
+            }
+            free(pctx->stalls);
+            pctx->stalls = NULL;
+
+            /* free RX/TX rings */
+            px_ring_deinit(&pctx->rx_ring);
+            px_ring_deinit(&pctx->tx_ring);
+        }
+
+        /* reset pctx */
+        memset(pctx, 0, sizeof(*pctx));
+    }
 }
 /*----------------------------------------------------------------------------*/
 int px_init(uint16_t port_id,
-            uint16_t queue_id,
             int burst,
             int mss_table_size,
             int iat_table_size,
             int (*is_uplink)(struct rte_mbuf *),
             int (*is_downlink)(struct rte_mbuf *),
-            int do_link)
+            int do_link,
+            int is_semantic_test)
 {
-    printf("Initializing PX context for port %u, queue %u\n", port_id, queue_id);
     struct px_dev *px_dev = &g_px_dev[port_id];
     struct px_ctx *pctx;
     struct px_stall *stall;
     uint16_t table_size, num_rxq_incr = px_dev->num_rxq_incr;
-    int i, rule_id;
+    int ret, i, rule_id;
     struct px_pattern patterns[2];
     struct rte_flow_item_ipv4 ipv4_mask;
     struct rte_flow_item_tcp tcp_mask;
     struct px_action actions[2];
+    uint16_t queue_id;
 
     if (!num_rxq_incr)
     {
@@ -2833,176 +2833,191 @@ int px_init(uint16_t port_id,
                  "please set up the number of latent queues before init PX\n");
     }
 
-    /* deinit pctx if already initialized */
-    px_deinit(port_id, queue_id);
+    g_is_semantic_test = is_semantic_test;
 
-    pctx = &g_pctx[port_id][queue_id];
-    pctx->socket_id = rte_eth_dev_socket_id(port_id);
-    pctx->port_id = port_id;
-    pctx->queue_id = queue_id;
-    pctx->latent_id = 0;
-    pctx->do_link = do_link;
-    if (is_uplink)
+    for (queue_id = 0; queue_id < px_dev->num_rxq; queue_id++)
     {
-        pctx->is_uplink = is_uplink;
-    }
-    else
-    {
-        pctx->is_uplink = is_uplink_default;
-    }
-    if (is_downlink)
-    {
-        pctx->is_downlink = is_downlink;
-    }
-    else
-    {
-        pctx->is_downlink = is_downlink_default;
-    }
-
-    if (mss_table_size && !pctx->mss_ctx)
-    {
-        pctx->mss_ctx = mss_init_ctx(port_id, queue_id, mss_table_size);
-        if (!pctx->mss_ctx)
+        pctx = &g_pctx[port_id][queue_id];
+        pctx->socket_id = rte_eth_dev_socket_id(port_id);
+        pctx->port_id = port_id;
+        pctx->queue_id = queue_id;
+        pctx->latent_id = 0;
+        pctx->initialized = 1;
+        pctx->do_link = do_link;
+        if (is_uplink)
         {
-            rte_exit(EXIT_FAILURE, "Cannot init MSS ctx\n");
+            pctx->is_uplink = is_uplink;
         }
-    }
-    if (px_dev->cutoff_ns && iat_table_size && !pctx->iat_ctx)
-    {
-        pctx->iat_ctx = iat_init_ctx(port_id, queue_id, iat_table_size, EWMA_ALPHA);
-        if (!pctx->iat_ctx)
+        else
         {
-            rte_exit(EXIT_FAILURE, "Cannot init IAT ctx\n");
+            pctx->is_uplink = is_uplink_default;
         }
-    }
+        if (is_downlink)
+        {
+            pctx->is_downlink = is_downlink;
+        }
+        else
+        {
+            pctx->is_downlink = is_downlink_default;
+        }
 
-    /* estimate table size */
-    // table_size = burst * (px_dev->stall_limit + 1);
+        if (mss_table_size && !pctx->mss_ctx)
+        {
+            pctx->mss_ctx = mss_init_ctx(port_id, queue_id, mss_table_size);
+            if (!pctx->mss_ctx)
+            {
+                rte_exit(EXIT_FAILURE, "Cannot init MSS ctx\n");
+            }
+        }
+        if (px_dev->cutoff_ns && iat_table_size && !pctx->iat_ctx)
+        {
+            pctx->iat_ctx = iat_init_ctx(port_id, queue_id, iat_table_size, EWMA_ALPHA);
+            if (!pctx->iat_ctx)
+            {
+                rte_exit(EXIT_FAILURE, "Cannot init IAT ctx\n");
+            }
+        }
 
-    if (px_dev->cutoff_ns)
-    {
-        /* ToDo: Use mempool for items, flows, buckets, stalls array
-         * estimate the buffer size as BW * Delay */
-        table_size = UINT16_MAX;
-    }
-    else
-    {
-        table_size = burst;
-    }
-    pctx->array_size = table_size;
+        /* estimate table size */
+        // table_size = burst * (px_dev->stall_limit + 1);
 
-    /* alloc items array */
-    if (!pctx->items)
-    {
-        pctx->items = (struct px_item *)calloc(pctx->array_size,
-                                               sizeof(struct px_item));
+        if (px_dev->cutoff_ns)
+        {
+            /* ToDo: Use mempool for items, flows, buckets, stalls array
+             * estimate the buffer size as BW * Delay */
+            table_size = UINT16_MAX;
+        }
+        else
+        {
+            table_size = burst;
+        }
+        pctx->array_size = table_size;
+
+        /* alloc items array */
         if (!pctx->items)
         {
-            rte_exit(EXIT_FAILURE, "Cannot alloc items array\n");
+            pctx->items = (struct px_item *)calloc(pctx->array_size,
+                                                   sizeof(struct px_item));
+            if (!pctx->items)
+            {
+                rte_exit(EXIT_FAILURE, "Cannot alloc items array\n");
+            }
         }
-    }
-    /* alloc flows array */
-    if (!pctx->flows)
-    {
-        pctx->flows = (struct px_flow *)calloc(pctx->array_size,
-                                               sizeof(struct px_flow));
+        /* alloc flows array */
         if (!pctx->flows)
         {
-            rte_exit(EXIT_FAILURE, "Cannot alloc flows array\n");
-        }
-    }
-
-    /* initialize flow, item table */
-    pctx->flow_num = pctx->item_num = 0;
-
-    /* use larger table for buckets to reduce collision */
-    pctx->bucket_size = UINT16_MAX;
-    pctx->buckets = (uint16_t *)calloc(pctx->bucket_size, sizeof(uint16_t));
-    if (!pctx->buckets)
-    {
-        rte_exit(EXIT_FAILURE, "Cannot alloc buckets array\n");
-    }
-
-    /* initialize buckets */
-    memset(pctx->buckets, UINT8_MAX, pctx->bucket_size * sizeof(uint16_t));
-
-    /* make rule queue */
-    rule_init(port_id, queue_id);
-
-    /* initialize delayed merging */
-    if (px_dev->cutoff_ns && !pctx->stalls)
-    {
-        /* make stall queue descriptors */
-        pctx->stalls = (struct px_stall *)calloc(num_rxq_incr,
-                                                 sizeof(struct px_stall));
-        if (!pctx->stalls)
-        {
-            rte_exit(EXIT_FAILURE, "Cannot alloc stall descriptors\n");
-        }
-
-        /* make stall items array for each latent queue */
-        for (i = 0; i < num_rxq_incr; i++)
-        {
-            stall = &pctx->stalls[i];
-            stall->items = (struct px_item *)calloc(pctx->array_size,
-                                                    sizeof(struct px_item));
-            if (!stall->items)
+            pctx->flows = (struct px_flow *)calloc(pctx->array_size,
+                                                   sizeof(struct px_flow));
+            if (!pctx->flows)
             {
-                rte_exit(EXIT_FAILURE, "Cannot alloc stall items array\n");
+                rte_exit(EXIT_FAILURE, "Cannot alloc flows array\n");
             }
-            stall->num = 0;
         }
 
-        /* create PX RX ring as same size as original RX ring */
-        if (px_ring_init(&pctx->rx_ring, px_dev->nb_rx_desc[queue_id]) < 0)
+        /* initialize flow, item table */
+        pctx->flow_num = pctx->item_num = 0;
+
+        /* use larger table for buckets to reduce collision */
+        pctx->bucket_size = UINT16_MAX;
+        pctx->buckets = (uint16_t *)calloc(pctx->bucket_size, sizeof(uint16_t));
+        if (!pctx->buckets)
         {
-            rte_exit(EXIT_FAILURE, "px_ring_init failed\n");
+            rte_exit(EXIT_FAILURE, "Cannot alloc buckets array\n");
         }
 
-        /* create PX TX ring as same size as original TX ring */
-        if (px_ring_init(&pctx->tx_ring, px_dev->nb_tx_desc[queue_id]) < 0)
+        /* initialize buckets */
+        memset(pctx->buckets, UINT8_MAX, pctx->bucket_size * sizeof(uint16_t));
+
+        /* initialize delayed merging */
+        if (px_dev->cutoff_ns && !pctx->stalls)
         {
-            rte_exit(EXIT_FAILURE, "px_ring_init failed\n");
+            /* make stall queue descriptors */
+            pctx->stalls = (struct px_stall *)calloc(num_rxq_incr,
+                                                     sizeof(struct px_stall));
+            if (!pctx->stalls)
+            {
+                rte_exit(EXIT_FAILURE, "Cannot alloc stall descriptors\n");
+            }
+
+            /* make stall items array for each latent queue */
+            for (i = 0; i < num_rxq_incr; i++)
+            {
+                stall = &pctx->stalls[i];
+                stall->items = (struct px_item *)calloc(pctx->array_size,
+                                                        sizeof(struct px_item));
+                if (!stall->items)
+                {
+                    rte_exit(EXIT_FAILURE, "Cannot alloc stall items array\n");
+                }
+                stall->num = 0;
+            }
+
+            /* create PX RX ring as same size as original RX ring */
+            ret = px_ring_init(&pctx->rx_ring, px_dev->nb_rx_desc[queue_id]);
+            if (ret < 0)
+            {
+                rte_exit(EXIT_FAILURE, "px_ring_init failed\n");
+            }
+
+            /* create PX TX ring as same size as original TX ring */
+            ret = px_ring_init(&pctx->tx_ring, px_dev->nb_tx_desc[queue_id]);
+            if (ret < 0)
+            {
+                rte_exit(EXIT_FAILURE, "px_ring_init failed\n");
+            }
         }
+
+        /* make rule queue */
+        rule_init(port_id, queue_id);
+
+        /* make default patterns for simple four tuple rule */
+        memset(&ipv4_mask, 0, sizeof(struct rte_flow_item_ipv4));
+        ipv4_mask.hdr.src_addr = UINT32_MAX;
+        ipv4_mask.hdr.dst_addr = UINT32_MAX;
+        patterns[0].type = RTE_FLOW_ITEM_TYPE_IPV4;
+        patterns[0].mask = &ipv4_mask;
+        memset(&tcp_mask, 0, sizeof(struct rte_flow_item_tcp));
+        tcp_mask.hdr.src_port = UINT16_MAX;
+        tcp_mask.hdr.dst_port = UINT16_MAX;
+        patterns[1].type = RTE_FLOW_ITEM_TYPE_TCP;
+        patterns[1].mask = &tcp_mask;
+
+        /* make default actions for simple four tuple rule */
+        actions[0].type = RTE_FLOW_ACTION_TYPE_VOID;
+        actions[1].type = RTE_FLOW_ACTION_TYPE_VOID;
+
+        /* if no rule is added, add a global rule (usuaully four tuple) */
+        rule_id = px_add_rule(port_id, queue_id, patterns, 2, actions, 2);
+        if (rule_id < 0)
+        {
+            rte_exit(EXIT_FAILURE, "px_add_rule failed\n");
+        }
+
+        /* set this rule as primary rule */
+        pctx->rule = rule_search(port_id, queue_id, rule_id);
     }
 
     /* initiate hairpin context */
     if (px_dev->initialized_hairpin)
     {
-        if (hp_context_init(get_num_cpus() - 1,
-                            PER_CORE_HOST_CACHE_SIZE,
-                            PER_PORT_NIC_CACHE_SIZE) < 0)
+        ret = hp_context_init(get_num_cpus() - 1,
+                              PER_CORE_HOST_CACHE_SIZE,
+                              PER_PORT_NIC_CACHE_SIZE);
+        if (ret < 0)
         {
             fprintf(stderr, "hp_context_init() failed\n");
             return -1;
         }
     }
 
-    /* make default patterns for simple four tuple rule */
-    memset(&ipv4_mask, 0, sizeof(struct rte_flow_item_ipv4));
-    ipv4_mask.hdr.src_addr = UINT32_MAX;
-    ipv4_mask.hdr.dst_addr = UINT32_MAX;
-    patterns[0].type = RTE_FLOW_ITEM_TYPE_IPV4;
-    patterns[0].mask = &ipv4_mask;
-    memset(&tcp_mask, 0, sizeof(struct rte_flow_item_tcp));
-    tcp_mask.hdr.src_port = UINT16_MAX;
-    tcp_mask.hdr.dst_port = UINT16_MAX;
-    patterns[1].type = RTE_FLOW_ITEM_TYPE_TCP;
-    patterns[1].mask = &tcp_mask;
-
-    /* make default actions for simple four tuple rule */
-    actions[0].type = RTE_FLOW_ACTION_TYPE_VOID;
-    actions[1].type = RTE_FLOW_ACTION_TYPE_VOID;
-
-    /* if no rule is added, add a global rule (usuaully four tuple) */
-    rule_id = px_add_rule(port_id, queue_id, patterns, 2, actions, 2);
-    if (rule_id < 0)
+    /* thread for stat printing */
+    ret = px_start_print_thread(1, rte_eth_dev_count_avail(),
+                                px_dev->num_rxq,
+                                px_dev->num_txq);
+    if (ret < 0)
     {
-        rte_exit(EXIT_FAILURE, "px_add_rule failed\n");
+        rte_exit(EXIT_FAILURE, "Error creating stat thread: %d\n", ret);
     }
-
-    /* set this rule as primary rule */
-    pctx->rule = rule_search(port_id, queue_id, rule_id);
 
     return 0;
 }
@@ -3307,13 +3322,6 @@ int px_eth_dev_configure(uint16_t port_id,
 
         /* mark hairpin */
         px_dev->initialized_hairpin = 1;
-    }
-
-    /* thread for stat printing */
-    ret = px_start_print_thread(1);
-    if (ret < 0)
-    {
-        rte_exit(EXIT_FAILURE, "Error creating stat thread: %d\n", ret);
     }
 
     /* init RX hardware timestamp if necessary */

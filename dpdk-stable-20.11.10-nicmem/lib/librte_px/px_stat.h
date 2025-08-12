@@ -64,6 +64,7 @@ struct px_tx_stat
     /* only packets with payload */
     uint64_t data_bytes_cnt;
     uint64_t data_pkt_cnt;
+    uint64_t data_downlink_pkt_cnt;
     uint64_t data_pkt_segs_cnt;
     uint64_t data_pkt_cnt_in_batch;
     uint64_t batch_cnt;
@@ -103,7 +104,10 @@ void px_print_stats(int args);
 /*----------------------------------------------------------------------------*/
 void *px_stat_cb(void *args);
 /*----------------------------------------------------------------------------*/
-int px_start_print_thread(unsigned int stat_interval);
+int px_start_print_thread(unsigned int stat_interval,
+                          int num_ports,
+                          int num_rxqs,
+                          int num_txqs);
 /*----------------------------------------------------------------------------*/
 int px_stop_print_thread(void);
 /*----------------------------------------------------------------------------*/

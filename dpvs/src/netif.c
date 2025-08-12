@@ -1801,7 +1801,8 @@ static inline uint16_t netif_rx_burst(portid_t pid, struct netif_queue_conf *qco
 #else
         nrx = rte_eth_rx_burst(pid, qconf->id, qconf->mbufs, NETIF_MAX_PKT_BURST);
 #if (USE_LRO || USE_DGRO)
-        px_parse_batch(pid, qconf->id, qconf->mbufs, nrx, !JUMBO_FRAME, 1);
+        px_parse_batch(pid, qconf->id, qconf->mbufs, nrx,
+                       !JUMBO_FRAME, 1, SEMANTIC_TEST);
 #endif
 #if USE_DGRO
         struct rte_gro_param gro_param = {
@@ -2154,7 +2155,7 @@ static inline void netif_tx_burst(lcoreid_t cid, portid_t pid, queueid_t qindex)
     px_unlink_and_uso(txq->mbufs, txq->len, NULL);
 #endif
 #if USE_CGRO || USE_LRO || USE_DGRO
-    px_setup_tso_burst(pid, txq->id, txq->mbufs, txq->len);
+    px_setup_tso_burst(pid, txq->id, txq->mbufs, txq->len, SEMANTIC_TEST);
 #endif
     ntx = rte_eth_tx_burst(pid, txq->id, txq->mbufs, txq->len);
     lcore_stats[cid].opackets += ntx;
@@ -4086,18 +4087,6 @@ int netif_port_start(struct netif_port *port)
                         __func__, port->name, qid);
                 return EDPVS_DPDKAPIFAIL;
             }
-#if USE_CGRO
-            ret = px_init(port->id, qid,
-                          NETIF_MAX_PKT_BURST,
-                          !JUMBO_FRAME ? 4096 : 0,
-                          CUTOFF_NS ? 4096: 0,
-                          NULL, NULL, USE_LINK);
-            if (ret < 0) {
-                RTE_LOG(ERR, NETIF, "%s: fail to config %s:rx-queue-%d\n",
-                        __func__, port->name, qid);
-                return EDPVS_DPDKAPIFAIL;
-            }
-#endif
         }
     }
 
@@ -4135,6 +4124,20 @@ int netif_port_start(struct netif_port *port)
 
     // build port-queue-lcore mapping array
     build_port_queue_lcore_map();
+
+#if USE_CGRO
+    // start PX
+    ret = px_init(port->id,
+                  NETIF_MAX_PKT_BURST,
+                  !JUMBO_FRAME ? 4096 : 0,
+                  CUTOFF_NS ? 4096: 0,
+                  NULL, NULL, USE_LINK, SEMANTIC_TEST);
+    if (ret < 0) {
+        RTE_LOG(ERR, NETIF, "%s: fail to start PX on %s\n",
+                __func__, port->name);
+        return EDPVS_DPDKAPIFAIL;
+    }
+#endif
 
     // start the device
     ret = rte_eth_dev_start(port->id);
@@ -4209,8 +4212,7 @@ int netif_port_stop(struct netif_port *port)
         kni_del_dev(port);
 
 #if USE_CGRO
-    for (int qid = 0; qid < port->nrxq; qid++)
-        px_deinit(port->id, qid);
+    px_deinit(port->id);
 #endif
     rte_eth_dev_stop(port->id);
     ret = rte_eth_dev_set_link_down(port->id);

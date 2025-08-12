@@ -125,6 +125,16 @@ CXXFLAGS += -D JUMBO_FRAME=0
 
 # Choose one of below
 
+# 1. Semantic test on
+CXXFLAGS += -D SEMANTIC_TEST=1
+
+# 2. Semantic test off
+# CXXFLAGS += -D SEMANTIC_TEST=0
+
+################################################################################
+
+# Choose one of below
+
 # 1. LRO on
 CXXFLAGS += -D USE_LRO=1
 

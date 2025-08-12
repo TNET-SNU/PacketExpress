@@ -320,21 +320,13 @@ int lcore_main(void *args)
         for (port_id = 0; port_id < g_num_ports; port_id++)
         {
             nb_rx[port_id] = rte_eth_rx_burst(port_id, qid, rmbufs[port_id], MAX_PKT_BURST);
-#if HW_CSUM
             px_parse_batch(port_id,
                            qid,
                            rmbufs[port_id],
                            nb_rx[port_id],
-                           1,
-                           1);
-#else
-            px_parse_batch(port_id,
-                           qid,
-                           rmbufs[port_id],
-                           nb_rx[port_id],
-                           1,
-                           0);
-#endif
+                           !JUMBO_FRAME,
+                           HW_CSUM,
+                           SEMANTIC_TEST);
             nb_rx[port_id] =
                 rte_gro_reassemble_burst(rmbufs[port_id],
                                          nb_rx[port_id],
@@ -384,11 +376,7 @@ int lcore_main(void *args)
                 eth_hdr->s_addr = port_mac[port_id];
 
                 /* fill checksum */
-#if HW_CSUM
-                if (px_fill_ipv4_l4_cksum(m, 1) < 0)
-#else
-                if (px_fill_ipv4_l4_cksum(m, 0) < 0)
-#endif
+                if (px_fill_ipv4_l4_cksum(m, HW_CSUM) < 0)
                 {
                     printf("Port %d: Failed to fill checksum for mbuf %d\n",
                            port_id, i);
@@ -558,7 +546,7 @@ int main(int argc, char **argv)
     sigemptyset(&sa.sa_mask);
     sigaction(SIGINT, &sa, NULL);
 
-    px_start_print_thread(1);
+    px_start_print_thread(1, g_num_ports, g_num_cores, g_num_cores);
 
     /* launch lcore main on each worker core */
     g_shutdown = 0;

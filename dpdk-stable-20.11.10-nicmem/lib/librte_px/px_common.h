@@ -12,6 +12,19 @@ extern "C"
 {
 #endif
 /*----------------------------------------------------------------------------*/
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <unistd.h>
+#include <errno.h>
+#include <inttypes.h>
+#include <signal.h>
+#include <time.h>
+#include <pthread.h>
+#include <sys/queue.h>
+#include <arpa/inet.h>
+#include <x86intrin.h>
 #include <rte_version.h>
 #include <rte_ethdev.h>
 #include <rte_mbuf_core.h>
@@ -29,19 +42,8 @@ extern "C"
 #include <rte_malloc.h>
 #include <rte_mempool.h>
 #include <rte_bitops.h>
-#include <unistd.h>
-#include <inttypes.h>
-#include <signal.h>
-#include <time.h>
-#include <pthread.h>
-#include <sys/queue.h>
-#include <arpa/inet.h>
-#include <x86intrin.h>
 /*----------------------------------------------------------------------------*/
 /* Below are to control PX behaviors */
-#define MLX5_ENABLED 0
-#define ADAPTIVE_TIMEOUT 1
-#define SEMANTIC_TEST 0
 #define MAX_NAME_SIZE 32
 #define PX_RX_BURST 64
 #define PX_TX_BURST 64
@@ -134,19 +136,21 @@ struct px_dev
     struct rte_ether_addr mac;
 
     /* whether ReTa entry initialized */
-    int initialized_reta;
+    uint8_t initialized_reta:1;
 
     /* whether ARP table context initialized */
-    int initialized_arp;
+    uint8_t initialized_arp:1;
 
     /* whether nicmem context initialized */
-    int initialized_nicmem;
+    uint8_t initialized_nicmem:1;
 
     /* whether hairpin context configured */
-    int configured_hairpin;
+    uint8_t configured_hairpin:1;
 
     /* whether hairpin context initialized */
-    int initialized_hairpin;
+    uint8_t initialized_hairpin:1;
+
+    uint8_t unused:3;
 
     uint16_t nb_rx_desc[PX_MAX_QUEUES_PER_PORT];
     uint16_t nb_tx_desc[PX_MAX_QUEUES_PER_PORT];

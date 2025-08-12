@@ -15,6 +15,16 @@ DPDK_LDFLAGS := $(shell $(PKGCONF) --libs libdpdk)
 # Choose one of below
 
 # 1. Using 1500B MTU for incoming packets
+CFLAGS += -D JUMBO_FRAME=0
+
+# 2. Using 9000B MTU for incoming packets
+# CFLAGS += -D JUMBO_FRAME=1
+
+################################################################################
+
+# Choose one of below
+
+# 1. Using 1500B MTU for incoming packets
 # CFLAGS += -D HW_CSUM=0
 
 # 2. Using 9000B MTU for incoming packets
@@ -29,6 +39,16 @@ CFLAGS += -D HW_CSUM=1
 
 # 2. Using 9000B MTU for incoming packets
 CFLAGS += -D SG_DMA=1
+
+################################################################################
+
+# Choose one of below
+
+# 1. Semantic test on
+CFLAGS += -D SEMANTIC_TEST=1
+
+# 2. Semantic test off
+# CFLAGS += -D SEMANTIC_TEST=0
 
 ################################################################################
 

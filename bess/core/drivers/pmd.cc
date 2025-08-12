@@ -326,188 +326,6 @@ CommandResponse flow_create(dpdk_port_t port_id, const uint32_t &flow_profile) {
   return err;
 }
 /*----------------------------------------------------------------------------*/
-struct rte_flow *
-onload_iperf_flow(uint16_t port_id, uint16_t num_rxq, uint16_t num_rxq_incr)
-{
-  struct rte_flow *flow = NULL;
-  struct rte_flow_error error;
-  /* Holds the flow attributes. */
-  struct rte_flow_attr attr = {
-    /* set the rule on the main group. */
-    .group = 0,
-    /* give the offload rule higher priority */
-    .priority = 0,
-    /* Rx flow */
-    .ingress = 1,
-    .egress = 0,
-    .transfer = 0
-  };
-
-  /* make pattern */
-  struct rte_flow_item_ipv4 ipv4_spec = {0};
-  struct rte_flow_item_ipv4 ipv4_mask = {0};
-  struct rte_flow_item_tcp tcp_spec = {0};
-  struct rte_flow_item_tcp tcp_mask = {0};
-  struct rte_flow_item patterns[] = {
-    {.type = RTE_FLOW_ITEM_TYPE_IPV4,
-      .spec = &ipv4_spec,
-      .last = NULL,
-      .mask = &ipv4_mask},
-    {.type = RTE_FLOW_ITEM_TYPE_TCP,
-      .spec = &tcp_spec,
-      .last = NULL,
-      .mask = &tcp_mask},
-    {.type = RTE_FLOW_ITEM_TYPE_END}
-  };
-
-  /* ipv4 pattern */
-  ipv4_spec.hdr.next_proto_id = IPPROTO_TCP;
-  ipv4_mask.hdr.next_proto_id = UINT8_MAX;
-
-  /* tcp pattern */
-  tcp_spec.hdr.dst_port = htons(5001);
-  tcp_mask.hdr.dst_port = UINT16_MAX;
-
-  /* make rss action */
-  uint16_t rss_queues[RTE_MAX_QUEUES_PER_PORT];
-  for (int i = 0; i < num_rxq * num_rxq_incr; i++)
-  {
-    rss_queues[i] = i;
-  }
-  struct rte_flow_action_rss rss_dma;
-  rss_dma.func = RTE_ETH_HASH_FUNCTION_DEFAULT;
-  rss_dma.level = 0;
-  rss_dma.types = ETH_RSS_TCP | ETH_RSS_UDP | ETH_RSS_IP;
-  rss_dma.key_len = sizeof(rss_key);
-  rss_dma.queue_num = num_rxq * num_rxq_incr;
-  rss_dma.key = rss_key;
-  rss_dma.queue = rss_queues;
-
-  /* make actions */
-  struct rte_flow_action actions[] = {
-    /* deliver to hairpin queue RSS */
-    {.type = RTE_FLOW_ACTION_TYPE_RSS,
-      .conf = &rss_dma},
-    {.type = RTE_FLOW_ACTION_TYPE_END}
-  };
-
-  /* create main traffic rule */
-#define VALIDATE_FLOW_RULE 1
-#if VALIDATE_FLOW_RULE
-  if (rte_flow_validate(port_id, &attr, patterns, actions, &error) < 0)
-  {
-    fprintf(stderr, "rte_flow_validate() failed for port %d. "
-                    "Error type: %d, Error msg: %s\n",
-            port_id, error.type, error.message);
-    return NULL;
-  }
-#endif
-
-  flow = px_flow_create_static(port_id, &attr, patterns, actions, &error);
-  if (!flow)
-  {
-    fprintf(stderr, "px_flow_create_static() failed for port %d. "
-                    "Error type: %d, Error msg: %s\n",
-            port_id, error.type, error.message);
-  }
-
-  return flow;
-}
-/*----------------------------------------------------------------------------*/
-struct rte_flow *
-onload_iperf_ack_flow(uint16_t port_id, uint16_t num_rxq, uint16_t num_rxq_incr)
-{
-  struct rte_flow *flow = NULL;
-  struct rte_flow_error error;
-  /* Holds the flow attributes. */
-  struct rte_flow_attr attr = {
-    /* set the rule on the main group. */
-    .group = 0,
-    /* give the offload rule higher priority */
-    .priority = 0,
-    /* Rx flow */
-    .ingress = 1,
-    .egress = 0,
-    .transfer = 0
-  };
-
-  /* make pattern */
-  struct rte_flow_item_eth eth_spec = {0};
-  struct rte_flow_item_eth eth_mask = {0};
-  struct rte_flow_item_ipv4 ipv4_spec = {0};
-  struct rte_flow_item_ipv4 ipv4_mask = {0};
-  struct rte_flow_item_tcp tcp_spec = {0};
-  struct rte_flow_item_tcp tcp_mask = {0};
-  struct rte_flow_item patterns[] = {
-    {.type = RTE_FLOW_ITEM_TYPE_ETH,
-      .spec = &eth_spec,
-      .last = NULL,
-      .mask = &eth_mask},
-    {.type = RTE_FLOW_ITEM_TYPE_IPV4,
-      .spec = &ipv4_spec,
-      .last = NULL,
-      .mask = &ipv4_mask},
-    {.type = RTE_FLOW_ITEM_TYPE_TCP,
-      .spec = &tcp_spec,
-      .last = NULL,
-      .mask = &tcp_mask},
-    {.type = RTE_FLOW_ITEM_TYPE_END}
-  };
-
-  /* ipv4 pattern */
-  ipv4_spec.hdr.next_proto_id = IPPROTO_TCP;
-  ipv4_mask.hdr.next_proto_id = UINT8_MAX;
-
-  /* tcp pattern */
-  tcp_spec.hdr.src_port = htons(5001);
-  tcp_mask.hdr.src_port = UINT16_MAX;
-
-  /* make rss action */
-  uint16_t rss_queues[RTE_MAX_QUEUES_PER_PORT];
-  for (int i = 0; i < num_rxq * num_rxq_incr; i++)
-  {
-    rss_queues[i] = i;
-  }
-  struct rte_flow_action_rss rss_dma;
-  rss_dma.func = RTE_ETH_HASH_FUNCTION_DEFAULT;
-  rss_dma.level = 0;
-  rss_dma.types = ETH_RSS_TCP | ETH_RSS_UDP | ETH_RSS_IP;
-  rss_dma.key_len = sizeof(rss_key);
-  rss_dma.queue_num = num_rxq * num_rxq_incr;
-  rss_dma.key = rss_key;
-  rss_dma.queue = rss_queues;
-
-  /* make actions */
-  struct rte_flow_action actions[] = {
-    /* deliver to hairpin queue RSS */
-    {.type = RTE_FLOW_ACTION_TYPE_RSS,
-      .conf = &rss_dma},
-    {.type = RTE_FLOW_ACTION_TYPE_END}
-  };
-
-  /* create main traffic rule */
-#define VALIDATE_FLOW_RULE 1
-#if VALIDATE_FLOW_RULE
-  if (rte_flow_validate(port_id, &attr, patterns, actions, &error) < 0)
-  {
-    fprintf(stderr, "rte_flow_validate() failed for port %d. "
-                    "Error type: %d, Error msg: %s\n",
-            port_id, error.type, error.message);
-    return NULL;
-  }
-#endif
-
-  flow = px_flow_create_static(port_id, &attr, patterns, actions, &error);
-  if (!flow)
-  {
-    fprintf(stderr, "px_flow_create_static() failed for port %d. "
-                    "Error type: %d, Error msg: %s\n",
-            port_id, error.type, error.message);
-  }
-
-  return flow;
-}
-/*----------------------------------------------------------------------------*/
 CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
 
   dpdk_port_t ret_port_id = DPDK_PORT_UNKNOWN;
@@ -671,13 +489,6 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
     if (ret != 0) {
       return CommandFailure(-ret, "rte_eth_rx_queue_setup() failed");
     }
-#if USE_CGRO
-    if (px_init(dpdk_port_id_, i,
-                bess::PacketBatch::kMaxBurst,
-                !JUMBO_FRAME ? 4096 : 0,
-                CUTOFF_NS ? 4096 : 0, NULL, NULL, USE_LINK) < 0) {
-      return CommandFailure(ENOMEM, "px_init failed");
-    }
   }
 
   eth_txconf = dev_info.default_txconf;
@@ -737,10 +548,13 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
     }
   }
 
-#if RTE_FLOW_ASYNC_API
-  ret = offload_async_configure(ret_port_id);
-  if (ret < 0)
-    return CommandFailure(-ret, "offload_async_configure() failed");
+#if USE_CGRO
+  if (px_init(dpdk_port_id_,
+              bess::PacketBatch::kMaxBurst,
+              !JUMBO_FRAME ? 4096 : 0,
+              CUTOFF_NS ? 4096 : 0, NULL, NULL, USE_LINK, SEMANTIC_TEST) < 0) {
+    return CommandFailure(ENOMEM, "px_init failed");
+  }
 #endif
 
   ret = rte_eth_dev_start(ret_port_id);
@@ -770,21 +584,6 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
   //     }
   //   }
   // }
-  
-#elif NUM_HAIRPIN_Q
-  if (hp_context_init(get_num_cpus() - 1,
-                      PER_CORE_HOST_CACHE_SIZE,
-                      PER_PORT_NIC_CACHE_SIZE) < 0)
-  {
-    return CommandFailure(ENOMEM, "hp_context_init failed");
-  }
-#endif
-#if USE_OPTOUT
-  if (onload_iperf_flow(ret_port_id, num_rxq, NUM_LATENT_RXQ) == NULL)
-    return CommandFailure(ENOMEM, "onload_iperf_flow failed");
-  if (onload_iperf_ack_flow(ret_port_id, num_rxq, NUM_LATENT_RXQ) == NULL)
-    return CommandFailure(ENOMEM, "onload_iperf_ack_flow failed");
-#endif
 
   return CommandSuccess();
 }
@@ -838,10 +637,7 @@ restart:
 
 void PMDPort::DeInit() {
 #if USE_CGRO
-  for (int i = 0; i < num_queues[PACKET_DIR_INC]; i++)
-    px_deinit(dpdk_port_id_, i);
-#else
-  hp_context_destroy();
+  px_deinit(dpdk_port_id_);
 #endif
   rte_eth_dev_stop(dpdk_port_id_);
 
@@ -947,11 +743,15 @@ void PMDPort::CollectStats(bool reset) {
 
 int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
 #if USE_CGRO
-  uint16_t recv = px_eth_rx_burst(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), cnt);
+  uint16_t recv = px_eth_rx_burst(dpdk_port_id_, qid,
+                                  reinterpret_cast<rte_mbuf **>(pkts), cnt);
 #else
-  uint16_t recv = rte_eth_rx_burst(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), cnt);
+  uint16_t recv = rte_eth_rx_burst(dpdk_port_id_, qid,
+                                   reinterpret_cast<rte_mbuf **>(pkts), cnt);
 #if (USE_LRO || USE_DGRO || NUM_HAIRPIN_Q)
-  px_parse_batch(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), recv, !JUMBO_FRAME, 1);
+  px_parse_batch(dpdk_port_id_, qid,
+                 reinterpret_cast<rte_mbuf **>(pkts),
+                 recv, !JUMBO_FRAME, 1, SEMANTIC_TEST);
 #endif
 #if USE_DGRO
   struct rte_gro_param gro_param = {
@@ -970,13 +770,17 @@ int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
 
 int PMDPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
 #if USE_CGRO
-  int sent = px_eth_tx_burst(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), cnt);
+  int sent = px_eth_tx_burst(dpdk_port_id_, qid,
+                             reinterpret_cast<rte_mbuf **>(pkts), cnt);
 #else
 #if (USE_LRO || USE_DGRO)
-  px_setup_tso_burst(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), cnt);
+  px_setup_tso_burst(dpdk_port_id_, qid,
+                     reinterpret_cast<rte_mbuf **>(pkts), cnt,
+                     SEMANTIC_TEST);
 #endif
 #if NUM_HAIRPIN_Q
-  px_flow_create_burst(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), cnt);
+  px_flow_create_burst(dpdk_port_id_, qid,
+                       reinterpret_cast<rte_mbuf **>(pkts), cnt);
 #endif
   int sent = rte_eth_tx_burst(dpdk_port_id_, qid,
                               reinterpret_cast<rte_mbuf **>(pkts), cnt);

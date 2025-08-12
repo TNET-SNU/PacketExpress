@@ -81,6 +81,16 @@ CFLAGS += -D JUMBO_FRAME=0
 
 # Choose one of below
 
+# 1. Semantic test on
+CFLAGS += -D SEMANTIC_TEST=1
+
+# 2. Semantic test off
+# CFLAGS += -D SEMANTIC_TEST=0
+
+################################################################################
+
+# Choose one of below
+
 # 1. LRO on
 CFLAGS += -D USE_LRO=1
 

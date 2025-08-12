@@ -146,7 +146,9 @@ struct px_ctx
     int (*is_uplink)(struct rte_mbuf *pkt);
     int (*is_downlink)(struct rte_mbuf *pkt);
 
-    int do_link;
+    uint8_t initialized:1;
+    uint8_t do_link:1;
+    uint8_t unused:6;
 };
 /*----------------------------------------------------------------------------*/
 static inline int
@@ -701,17 +703,16 @@ px_uso_burst(struct rte_mbuf **pkts,
     return idx;
 }
 /*----------------------------------------------------------------------------*/
-void px_deinit(uint16_t port_id,
-               uint16_t queue_id);
+void px_deinit(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 int px_init(uint16_t port_id,
-            uint16_t queue_id,
             int burst,
             int mss_table_size,
             int iat_table_size,
             int (*is_uplink)(struct rte_mbuf *),
             int (*is_downlink)(struct rte_mbuf *),
-            int do_link);
+            int do_link,
+            int is_semantic_test);
 /*----------------------------------------------------------------------------*/
 struct rte_eth_conf
 px_eth_conf(uint16_t port_id,
@@ -782,12 +783,14 @@ void px_parse_batch(uint16_t port_id,
                     struct rte_mbuf **pkts,
                     uint16_t nb_pkts,
                     int trans_mtu,
-                    int hwcsum);
+                    int hwcsum,
+                    int is_semantic_test);
 /*----------------------------------------------------------------------------*/
 void px_setup_tso_burst(uint16_t port_id,
                         uint16_t queue_id,
                         struct rte_mbuf **pkts,
-                        uint16_t nb_pkts);
+                        uint16_t nb_pkts,
+                        int is_semantic_test);
 /*----------------------------------------------------------------------------*/
 static inline void
 px_flow_create_burst(uint16_t port_id,

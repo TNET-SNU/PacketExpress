@@ -3,27 +3,38 @@
 static struct px_mss_ctx g_mss_ctx[RTE_MAX_ETHPORTS][PX_MAX_QUEUES_PER_PORT] = {0};
 static pthread_t g_mss_tid = 0;
 static volatile int g_mss_shutdown = 0;
+extern int g_is_semantic_test;
 /*----------------------------------------------------------------------------*/
 void update_mss(uint16_t *mss_ptr, uint16_t new_mss, int direction)
 {
-    (void)direction;
     printf("%d -> ", rte_be_to_cpu_16(*mss_ptr));
-    if (new_mss)
+    if (g_is_semantic_test)
     {
-        *mss_ptr = rte_cpu_to_be_16(new_mss);
+        if (new_mss)
+        {
+            *mss_ptr = rte_cpu_to_be_16(new_mss);
+        }
+        /* if incoming packet */
+        else if (direction)
+        {
+            *mss_ptr = rte_cpu_to_be_16(DEFAULT_iMSS);
+        }
+        /* if outgoing packet */
+        else
+        {
+            *mss_ptr = rte_cpu_to_be_16(DEFAULT_eMSS);
+        }
     }
-#if SEMANTIC_TEST
-    /* use below on semantic test */
-    /* if incoming packet */
-    else if (direction)
-    {
-        *mss_ptr = rte_cpu_to_be_16(DEFAULT_iMSS);
-    }
-    /* if outgoing packet */
-#endif
     else
     {
-        *mss_ptr = rte_cpu_to_be_16(DEFAULT_eMSS);
+        if (new_mss)
+        {
+            *mss_ptr = rte_cpu_to_be_16(new_mss);
+        }
+        else
+        {
+            *mss_ptr = rte_cpu_to_be_16(DEFAULT_eMSS);
+        }
     }
     printf("%d\n", rte_be_to_cpu_16(*mss_ptr));
 }
@@ -382,15 +393,21 @@ int mss_insert_entry(struct px_mss_ctx *ctx,
     struct flow_mss_entry *entry;
 
     /* if default MSS used, no need to insert */
-#if SEMANTIC_TEST
-    /* use below on semantic test */
-    if (mss == DEFAULT_eMSS)
-#else
-    /* use below on performance test */
-    if (mss == DEFAULT_iMSS)
-#endif
+    if (g_is_semantic_test)
     {
-        return 0;
+        /* use below on semantic test */
+        if (mss == DEFAULT_eMSS)
+        {
+            return 0;
+        }
+    }
+    else
+    {
+        /* use below on performance test */
+        if (mss == DEFAULT_iMSS)
+        {
+            return 0;
+        }
     }
 
     /* check collision first */
@@ -475,7 +492,7 @@ void mss_flush_timeout(struct px_mss_ctx *ctx)
     {
         entry = (struct flow_mss_entry *)next_data;
 
-        if (get_nsec_diff(&now, &entry->last_update) / E9 >  MSS_TIMEOUT)
+        if (get_nsec_diff(&now, &entry->last_update) / E9 > MSS_TIMEOUT)
         {
             printf("Removing flow due to timeout\n");
             rte_hash_del_key(ctx->tbl, next_key);

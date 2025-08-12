@@ -231,11 +231,17 @@ dpdk_send_pkts(struct mtcp_thread_context *ctxt, int nif)
 #endif
 
 #if !USE_CGRO && (USE_LRO || USE_DGRO)
-		px_setup_tso_burst(nif, qid, dpc->wmbufs[nif].m_table, dpc->wmbufs[nif].len);
+		px_setup_tso_burst(nif, qid,
+						   dpc->wmbufs[nif].m_table,
+						   dpc->wmbufs[nif].len,
+						   SEMANTIC_TEST);
 #endif
-		ret = rte_eth_tx_burst(nif, qid, dpc->wmbufs[nif].m_table, dpc->wmbufs[nif].len);
+		ret = rte_eth_tx_burst(nif, qid,
+							   dpc->wmbufs[nif].m_table,
+							   dpc->wmbufs[nif].len);
 		if (ret < dpc->wmbufs[nif].len)
-			rte_pktmbuf_free_bulk(dpc->wmbufs[nif].m_table + ret, dpc->wmbufs[nif].len - ret);
+			rte_pktmbuf_free_bulk(dpc->wmbufs[nif].m_table + ret,
+								  dpc->wmbufs[nif].len - ret);
 		dpc->wmbufs[nif].len = 0;
 	}
 
@@ -288,7 +294,9 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 	ret = rte_eth_rx_burst(ifidx, qid,
 			dpc->rmbufs[ifidx].m_table, MAX_PKT_BURST);
 #if (USE_LRO || USE_DGRO)
-	px_parse_batch(ifidx, qid, dpc->rmbufs[ifidx].m_table, ret, !JUMBO_FRAME, 1);
+	px_parse_batch(ifidx, qid,
+				   dpc->rmbufs[ifidx].m_table, ret,
+				   !JUMBO_FRAME, 1, SEMANTIC_TEST);
 #endif
 #if USE_DGRO
 	struct rte_gro_param gro_param = {
@@ -648,15 +656,6 @@ dpdk_load_module_lower_half(void)
 					rte_exit(EXIT_FAILURE, "rte_eth_rx_queue_setup: "
 										   "err=%d, port=%u, queue_id for data: %d\n",
 										   ret, (unsigned) portid, rxlcore_id);
-#if USE_CGRO
-				ret = px_init(portid, rxlcore_id,
-							  MAX_PKT_BURST,
-							  !JUMBO_FRAME ? 4096 : 0,
-							  CUTOFF_NS ? 4096 : 0,
-							  NULL, NULL, USE_LINK);
-				if (ret < 0)
-					rte_exit(EXIT_FAILURE, "px_init failed\n");
-#endif
 
 				cpu_qid_map[portid][rxlcore_id] = queue_id;
 				queue_id++;
@@ -676,6 +675,16 @@ dpdk_load_module_lower_half(void)
 										   ret, (unsigned) portid, rxlcore_id);
 				queue_id++;
 			}
+
+#if USE_CGRO
+			ret = px_init(portid,
+						  MAX_PKT_BURST,
+						  !JUMBO_FRAME ? 4096 : 0,
+						  CUTOFF_NS ? 4096 : 0,
+						  NULL, NULL, USE_LINK, SEMANTIC_TEST);
+			if (ret < 0)
+				rte_exit(EXIT_FAILURE, "px_init failed\n");
+#endif
 
 			/* Start device */
 			ret = rte_eth_dev_start(portid);

@@ -1,9 +1,12 @@
 #include "px_stat.h"
 /*----------------------------------------------------------------------------*/
-// static pthread_t g_stat_thread = 0;
 static struct px_rx_stat g_px_rx_stat[RTE_MAX_ETHPORTS][PX_MAX_QUEUES_PER_PORT] = {0};
 static struct px_tx_stat g_px_tx_stat[RTE_MAX_ETHPORTS][PX_MAX_QUEUES_PER_PORT] = {0};
-static volatile int g_stat_interval = 1;
+static volatile int g_stat_interval = 0;
+static int g_num_ports;
+static int g_num_rxqs;
+static int g_num_txqs;
+extern int g_is_semantic_test;
 /*----------------------------------------------------------------------------*/
 void px_update_rx_stats(uint16_t port_id,
                         uint16_t queue_id,
@@ -98,28 +101,28 @@ void px_update_tx_stats(uint16_t port_id,
     for (i = 0; i < nb_pkts; i++)
     {
         pkt = pkts[i];
-        /* calculate conversion yield */
-#if SEMANTIC_TEST
-        /* only for downlink flow */
-        if (is_px(pkt))
-        {
-            continue;
-        }
-#endif
         data_len = get_data_len(pkt);
         if (data_len)
         {
+            tx_stat->data_pkt_cnt++;
+            /* measure delay */
 #if PX_MEASURE_DELAY
             px_clock_gettime(TIME_FLAG, &now_ns);
             diff = get_nsec_diff(&now_ns,
                                  get_timestamp_from_headroom(pkt));
             reset_timestamp_on_headroom(pkt);
-            if (diff > 0)
-            {
-                tx_stat->delay_ns += diff;
-            }
-            tx_stat->data_pkt_cnt++;
+            tx_stat->delay_ns += diff;
 #endif
+            /* calculate conversion yield */
+            if (g_is_semantic_test)
+            {
+                /* for semantic test, only for downlink flow */
+                if (is_px(pkt))
+                {
+                    continue;
+                }
+            }
+            tx_stat->data_downlink_pkt_cnt++;
             orig_segsz = DEFAULT_eMTU - pkt->l3_len - pkt->l4_len;
             max_segnum = (DEFAULT_iMTU - pkt->l3_len - pkt->l4_len) / orig_segsz;
             target_segsz = is_tso(pkt)
@@ -169,9 +172,9 @@ void px_print_stats(int args)
     struct px_tx_stat *tx_iter, tx_total = {0};
     int port_id, queue_id;
 
-    for (port_id = 0; port_id < RTE_MAX_ETHPORTS; port_id++)
+    for (port_id = 0; port_id < g_num_ports; port_id++)
     {
-        for (queue_id = 0; queue_id < PX_MAX_QUEUES_PER_PORT; queue_id++)
+        for (queue_id = 0; queue_id < MAX(g_num_rxqs, g_num_txqs); queue_id++)
         {
             rx_iter = &g_px_rx_stat[port_id][queue_id];
             tx_iter = &g_px_tx_stat[port_id][queue_id];
@@ -257,6 +260,7 @@ void px_print_stats(int args)
             tx_total._5_seg_cnt += tx_iter->_5_seg_cnt;
             tx_total.under_iMTU_cnt += tx_iter->under_iMTU_cnt;
             tx_total.iMTU_cnt += tx_iter->iMTU_cnt;
+            tx_total.data_downlink_pkt_cnt += tx_iter->data_downlink_pkt_cnt;
 #if PX_MEASURE_DELAY
             tx_total.delay_ns += tx_iter->delay_ns;
             tx_total.data_pkt_cnt += tx_iter->data_pkt_cnt;
@@ -325,13 +329,24 @@ void px_print_stats(int args)
     alarm(g_stat_interval);
 }
 /*----------------------------------------------------------------------------*/
-int px_start_print_thread(unsigned int stat_interval)
+int px_start_print_thread(unsigned int stat_interval,
+                          int num_ports,
+                          int num_rxqs,
+                          int num_txqs)
 {
-    int *args;
-    (void)args;
+    g_num_ports = num_ports;
+    g_num_rxqs = num_rxqs;
+    g_num_txqs = num_txqs;
 
     if (!stat_interval)
     {
+        /* thread off */
+        return 0;
+    }
+
+    if (g_stat_interval)
+    {
+        /* already started */
         return 0;
     }
 
@@ -358,6 +373,13 @@ int px_start_print_thread(unsigned int stat_interval)
 /*----------------------------------------------------------------------------*/
 int px_stop_print_thread(void)
 {
+    if (!g_stat_interval)
+    {
+        /* already stopped */
+        return 0;
+    }
+
+    /* stop alarm */
     alarm(0);
 
     return 0;
