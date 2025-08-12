@@ -26,22 +26,22 @@ macaddrs=(58:a2:e1:a7:a8:46  # eth0
 		  a0:88:c2:d7:81:0e) # eth3
 
 # Static IP addresses of the neighbors of gateway interface(s)
-nhipaddrs=(10.1.90.10 10.1.90.20 10.1.95.2  # rapids0-eth0 rapids0-eth0 stream2
-		   10.2.90.10 10.2.90.20 10.2.95.2  # rapids0-eth1 rapids0-eth1 stream4
-		   10.3.90.10 10.3.90.20 10.3.95.2  # rapids0-eth2 rapids0-eth2 stream6
-		   10.4.90.10 10.4.90.20 10.4.95.2) # rapids0-eth3 rapids0-eth3 stream8
+nhipaddrs=(10.1.90.10 10.1.90.20 10.1.95.2  # rapids2-eth0 rapids2-eth0 stream2
+		   10.2.90.10 10.2.90.20 10.2.95.2  # rapids2-eth1 rapids2-eth1 stream4
+		   10.3.90.10 10.3.90.20 10.3.95.2  # rapids2-eth2 rapids2-eth2 stream6
+		   10.4.90.10 10.4.90.20 10.4.95.2) # rapids2-eth3 rapids2-eth3 stream8
 
-# for multi-hop, forward to rapids0
-nhmacaddrs=(58:a2:e1:a7:7c:c6 58:a2:e1:a7:7c:c6 a0:88:c2:d6:9d:d2  # rapids0-eth0 stream2
-			58:a2:e1:a7:7c:d6 58:a2:e1:a7:7c:d6 58:a2:e1:a7:a8:b6  # rapids0-eth1 stream4
-			58:a2:e1:a7:7c:be 58:a2:e1:a7:7c:be 58:a2:e1:a7:aa:7e  # rapids0-eth2 stream6
-			58:a2:e1:a7:a9:8e 58:a2:e1:a7:a9:8e 58:a2:e1:a7:aa:86) # rapids0-eth3 stream8
+# for multi-hop, forward to rapids2
+nhmacaddrs=(58:a2:e1:a7:a9:8e 58:a2:e1:a7:a9:8e a0:88:c2:d6:9d:d2  # rapids2-eth0 stream2
+			58:a2:e1:a7:7c:d6 58:a2:e1:a7:7c:d6 58:a2:e1:a7:a8:b6  # rapids2-eth1 stream4
+			58:a2:e1:a7:7c:c6 58:a2:e1:a7:7c:c6 58:a2:e1:a7:aa:7e  # rapids2-eth2 stream6
+			58:a2:e1:a7:7c:be 58:a2:e1:a7:7c:be 58:a2:e1:a7:aa:86) # rapids2-eth3 stream8
 
 # Static IP addresses of the neighbors of gateway interface(s)
-nhipaddrs2=(10.1.90.10 10.1.95.2  # rapids0-eth0 rapids0-eth0 stream2
-		    10.2.90.10 10.2.95.2  # rapids0-eth1 rapids0-eth1 stream4
-		    10.3.90.10 10.3.95.2  # rapids0-eth2 rapids0-eth2 stream6
-		    10.4.90.10 10.4.95.2) # rapids0-eth3 rapids0-eth3 stream8
+nhipaddrs2=(10.1.90.10 10.1.95.2  # rapids2-eth0 rapids2-eth0 stream2
+		    10.2.90.10 10.2.95.2  # rapids2-eth1 rapids2-eth1 stream4
+		    10.3.90.10 10.3.95.2  # rapids2-eth2 rapids2-eth2 stream6
+		    10.4.90.10 10.4.95.2) # rapids2-eth3 rapids2-eth3 stream8
 
 # IPv4 route table entries in cidr format per port
 routes=("10.1.90.0/24" "10.1.95.0/24" 
