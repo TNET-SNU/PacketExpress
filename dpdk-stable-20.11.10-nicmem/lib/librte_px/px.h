@@ -14,11 +14,10 @@ extern "C"
 #include "px_stat.h"
 #include "px_mss.h"
 #include "px_nicmem.h"
-#include "px_delay.h"
+#include "px_iat.h"
 #include "px_flow.h"
 #include "px_offload.h"
 #include "px_arp.h"
-#include "px_four_tuple.h"
 #include "rte_gro.h"
 #include "rte_gso.h"
 #include "rte_thash.h"
@@ -70,7 +69,7 @@ struct px_item
     uint16_t next_item_idx;
 
     /* for stall timeout */
-    struct timespec timestamp;
+    uint64_t timestamp;
 };
 
 struct px_stall
@@ -124,7 +123,7 @@ struct px_ctx
     struct px_stall *stalls;
 
     /* for stall timeout */
-    struct timespec now_ns;
+    uint64_t now_ns;
 
     /*
      * after stall time out, packets should be sent.
@@ -139,16 +138,16 @@ struct px_ctx
     /* mss table */
     struct px_mss_ctx *mss_ctx;
 
-    /* IAT table */
-    struct px_iat_ctx *iat_ctx;
-
     /* how to figure out direction of packet */
     int (*is_uplink)(struct rte_mbuf *pkt);
     int (*is_downlink)(struct rte_mbuf *pkt);
 
-    uint8_t initialized:1;
-    uint8_t do_link:1;
-    uint8_t unused:6;
+    uint8_t initialized : 1;
+    uint8_t do_link : 1;
+    uint8_t do_mss_trans : 1;
+    uint8_t do_delayed_merging : 1;
+    uint8_t do_latent_rxq : 1;
+    uint8_t unused : 3;
 };
 /*----------------------------------------------------------------------------*/
 static inline int
@@ -197,7 +196,8 @@ inc_csum_update(uint16_t csum,
  * return -1 if no IPv4, or checksum mismatch
  */
 static inline int
-px_verify_ipv4_cksum(struct rte_mbuf *m, int hwcsum)
+px_verify_ipv4_cksum(struct rte_mbuf *m,
+                     int hwcsum)
 {
     struct rte_ether_hdr *eth_hdr;
     struct rte_ipv4_hdr *ip_hdr;
@@ -246,7 +246,8 @@ px_verify_ipv4_cksum(struct rte_mbuf *m, int hwcsum)
  * return -1 if no IPv4, TCP, or checksum mismatch
  */
 static inline int
-px_verify_tcp_cksum(struct rte_mbuf *m, int hwcsum)
+px_verify_tcp_cksum(struct rte_mbuf *m,
+                    int hwcsum)
 {
     struct rte_ether_hdr *eth_hdr;
     struct rte_ipv4_hdr *ip_hdr;
@@ -303,7 +304,8 @@ px_verify_tcp_cksum(struct rte_mbuf *m, int hwcsum)
  * return -1 if no IPv4, UDP, or checksum mismatch
  */
 static inline int
-px_verify_udp_cksum(struct rte_mbuf *m, int hwcsum)
+px_verify_udp_cksum(struct rte_mbuf *m,
+                    int hwcsum)
 {
     struct rte_ether_hdr *eth_hdr;
     struct rte_ipv4_hdr *ip_hdr;
@@ -434,7 +436,8 @@ px_verify_icmp_cksum(struct rte_mbuf *m)
 }
 /*----------------------------------------------------------------------------*/
 static inline uint16_t
-px_ipv4_icmp_cksum(const struct rte_ipv4_hdr *ipv4_hdr, const void *icmp_hdr)
+px_ipv4_icmp_cksum(const struct rte_ipv4_hdr *ipv4_hdr,
+                   const void *icmp_hdr)
 {
     uint16_t cksum;
     uint32_t l3_len, l4_len;
@@ -462,7 +465,8 @@ px_ipv4_icmp_cksum(const struct rte_ipv4_hdr *ipv4_hdr, const void *icmp_hdr)
  * return -1 if no IPv4, or L4 protocol not supported
  */
 static inline int
-px_fill_ipv4_l4_cksum(struct rte_mbuf *m, int hwcsum)
+px_fill_ipv4_l4_cksum(struct rte_mbuf *m,
+                      int hwcsum)
 {
     struct rte_ether_hdr *eth_hdr;
     struct rte_ipv4_hdr *ip_hdr;
@@ -615,7 +619,9 @@ px_uso_burst(struct rte_mbuf **pkts,
         //            pkt->l2_len, pkt->l3_len, pkt->l4_len, pkt->pkt_len);
         //     printf("data_len: %u\n",
         //            pkt->data_len);
-        //     hexdump("pkt dump", (uint8_t *)pkt->buf_addr + pkt->data_off, pkt->data_len);
+        //     px_hexdump("pkt dump",
+        //                (uint8_t *)pkt->buf_addr + pkt->data_off,
+        //                pkt->data_len);
         //     rte_pktmbuf_free(pkt);
 
         //     continue;
@@ -648,9 +654,7 @@ px_uso_burst(struct rte_mbuf **pkts,
                 *iplen = rte_cpu_to_be_16(pkt->l3_len + pkt->l4_len + last_seglen);
                 udplen = get_udp_len(hdr_clone);
                 *udplen = rte_cpu_to_be_16(pkt->l4_len + last_seglen);
-#if PX_MEASURE_DELAY
-                copy_timestamp(hdr_clone, pkt);
-#endif
+                put_sw_timestamp(hdr_clone, get_sw_timestamp(pkt));
             }
             else
             {
@@ -703,6 +707,21 @@ px_uso_burst(struct rte_mbuf **pkts,
     return idx;
 }
 /*----------------------------------------------------------------------------*/
+/* how to figure out direction by default */
+static inline int
+is_uplink_default(struct rte_mbuf *pkt)
+{
+    uint8_t *s = (uint8_t *)get_four_tuple(pkt);
+    return *(s + 2) == 90;
+}
+/*----------------------------------------------------------------------------*/
+static inline int
+is_downlink_default(struct rte_mbuf *pkt)
+{
+    uint8_t *s = (uint8_t *)get_four_tuple(pkt);
+    return *(s + 2) == 95;
+}
+/*----------------------------------------------------------------------------*/
 void px_deinit(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 int px_init(uint16_t port_id,
@@ -729,8 +748,8 @@ int px_eth_dev_configure(uint16_t port_id,
                          uint16_t num_rxq,
                          uint16_t num_txq,
                          uint16_t num_rxq_incr,
-                         unsigned int num_nicmem,
-                         unsigned int cutoff_ns,
+                         uint32_t num_nicmem,
+                         uint32_t cutoff_ns,
                          uint16_t hp_num_rxq,
                          uint16_t hp_num_txq,
                          struct rte_eth_conf *eth_conf,
@@ -741,14 +760,14 @@ int px_eth_dev_configure(uint16_t port_id,
 int px_eth_rx_queue_setup(uint16_t port_id,
                           uint16_t rx_queue_id,
                           uint16_t nb_rx_desc,
-                          unsigned int socket_id,
+                          uint16_t socket_id,
                           struct rte_eth_rxconf *rx_conf,
                           struct rte_mempool *mp);
 /*----------------------------------------------------------------------------*/
 int px_eth_tx_queue_setup(uint16_t port_id,
                           uint16_t tx_queue_id,
                           uint16_t nb_tx_desc,
-                          unsigned int socket_id,
+                          uint16_t socket_id,
                           struct rte_eth_txconf *tx_conf);
 /*----------------------------------------------------------------------------*/
 uint16_t px_eth_rx_burst(uint16_t port_id,
@@ -773,9 +792,7 @@ void px_pktmbuf_free_bulk(struct rte_mbuf **pkts,
 int px_parse_packet(struct px_ctx *pctx,
                     struct rte_mbuf *pkt,
                     uint8_t *tcp_flags,
-                    int hwcsum,
-                    int (*is_uplink)(struct rte_mbuf *),
-                    int (*is_downlink)(struct rte_mbuf *));
+                    int hwcsum);
 /*----------------------------------------------------------------------------*/
 /* below are for testing baselines (e.g., DPDK GRO) */
 void px_parse_batch(uint16_t port_id,

@@ -34,13 +34,15 @@
 /*----------------------------------------------------------------------------*/
 /* Essential macros */
 #if NICMEM
-/* Make sure you setup LARGE_MTU_TWEAK_64 as 1 */
-#define MBUF_DATA_SIZE (65536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
+/* Make sure you set LARGE_MTU_TWEAK_64 as 1 */
+// #define MBUF_DATA_SIZE (65536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
+#define MBUF_DATA_SIZE (49152 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
 #define NB_MBUF ((2 * 1024 * 1024) - 1)
 #else
 #if USE_LRO
-/* Make sure you setup LARGE_MTU_TWEAK_64 as 1 */
-#define MBUF_DATA_SIZE (65536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
+/* Make sure you set LARGE_MTU_TWEAK_64 as 1 */
+// #define MBUF_DATA_SIZE (65536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
+#define MBUF_DATA_SIZE (49152 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
 #define NB_MBUF ((1024 * 1024) - 1)
 #else
 #define MBUF_DATA_SIZE 1536
@@ -137,6 +139,7 @@ static struct px_arp_entry g_arp_entries_two_hops_dpvs[] = {
     {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
 };
 /*----------------------------------------------------------------------------*/
+#if USE_CGRO
 /* static routing table configuration */
 static int
 is_uplink(struct rte_mbuf *pkt)
@@ -151,6 +154,7 @@ is_downlink(struct rte_mbuf *pkt)
     uint8_t *s = (uint8_t *)get_four_tuple(pkt);
     return *(s + 2) == 95;
 }
+#endif
 /*----------------------------------------------------------------------------*/
 /* global information for port configuration */
 volatile int g_shutdown = 0;
@@ -158,7 +162,6 @@ static uint16_t g_num_sockets = 1;
 static uint16_t g_num_cores = 1;
 static uint16_t g_num_ports = 0;
 static struct rte_ether_addr port_mac[RTE_MAX_ETHPORTS] = {{{0}}};
-// static struct rte_mempool *g_pktmbuf_pool[RTE_MAX_LCORE] = {NULL};
 static struct rte_mempool *g_pktmbuf_pool[RTE_MAX_NUMA_NODES] = {NULL};
 static struct rte_eth_dev_info g_dev_info[RTE_MAX_ETHPORTS];
 /*----------------------------------------------------------------------------*/
@@ -377,16 +380,10 @@ port_init(uint16_t port_id, uint16_t num_queue)
 
         /* init RX queue on each port per CPU */
 #if (USE_CGRO || NICMEM || NUM_HAIRPIN_Q)
-        // ret = px_eth_rx_queue_setup(port_id, queue_id, nb_rxd, sid,
-        //                             &g_dev_info[port_id].default_rxconf,
-        //                             g_pktmbuf_pool[queue_id]);
         ret = px_eth_rx_queue_setup(port_id, queue_id, nb_rxd, sid,
                                     &g_dev_info[port_id].default_rxconf,
                                     g_pktmbuf_pool[sid]);
 #else
-        // ret = rte_eth_rx_queue_setup(port_id, queue_id, nb_rxd, sid,
-        //                              &g_dev_info[port_id].default_rxconf,
-        //                              g_pktmbuf_pool[queue_id]);
         ret = rte_eth_rx_queue_setup(port_id, queue_id, nb_rxd, sid,
                                      &g_dev_info[port_id].default_rxconf,
                                      g_pktmbuf_pool[sid]);
@@ -412,17 +409,19 @@ port_init(uint16_t port_id, uint16_t num_queue)
                                    "err=%d, port=%u, queue_id: %d\n",
                      ret, (unsigned)port_id, queue_id);
         }
-#if USE_CGRO
-        ret = px_init(port_id, queue_id, MAX_PKT_BURST,
-                      !JUMBO_FRAME ? 4096 : 0,
-                      CUTOFF_NS ? 4096 : 0,
-                      is_uplink, is_downlink, USE_LINK);
-        if (ret < 0)
-        {
-            rte_exit(EXIT_FAILURE, "px_init failed\n");
-        }
-#endif
     }
+
+#if USE_CGRO
+    /* Start PX */
+    ret = px_init(port_id, MAX_PKT_BURST,
+                  !JUMBO_FRAME ? 4096 : 0,
+                  CUTOFF_NS ? 4096 : 0,
+                  is_uplink, is_downlink, USE_LINK, SEMANTIC_TEST);
+    if (ret < 0)
+    {
+        rte_exit(EXIT_FAILURE, "px_init failed\n");
+    }
+#endif
 
     /* Start device */
     ret = rte_eth_dev_start(port_id);
@@ -502,7 +501,8 @@ int lcore_main(void *args)
                            rmbufs[port_id],
                            nb_rx[port_id],
                            !JUMBO_FRAME,
-                           1);
+                           1,
+                           SEMANTIC_TEST);
 #endif
 #if USE_DGRO
             nb_rx[port_id] =
@@ -556,7 +556,8 @@ int lcore_main(void *args)
             px_setup_tso_burst(port_id,
                                qid,
                                wmbufs[port_id],
-                               nb_tx[port_id]);
+                               nb_tx[port_id],
+                               SEMANTIC_TEST);
 #endif
 #if NUM_HAIRPIN_Q
             px_flow_create_burst(port_id,
@@ -619,6 +620,10 @@ int main(int argc, char **argv)
         }
     }
     optind = 0;
+
+    (void)g_arp_entries;
+    (void)g_arp_entries_two_hops;
+    (void)g_arp_entries_two_hops_dpvs;
 
     rte_log_set_global_level(RTE_LOG_DEBUG);
     rte_log_set_level(RTE_LOGTYPE_PMD, RTE_LOG_DEBUG);
@@ -767,7 +772,7 @@ int main(int argc, char **argv)
     sigaction(SIGINT, &sa, NULL);
 
 #if !USE_CGRO
-    px_start_print_thread(1);
+    px_start_print_thread(1, g_num_ports, g_num_cores, g_num_cores);
 #endif
 
     /* launch lcore main on each worker core */

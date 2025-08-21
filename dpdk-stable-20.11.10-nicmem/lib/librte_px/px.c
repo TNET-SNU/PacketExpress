@@ -50,21 +50,6 @@ static struct px_arp_entry g_arp_table_default[] = {
     {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
 };
 /*----------------------------------------------------------------------------*/
-/* how to figure out direction by default */
-static int
-is_uplink_default(struct rte_mbuf *pkt)
-{
-    uint8_t *s = (uint8_t *)get_four_tuple(pkt);
-    return *(s + 2) == 90;
-}
-/*----------------------------------------------------------------------------*/
-static int
-is_downlink_default(struct rte_mbuf *pkt)
-{
-    uint8_t *s = (uint8_t *)get_four_tuple(pkt);
-    return *(s + 2) == 95;
-}
-/*----------------------------------------------------------------------------*/
 /* Check if TCP option fields equal. */
 static inline uint32_t
 compare_option(struct rte_mbuf *pkt1,
@@ -246,6 +231,7 @@ static inline int
 merge_tcp(struct px_item *cur_item,
           struct rte_mbuf *firstseg,
           struct rte_mbuf *lastseg,
+          uint64_t timestamp,
           uint32_t cmp)
 {
     struct rte_mbuf *pkt_head, *pkt_tail;
@@ -307,6 +293,12 @@ merge_tcp(struct px_item *cur_item,
     pkt_head->nb_segs += pkt_tail->nb_segs;
     pkt_head->pkt_len += pkt_tail->pkt_len;
 
+    /* update timestamp of merged item */
+    if (cur_item->timestamp > timestamp)
+    {
+        cur_item->timestamp = timestamp;
+    }
+
     return 1;
 }
 /*----------------------------------------------------------------------------*/
@@ -317,7 +309,8 @@ merge_tcp(struct px_item *cur_item,
 static inline int
 merge_udp(struct px_item *cur_item,
           struct rte_mbuf *firstseg,
-          struct rte_mbuf *lastseg)
+          struct rte_mbuf *lastseg,
+          uint64_t timestamp)
 {
     struct rte_mbuf *orig_pkt;
     uint32_t orig_datalen, new_datalen, orig_seglen, new_seglen;
@@ -388,13 +381,20 @@ merge_udp(struct px_item *cur_item,
         return 0;
     }
 
+    /* update timestamp of merged item */
+    if (cur_item->timestamp > timestamp)
+    {
+        cur_item->timestamp = timestamp;
+    }
+
     return 1;
 }
 /*----------------------------------------------------------------------------*/
 static inline int
 merge_udp2(struct px_item *cur_item,
            struct rte_mbuf *firstseg,
-           struct rte_mbuf *lastseg)
+           struct rte_mbuf *lastseg,
+           uint64_t timestamp)
 {
     struct rte_mbuf *orig_pkt;
     uint16_t *px_off;
@@ -439,6 +439,12 @@ merge_udp2(struct px_item *cur_item,
     orig_pkt->nb_segs += firstseg->nb_segs;
     orig_pkt->pkt_len += firstseg->pkt_len;
 
+    /* update timestamp of merged item */
+    if (cur_item->timestamp > timestamp)
+    {
+        cur_item->timestamp = timestamp;
+    }
+
     return 1;
 }
 /*----------------------------------------------------------------------------*/
@@ -446,6 +452,7 @@ static inline int
 merge_udp3(struct px_item *cur_item,
            struct rte_mbuf *firstseg,
            struct rte_mbuf *lastseg,
+           uint64_t timestamp,
            uint32_t cmp)
 {
     struct rte_mbuf *pkt_head, *pkt_tail;
@@ -499,6 +506,12 @@ merge_udp3(struct px_item *cur_item,
     /* update number of segments for the merged packet */
     pkt_head->nb_segs += pkt_tail->nb_segs;
     pkt_head->pkt_len += pkt_tail->pkt_len;
+
+    /* update timestamp of merged item */
+    if (cur_item->timestamp > timestamp)
+    {
+        cur_item->timestamp = timestamp;
+    }
 
     return 1;
 }
@@ -889,13 +902,13 @@ insert_flow(struct px_ctx *pctx,
 }
 /*----------------------------------------------------------------------------*/
 /* store the packet into the new item */
-/* insert_flow should be called before insert_item */
+/* insert_flow should be called first */
 static inline int
 insert_item(struct px_ctx *pctx,
             struct rte_mbuf *firstseg,
             struct rte_mbuf *lastseg,
             struct px_item *prev_item,
-            struct timespec *timestamp)
+            uint64_t timestamp)
 {
     struct px_item *cur_item;
 
@@ -921,7 +934,7 @@ insert_item(struct px_ctx *pctx,
     }
 
     /* save timestamp */
-    cur_item->timestamp = *timestamp;
+    cur_item->timestamp = timestamp;
 
     /* increment item array index */
     pctx->item_num++;
@@ -929,13 +942,12 @@ insert_item(struct px_ctx *pctx,
     return 0;
 }
 /*----------------------------------------------------------------------------*/
-/* store the packet into the new item */
-/* insert_flow should be called before insert_item */
+/* store the packet into the stall item list */
 static inline int
 insert_stall(struct px_ctx *pctx,
              struct rte_mbuf *firstseg,
              struct rte_mbuf *lastseg,
-             struct timespec *timestamp)
+             uint64_t timestamp)
 {
     struct px_stall *stall;
     struct px_item *cur_stall;
@@ -955,7 +967,7 @@ insert_stall(struct px_ctx *pctx,
     stall->num++;
 
     /* copy timestamp */
-    cur_stall->timestamp = *timestamp;
+    cur_stall->timestamp = timestamp;
 
     return 0;
 }
@@ -1041,12 +1053,10 @@ separate_edge_seg(struct px_ctx *pctx,
                 goto err;
             }
             seq_diff = prev->data_len - hdr_size + edge->data_len;
-#if PX_MEASURE_DELAY
-            copy_timestamp(edge_head, pkt);
-#endif
+            put_sw_timestamp(edge_head, get_sw_timestamp(pkt));
             if (px_dev->initialized_hairpin)
             {
-                copy_four_tuple(edge_head, pkt);
+                copy_orig_four_tuple(edge_head, pkt);
             }
         }
         /* restore the chain to next mbuf */
@@ -1066,12 +1076,10 @@ separate_edge_seg(struct px_ctx *pctx,
 
         /* get sequence difference */
         seq_diff = target_size - hdr_size;
-#if PX_MEASURE_DELAY
-        copy_timestamp(edge_head, pkt);
-#endif
+        put_sw_timestamp(edge_head, get_sw_timestamp(pkt));
         if (px_dev->initialized_hairpin)
         {
-            copy_four_tuple(edge_head, pkt);
+            copy_orig_four_tuple(edge_head, pkt);
         }
     }
 
@@ -1125,52 +1133,56 @@ err:
 static inline int
 is_stall_needed(struct px_ctx *pctx,
                 struct rte_mbuf *cur_pkt,
-                struct timespec *timestamp,
+                uint64_t timestamp,
                 uint32_t orig_segsz,
-                uint32_t target_segsz,
-                int print)
+                uint32_t target_segsz)
 {
-    int64_t diff_ns, timeout_ns;
     float factor;
-    double avg_iat;
-    int ret;
+    int64_t diff_ns;
     uint32_t max_seg_nb, missing_segs_nb;
+    uint32_t timeout_ns, avg_burst_iat, avg_data_len, data_len = get_data_len(cur_pkt);
+    int ret;
 
     max_seg_nb = target_segsz / orig_segsz;
-    if ((max_seg_nb == 0) || (get_data_len(cur_pkt) >= target_segsz))
+    if ((max_seg_nb == 0) || (data_len >= target_segsz))
     {
         /* no need to stall */
         return 0;
     }
-    missing_segs_nb = (target_segsz - get_data_len(cur_pkt)) /
-                      orig_segsz;
-    factor = get_time_factor(missing_segs_nb);
-    ret = iat_search_entry(pctx->iat_ctx,
+    ret = iat_search_entry(pctx->port_id,
+                           pctx->queue_id,
                            cur_pkt,
-                           g_px_dev[pctx->port_id].cutoff_ns,
-                           &avg_iat,
-                           &pctx->now_ns);
+                           &avg_burst_iat,
+                           &avg_data_len,
+                           pctx->now_ns);
     if (ret < 0)
     {
         fprintf(stderr, "iat table search failed\n");
     }
-    diff_ns = get_nsec_diff(&pctx->now_ns, timestamp);
-    timeout_ns = (int64_t)(avg_iat * factor);
-    if (timeout_ns > g_px_dev[pctx->port_id].cutoff_ns)
+    if (!avg_data_len)
     {
-        timeout_ns = g_px_dev[pctx->port_id].cutoff_ns; // Cap to cutoff
+        avg_data_len = orig_segsz;
     }
-    if (print)
+    missing_segs_nb = (target_segsz - data_len) / avg_data_len;
+    if (!missing_segs_nb)
     {
-        printf("max_seg_nb: %u, missing_segs_nb: %u, "
-               "orig_segsz: %u, target_segsz: %u, "
-               "diff_ns: %ld, avg_iat: %lf, factor: %f, timeout_ns: %ld\n",
-               max_seg_nb, missing_segs_nb,
-               orig_segsz, target_segsz,
-               diff_ns, avg_iat, factor, timeout_ns);
+        missing_segs_nb = 1;
+    }
+    factor = iat_time_factor(missing_segs_nb);
+    diff_ns = pctx->now_ns - timestamp;
+    timeout_ns = (uint32_t)(avg_burst_iat * factor);
+    // printf("max_seg_nb: %1u, missing_segs_nb: %1u, "
+    //        "orig_segsz: %5u, target_segsz: %5u, "
+    //        "diff_ns: %5ld, avg_burst_iat: %5u, factor: %2.2f, timeout_ns: %6u\n",
+    //        max_seg_nb, missing_segs_nb,
+    //        orig_segsz, target_segsz,
+    //        diff_ns, avg_burst_iat, factor, timeout_ns);
+    if (diff_ns < 0)
+    {
+        return 1;
     }
 
-    return diff_ns < timeout_ns;
+    return (uint32_t)diff_ns < timeout_ns;
 }
 /*----------------------------------------------------------------------------*/
 /*
@@ -1180,7 +1192,7 @@ static inline int
 handle_incomplete(struct px_ctx *pctx,
                   struct rte_mbuf *firstseg,
                   struct rte_mbuf *lastseg,
-                  struct timespec *timestamp,
+                  uint64_t timestamp,
                   uint32_t orig_segsz,
                   uint32_t target_segsz,
                   int force)
@@ -1216,8 +1228,7 @@ handle_incomplete(struct px_ctx *pctx,
     }
 
     /* if stall nsec is marginal */
-    if (is_stall_needed(pctx, firstseg, timestamp, orig_segsz, target_segsz, 0))
-    // if (is_stall_needed(pctx, firstseg, timestamp, orig_segsz, target_segsz, 1))
+    if (is_stall_needed(pctx, firstseg, timestamp, orig_segsz, target_segsz))
     {
         /* can stall, so insert to stalled item array */
         if (insert_stall(pctx,
@@ -1267,7 +1278,7 @@ static inline void
 assemble_udp(struct px_ctx *pctx,
              struct rte_mbuf *firstseg,
              struct rte_mbuf *lastseg,
-             struct timespec *timestamp)
+             uint64_t timestamp)
 {
     struct px_item *cur_item, *prev_item, *merged_item;
     struct px_flow *cur_flow;
@@ -1317,7 +1328,7 @@ assemble_udp(struct px_ctx *pctx,
     }
 
     /* found first neighbor item */
-    if (!merge_udp3(cur_item, firstseg, lastseg, cmp))
+    if (!merge_udp3(cur_item, firstseg, lastseg, timestamp, cmp))
     {
         /* bigger than 9KB; store this packet as a new item in the given flow */
         insert_item(pctx, firstseg, lastseg, cur_item, timestamp);
@@ -1326,9 +1337,6 @@ assemble_udp(struct px_ctx *pctx,
 
     /* now pkt is merged to one item, so we dont need to insert new item */
     merged_item = cur_item;
-
-    /* update timestamp of merged item */
-    update_timestamp(&merged_item->timestamp, timestamp);
 
     /*
      * to solve C -> A -> B (or A -> C -> B) issue,
@@ -1347,14 +1355,12 @@ assemble_udp(struct px_ctx *pctx,
     } while (!(cmp = compare_ipid(merged_item->firstseg, cur_item->firstseg)));
 
     /* found second neighbor item */
-    if (!merge_udp3(merged_item, cur_item->firstseg, cur_item->lastseg, cmp))
+    if (!merge_udp3(merged_item, cur_item->firstseg,
+                    cur_item->lastseg, cur_item->timestamp, cmp))
     {
         /* current item length is bigger than 9KB */
         return;
     }
-
-    /* update timestamp of merged item */
-    update_timestamp(&cur_item->timestamp, timestamp);
 
     /* merged again; remove current item because it is merged to prior item */
     prev_item->next_item_idx = cur_item->next_item_idx;
@@ -1369,7 +1375,7 @@ static inline void
 assemble_tcp(struct px_ctx *pctx,
              struct rte_mbuf *firstseg,
              struct rte_mbuf *lastseg,
-             struct timespec *timestamp)
+             uint64_t timestamp)
 {
     struct px_item *cur_item, *prev_item, *merged_item;
     struct px_flow *cur_flow;
@@ -1437,12 +1443,11 @@ assemble_tcp(struct px_ctx *pctx,
     // }
 
     /* found first neighbor item */
-    // if (!same_timestamp(timestamp, &cur_item->timestamp))
+    // if (cur_item->timestamp == timestamp)
     // {
-    //     printf("1 stalled %ld ns\n", get_nsec_diff(timestamp,
-    //                                                &cur_item->timestamp));
+    //     printf("1 stalled %ld ns\n", timestamp - cur_item->timestamp);
     // }
-    if (!merge_tcp(cur_item, firstseg, lastseg, cmp))
+    if (!merge_tcp(cur_item, firstseg, lastseg, timestamp, cmp))
     {
         /* bigger than 64KB; store this packet as a new item in the given flow */
         insert_item(pctx, firstseg, lastseg, cur_item, timestamp);
@@ -1451,9 +1456,6 @@ assemble_tcp(struct px_ctx *pctx,
 
     /* now pkt is merged to one item, so we dont need to insert new item */
     merged_item = cur_item;
-
-    /* update timestamp of merged item */
-    update_timestamp(&merged_item->timestamp, timestamp);
 
     /*
      * to solve C -> A -> B (or A -> C -> B) issue,
@@ -1490,20 +1492,16 @@ assemble_tcp(struct px_ctx *pctx,
     // }
 
     /* found second neighbor item */
-    // if (!same_timestamp(timestamp, &cur_item->timestamp))
+    // if (merged_item->timestamp == cur_item->timestamp)
     // {
-    //     printf("2 stalled %ld ns\n", get_nsec_diff(timestamp,
-    //                                                &cur_item->timestamp));
+    //     printf("2 stalled %ld ns\n", timestamp - cur_item->timestamp);
     // }
     if (!merge_tcp(merged_item, cur_item->firstseg,
-                   cur_item->lastseg, cmp))
+                   cur_item->lastseg, cur_item->timestamp, cmp))
     {
         /* bigger than 64KB; store this packet as a new item in the given flow */
         return;
     }
-
-    /* update timestamp of merged item */
-    update_timestamp(&merged_item->timestamp, timestamp);
 
     /* merged again; remove current item because it is merged to prior item */
     prev_item->next_item_idx = cur_item->next_item_idx;
@@ -1618,14 +1616,18 @@ parse_for_tcp_gro(struct rte_mbuf *pkt,
     }
 
     // printf("\npkt_len: %d, data_len: %d, nb_segs: %d, next: %p\n",
-    //         pkt->pkt_len, pkt->data_len, pkt->nb_segs, pkt->next);
+    //        pkt->pkt_len, pkt->data_len, pkt->nb_segs, pkt->next);
     // printf("buf_addr: %p, iova: %p\n", pkt->buf_addr, pkt->buf_iova);
-    // // hexdump("mbuf", rte_pktmbuf_mtod(pkt, uint8_t *), pkt->data_len);
+    // // px_hexdump("mbuf",
+    // //            rte_pktmbuf_mtod(pkt, uint8_t *),
+    // //            pkt->data_len);
     // if (pkt->next)
     // {
     //     printf("pkt_len: %d, data_len: %d, nb_segs: %d\n",
     //            pkt->next->pkt_len, pkt->next->data_len, pkt->next->nb_segs);
-    //     // hexdump("TCP", rte_pktmbuf_mtod(pkt->next, uint8_t *), pkt->next->data_len);
+    //     // px_hexdump("TCP",
+    //     //            rte_pktmbuf_mtod(pkt->next, uint8_t *),
+    //     //            pkt->next->data_len);
     //     printf("buf_addr: %p, iova: %p\n", pkt->next->buf_addr, pkt->next->buf_iova);
     // }
 
@@ -1647,11 +1649,8 @@ parse_for_tcp_gro(struct rte_mbuf *pkt,
 int px_parse_packet(struct px_ctx *pctx,
                     struct rte_mbuf *pkt,
                     uint8_t *tcp_flags,
-                    int hwcsum,
-                    int (*is_uplink)(struct rte_mbuf *),
-                    int (*is_downlink)(struct rte_mbuf *))
+                    int hwcsum)
 {
-    struct px_ctx *new_pctx;
     struct rte_ipv4_hdr *ipv4_hdr;
     struct four_tuple *key, reverse_key, reverse_key_le;
     uint32_t real_pkt_len, reverse_rss;
@@ -1704,29 +1703,53 @@ int px_parse_packet(struct px_ctx *pctx,
     }
 
     /* parse HW timestamp and TCP timestamp */
-    // rte_mbuf_timestamp_t *rx_timestamp = get_rx_hw_timestamp(pkt);
-    // if (rx_timestamp)
-    // {
-    //     uint64_t *ts = get_tcp_timestamp(pkt);
-    //     if (ts)
-    //     {
-    //         uint32_t tsval, tsecr;
-    //         tsval = rte_be_to_cpu_32(*(uint32_t *)ts);
-    //         tsecr = rte_be_to_cpu_32(*((uint32_t *)ts + 1));
+#define LOG_RX_HW_TIMESTAMP 0
+#if LOG_RX_HW_TIMESTAMP
+    /* get RX HW timestamp log for downlink traffic */
+    if (pctx->is_uplink)
+    {
+        if (pctx->is_uplink(pkt))
+        {
+            goto Skip_log_rx_hw_timestamp;
+        }
+    }
+    else
+    {
+        if (is_uplink_default(pkt))
+        {
+            goto Skip_log_rx_hw_timestamp;
+        }
+    }
+    rte_mbuf_timestamp_t rx_timestamp = get_rx_hw_timestamp(pkt);
+    if (rx_timestamp)
+    {
+        uint64_t *ts = get_tcp_timestamp(pkt);
+        if (ts)
+        {
+            uint32_t tsval, tsecr;
+            tsval = rte_be_to_cpu_32(*(uint32_t *)ts);
+            tsecr = rte_be_to_cpu_32(*((uint32_t *)ts + 1));
 
-    //         printf("[port %d] RX HW timestamp: 0x%016lx, "
-    //                "TCP timestamp: 0x%016lx (tsval: %10u, tsecr: %10u) %s\n",
-    //                pctx->port_id, *rx_timestamp,
-    //                rte_be_to_cpu_64(*ts), tsval, tsecr,
-    //                pkt->ol_flags & PKT_RX_LRO ? "(LROed)" : "(not LROed)");
-    //     }
-    //     else
-    //     {
-    //         printf("[port %d] RX HW timestamp: 0x%016lx %s\n",
-    //                pctx->port_id, *rx_timestamp,
-    //                pkt->ol_flags & PKT_RX_LRO ? "(LROed)" : "(not LROed)");
-    //     }
-    // }
+            printf("[port %d] RX HW timestamp: 0x%016lx, "
+                   "data_len: %4u, "
+                   "TCP timestamp: 0x%016lx (tsval: %10u, tsecr: %10u) %s\n",
+                   pctx->port_id, rx_timestamp,
+                   get_data_len(pkt),
+                   rte_be_to_cpu_64(*ts), tsval, tsecr,
+                   pkt->ol_flags & PKT_RX_LRO ? "(LROed)" : "(not LROed)");
+        }
+        else
+        {
+            printf("[port %d] RX HW timestamp: 0x%016lx, "
+                   "data_len: %4u, "
+                   "%s\n",
+                   pctx->port_id, rx_timestamp,
+                   get_data_len(pkt),
+                   pkt->ol_flags & PKT_RX_LRO ? "(LROed)" : "(not LROed)");
+        }
+    }
+Skip_log_rx_hw_timestamp:
+#endif
 
     /* parse L4 */
     if (is_tcp(pkt))
@@ -1742,35 +1765,7 @@ int px_parse_packet(struct px_ctx *pctx,
         /* target for offloading */
         if (g_px_dev[pctx->port_id].initialized_hairpin)
         {
-            insert_four_tuple(pkt);
-        }
-
-        /* update IAT for delayed merging */
-        if (g_is_semantic_test)
-        {
-            /* check if the pkt is outgoing */
-            if (is_uplink(pkt))
-            {
-                mark_px(pkt);
-            }
-            else if (is_downlink(pkt))
-            {
-                if (pctx->stalls)
-                {
-                    iat_update_entry(pctx->iat_ctx, pkt,
-                                     g_px_dev[pctx->port_id].cutoff_ns,
-                                     &pctx->now_ns);
-                }
-            }
-        }
-        else
-        {
-            if (pctx->stalls)
-            {
-                iat_update_entry(pctx->iat_ctx, pkt,
-                                 g_px_dev[pctx->port_id].cutoff_ns,
-                                 &pctx->now_ns);
-            }
+            put_orig_four_tuple(pkt);
         }
 
         /* parse for TCP GRO */
@@ -1778,6 +1773,56 @@ int px_parse_packet(struct px_ctx *pctx,
         if (ret < 0)
         {
             return ret;
+        }
+
+        /* update IAT for delayed merging */
+        if (g_is_semantic_test)
+        {
+            /* check if the pkt is outgoing */
+            if (pctx->is_uplink && pctx->is_downlink)
+            {
+                if (pctx->is_uplink(pkt))
+                {
+                    mark_px(pkt);
+                }
+                else if (pctx->is_downlink(pkt))
+                {
+                    if (pctx->stalls)
+                    {
+                        iat_update_entry(pctx->port_id,
+                                         pctx->queue_id,
+                                         pkt,
+                                         pctx->now_ns);
+                    }
+                }
+            }
+            else
+            {
+                if (is_uplink_default(pkt))
+                {
+                    mark_px(pkt);
+                }
+                else if (is_downlink_default(pkt))
+                {
+                    if (pctx->stalls)
+                    {
+                        iat_update_entry(pctx->port_id,
+                                         pctx->queue_id,
+                                         pkt,
+                                         pctx->now_ns);
+                    }
+                }
+            }
+        }
+        else
+        {
+            if (pctx->stalls)
+            {
+                iat_update_entry(pctx->port_id,
+                                 pctx->queue_id,
+                                 pkt,
+                                 pctx->now_ns);
+            }
         }
 
         /* use below when stop TCP GRO */
@@ -1796,7 +1841,7 @@ int px_parse_packet(struct px_ctx *pctx,
         /* target for offloading */
         if (g_px_dev[pctx->port_id].initialized_hairpin)
         {
-            insert_four_tuple(pkt);
+            put_orig_four_tuple(pkt);
         }
 
         /* parse for UDP GRO */
@@ -1810,17 +1855,38 @@ int px_parse_packet(struct px_ctx *pctx,
         if (g_is_semantic_test)
         {
             /* check if the pkt is outgoing */
-            if (is_uplink(pkt))
+            if (pctx->is_uplink && pctx->is_downlink)
             {
-                mark_px(pkt);
-            }
-            else if (is_downlink(pkt))
-            {
-                if (pctx->stalls)
+                if (pctx->is_uplink(pkt))
                 {
-                    iat_update_entry(pctx->iat_ctx, pkt,
-                                     g_px_dev[pctx->port_id].cutoff_ns,
-                                     &pctx->now_ns);
+                    mark_px(pkt);
+                }
+                else if (pctx->is_downlink(pkt))
+                {
+                    if (pctx->stalls)
+                    {
+                        iat_update_entry(pctx->port_id,
+                                         pctx->queue_id,
+                                         pkt,
+                                         pctx->now_ns);
+                    }
+                }
+            }
+            else
+            {
+                if (is_uplink_default(pkt))
+                {
+                    mark_px(pkt);
+                }
+                else if (is_downlink_default(pkt))
+                {
+                    if (pctx->stalls)
+                    {
+                        iat_update_entry(pctx->port_id,
+                                         pctx->queue_id,
+                                         pkt,
+                                         pctx->now_ns);
+                    }
                 }
             }
         }
@@ -1828,16 +1894,17 @@ int px_parse_packet(struct px_ctx *pctx,
         {
             if (pctx->stalls)
             {
-                iat_update_entry(pctx->iat_ctx, pkt,
-                                 g_px_dev[pctx->port_id].cutoff_ns,
-                                 &pctx->now_ns);
+                iat_update_entry(pctx->port_id,
+                                 pctx->queue_id,
+                                 pkt,
+                                 pctx->now_ns);
             }
         }
 
         /* use below when stop UDP GRO */
         // return -1;
     }
-    else if (pctx->mss_ctx && is_icmp(pkt))
+    else if (pctx->do_mss_trans && is_icmp(pkt))
     {
         /* check if checksum correct */
         ret = px_verify_icmp_cksum(pkt);
@@ -1848,7 +1915,21 @@ int px_parse_packet(struct px_ctx *pctx,
         }
 
         /* non-target for offloading */
-        if (is_dtb(pkt) && pctx->is_downlink(pkt))
+        if (pctx->is_uplink)
+        {
+            if (pctx->is_uplink(pkt))
+            {
+                return -1; // not target for offloading
+            }
+        }
+        else
+        {
+            if (is_uplink_default(pkt))
+            {
+                return -1; // not target for offloading
+            }
+        }
+        if (is_dtb(pkt))
         {
             parse_dtb(pkt, &next_hop_mtu, &key);
             fprintf(stderr, "[DTB] Next-Hop MTU: %u\n", next_hop_mtu);
@@ -1875,15 +1956,16 @@ int px_parse_packet(struct px_ctx *pctx,
             /* ToDo: we should consider ReTa */
 
             /* update the MSS entry */
-            new_pctx = &g_pctx[pkt->port][outer_qid];
-            mss_evict_entry(new_pctx->mss_ctx,
+            mss_evict_entry(pkt->port,
+                            outer_qid,
                             reverse_rss,
                             &reverse_key);
-            mss_insert_entry(new_pctx->mss_ctx,
+            mss_insert_entry(pkt->port,
+                             outer_qid,
                              reverse_rss,
                              &reverse_key,
                              next_hop_mtu,
-                             &pctx->now_ns);
+                             pctx->now_ns);
 
             /* modify the next-hop MTU */
             update_dtb(pkt, DEFAULT_iMTU);
@@ -1930,13 +2012,16 @@ void px_parse_batch(uint16_t port_id,
     uint16_t *mss_ptr;
     uint8_t tcp_flags = 0;
     int i, ret;
+    uint64_t now_ns;
+
+    /* stage 0: get SW timestamp first */
+    now_ns = px_gettime(TIME_FLAG);
 
     for (i = 0; i < nb_pkts; i++)
     {
         pkt = pkts[i];
-        ret = px_parse_packet(pctx, pkt, &tcp_flags, hwcsum,
-                              is_uplink_default,
-                              is_downlink_default);
+        put_sw_timestamp(pkt, now_ns);
+        ret = px_parse_packet(pctx, pkt, &tcp_flags, hwcsum);
         if (ret < 0)
         {
             /* it cannot be TCP-GROed */
@@ -2069,16 +2154,17 @@ link_and_flush(struct px_ctx *pctx,
 
         /* eMSS table lookup */
         tmp = pctx->items[item_idx].firstseg;
-        if (pctx->mss_ctx && is_tcp(tmp))
+        if (pctx->do_mss_trans && is_tcp(tmp))
         {
             /* if outgoing packet, use original eMSS */
             if (is_px(tmp))
             {
-                mss_search_entry(pctx->mss_ctx,
+                mss_search_entry(pctx->port_id,
+                                 pctx->queue_id,
                                  tmp->hash.rss,
                                  get_four_tuple(tmp),
                                  &saved_segsz,
-                                 &pctx->now_ns);
+                                 pctx->now_ns);
             }
         }
 
@@ -2128,7 +2214,7 @@ link_and_flush(struct px_ctx *pctx,
                         ret = handle_incomplete(pctx,
                                                 cur_pkt,
                                                 cur_item->lastseg,
-                                                &cur_item->timestamp,
+                                                cur_item->timestamp,
                                                 orig_segsz,
                                                 target_segsz,
                                                 1);
@@ -2148,7 +2234,7 @@ link_and_flush(struct px_ctx *pctx,
                         ret = handle_incomplete(pctx,
                                                 cur_pkt,
                                                 cur_item->lastseg,
-                                                &cur_item->timestamp,
+                                                cur_item->timestamp,
                                                 orig_segsz,
                                                 target_segsz,
                                                 0);
@@ -2178,7 +2264,7 @@ link_and_flush(struct px_ctx *pctx,
                         ret = handle_incomplete(pctx,
                                                 edge,
                                                 rte_pktmbuf_lastseg(edge),
-                                                &cur_item->timestamp,
+                                                cur_item->timestamp,
                                                 orig_segsz,
                                                 target_segsz,
                                                 0);
@@ -2262,7 +2348,7 @@ link_and_flush(struct px_ctx *pctx,
                         handle_incomplete(pctx,
                                           cur_pkt,
                                           cur_item->lastseg,
-                                          &cur_item->timestamp,
+                                          cur_item->timestamp,
                                           orig_segsz,
                                           target_segsz,
                                           1);
@@ -2280,7 +2366,7 @@ link_and_flush(struct px_ctx *pctx,
                         ret = handle_incomplete(pctx,
                                                 cur_pkt,
                                                 cur_item->lastseg,
-                                                &cur_item->timestamp,
+                                                cur_item->timestamp,
                                                 orig_segsz,
                                                 target_segsz,
                                                 0);
@@ -2422,7 +2508,6 @@ px_core(struct px_ctx *pctx,
         struct rte_mbuf **pkts,
         uint16_t nb_pkts)
 {
-    struct px_ctx *new_pctx;
     struct four_tuple *key, reverse_key, reverse_key_le;
     struct rte_mbuf *pkt;
     struct px_stall *stall;
@@ -2431,6 +2516,9 @@ px_core(struct px_ctx *pctx,
     uint16_t cnt = 0, inner_qid, outer_qid, *mss_ptr;
     uint8_t tcp_flags = 0;
     int i, ret;
+
+    /* stage 0: get SW timestamp first */
+    pctx->now_ns = px_gettime(TIME_FLAG);
 
     /* Stage 1: try GRO with stalled items */
     if (pctx->stalls)
@@ -2442,16 +2530,12 @@ px_core(struct px_ctx *pctx,
             if (is_tcp(item->firstseg))
             {
                 assemble_tcp(pctx, item->firstseg, item->lastseg,
-                             &item->timestamp);
-                // assemble_tcp(pctx, item->firstseg, item->lastseg,
-                //              &pctx->now_ns);
+                             item->timestamp);
             }
             else if (is_udp(item->firstseg))
             {
                 assemble_udp(pctx, item->firstseg, item->lastseg,
-                             &item->timestamp);
-                // assemble_udp(pctx, item->firstseg, item->lastseg,
-                //              &pctx->now_ns);
+                             item->timestamp);
             }
         }
         stall->num = 0;
@@ -2461,11 +2545,10 @@ px_core(struct px_ctx *pctx,
     for (i = 0; i < nb_pkts; i++)
     {
         pkt = pkts[i];
-
+        /* timestamp */
+        put_sw_timestamp(pkt, pctx->now_ns);
         /* check packet can be GROed */
-        ret = px_parse_packet(pctx, pkt, &tcp_flags, 1,
-                              pctx->is_uplink,
-                              pctx->is_downlink);
+        ret = px_parse_packet(pctx, pkt, &tcp_flags, 1);
         if (ret < 0)
         {
             /* it cannot be GROed */
@@ -2475,7 +2558,7 @@ px_core(struct px_ctx *pctx,
             }
 
             /* check if MTU translation necessary */
-            if (pctx->mss_ctx)
+            if (pctx->do_mss_trans)
             {
                 /* if packet is from outside */
                 if (!is_px(pkt))
@@ -2517,14 +2600,14 @@ px_core(struct px_ctx *pctx,
                                     (g_px_dev[pkt->port].num_rxq *
                                      g_px_dev[pkt->port].num_rxq_incr);
                         outer_qid = inner_qid / g_px_dev[pkt->port].num_rxq_incr;
-                        new_pctx = &g_pctx[pkt->port][outer_qid];
 
                         /* insert MSS to hashtable */
-                        mss_insert_entry(new_pctx->mss_ctx,
+                        mss_insert_entry(pkt->port,
+                                         outer_qid,
                                          reverse_rss,
                                          &reverse_key,
                                          rte_be_to_cpu_16(*mss_ptr),
-                                         &pctx->now_ns);
+                                         pctx->now_ns);
                         // printf("[SYN/SYNACK] mss: %u\n", rte_be_to_cpu_16(*mss_ptr));
 
                         /* update MSS */
@@ -2558,10 +2641,10 @@ px_core(struct px_ctx *pctx,
                                     (g_px_dev[pkt->port].num_rxq *
                                      g_px_dev[pkt->port].num_rxq_incr);
                         outer_qid = inner_qid / g_px_dev[pkt->port].num_rxq_incr;
-                        new_pctx = &g_pctx[pkt->port][outer_qid];
 
                         /* evict MSSes from hashtable */
-                        mss_evict_entry(new_pctx->mss_ctx,
+                        mss_evict_entry(pkt->port,
+                                        outer_qid,
                                         reverse_rss,
                                         &reverse_key);
                     }
@@ -2572,11 +2655,12 @@ px_core(struct px_ctx *pctx,
                         key = get_four_tuple(pkt);
 
                         /* search MSS of this flow */
-                        mss_search_entry(pctx->mss_ctx,
+                        mss_search_entry(pctx->port_id,
+                                         pctx->queue_id,
                                          pkt->hash.rss,
                                          key,
                                          &segsz,
-                                         &pctx->now_ns);
+                                         pctx->now_ns);
                         if (segsz)
                         {
                             /* subtract TCP option length */
@@ -2613,11 +2697,12 @@ px_core(struct px_ctx *pctx,
                         key = get_four_tuple(pkt);
 
                         /* search MSS of this flow */
-                        mss_search_entry(pctx->mss_ctx,
+                        mss_search_entry(pctx->port_id,
+                                         pctx->queue_id,
                                          pkt->hash.rss,
                                          key,
                                          &segsz,
-                                         &pctx->now_ns);
+                                         pctx->now_ns);
                         if (!segsz)
                         {
                             segsz = DEFAULT_eMSS;
@@ -2654,10 +2739,10 @@ px_core(struct px_ctx *pctx,
                                     (g_px_dev[pkt->port].num_rxq *
                                      g_px_dev[pkt->port].num_rxq_incr);
                         outer_qid = inner_qid / g_px_dev[pkt->port].num_rxq_incr;
-                        new_pctx = &g_pctx[pkt->port][outer_qid];
 
                         /* evict MSSes from hashtable */
-                        mss_evict_entry(new_pctx->mss_ctx,
+                        mss_evict_entry(pkt->port,
+                                        outer_qid,
                                         reverse_rss,
                                         &reverse_key);
                     }
@@ -2668,11 +2753,12 @@ px_core(struct px_ctx *pctx,
                         key = get_four_tuple(pkt);
 
                         /* search MSS of this flow */
-                        mss_search_entry(pctx->mss_ctx,
+                        mss_search_entry(pctx->port_id,
+                                         pctx->queue_id,
                                          pkt->hash.rss,
                                          key,
                                          &segsz,
-                                         &pctx->now_ns);
+                                         pctx->now_ns);
                         if (segsz)
                         {
                             /* subtract TCP option length */
@@ -2706,11 +2792,11 @@ px_core(struct px_ctx *pctx,
         /* try GRO */
         if (is_tcp(pkt))
         {
-            assemble_tcp(pctx, pkt, rte_pktmbuf_lastseg(pkt), &pctx->now_ns);
+            assemble_tcp(pctx, pkt, rte_pktmbuf_lastseg(pkt), pctx->now_ns);
         }
         else if (is_udp(pkt))
         {
-            assemble_udp(pctx, pkt, rte_pktmbuf_lastseg(pkt), &pctx->now_ns);
+            assemble_udp(pctx, pkt, rte_pktmbuf_lastseg(pkt), pctx->now_ns);
         }
     }
 
@@ -2743,22 +2829,14 @@ void px_deinit(uint16_t port_id)
         px_del_rule_all(port_id, queue_id);
         rule_init(port_id, queue_id);
 
-        if (pctx->mss_ctx)
+        if (mss_destroy_ctx(port_id, queue_id) < 0)
         {
-            if (mss_destroy_ctx(pctx->mss_ctx) < 0)
-            {
-                rte_exit(EXIT_FAILURE, "Cannot destroy MSS ctx\n");
-            }
-            pctx->mss_ctx = NULL;
+            rte_exit(EXIT_FAILURE, "Cannot destroy MSS ctx\n");
         }
 
-        if (pctx->iat_ctx)
+        if (iat_destroy_ctx(port_id, queue_id) < 0)
         {
-            if (iat_destroy_ctx(pctx->iat_ctx) < 0)
-            {
-                rte_exit(EXIT_FAILURE, "Cannot destroy IAT ctx\n");
-            }
-            pctx->iat_ctx = NULL;
+            rte_exit(EXIT_FAILURE, "Cannot destroy IAT ctx\n");
         }
 
         /* free items array */
@@ -2850,7 +2928,7 @@ int px_init(uint16_t port_id,
         }
         else
         {
-            pctx->is_uplink = is_uplink_default;
+            pctx->is_uplink = NULL;
         }
         if (is_downlink)
         {
@@ -2858,24 +2936,33 @@ int px_init(uint16_t port_id,
         }
         else
         {
-            pctx->is_downlink = is_downlink_default;
+            pctx->is_downlink = NULL;
         }
 
-        if (mss_table_size && !pctx->mss_ctx)
+        if (mss_table_size)
         {
-            pctx->mss_ctx = mss_init_ctx(port_id, queue_id, mss_table_size);
-            if (!pctx->mss_ctx)
+            ret = mss_init_ctx(port_id,
+                               queue_id,
+                               mss_table_size);
+            if (ret < 0)
             {
                 rte_exit(EXIT_FAILURE, "Cannot init MSS ctx\n");
             }
+            pctx->do_mss_trans = 1;
         }
-        if (px_dev->cutoff_ns && iat_table_size && !pctx->iat_ctx)
+
+        if (px_dev->cutoff_ns && iat_table_size)
         {
-            pctx->iat_ctx = iat_init_ctx(port_id, queue_id, iat_table_size, EWMA_ALPHA);
-            if (!pctx->iat_ctx)
+            ret = iat_init_ctx(port_id,
+                               queue_id,
+                               iat_table_size,
+                               px_dev->cutoff_ns,
+                               EWMA_ALPHA);
+            if (ret < 0)
             {
                 rte_exit(EXIT_FAILURE, "Cannot init IAT ctx\n");
             }
+            pctx->do_delayed_merging = 1;
         }
 
         /* estimate table size */
@@ -3154,8 +3241,8 @@ int px_eth_dev_configure(uint16_t port_id,
                          uint16_t num_rxq,
                          uint16_t num_txq,
                          uint16_t num_rxq_incr,
-                         unsigned int num_nicmem,
-                         unsigned int cutoff_ns,
+                         uint32_t num_nicmem,
+                         uint32_t cutoff_ns,
                          uint16_t hp_num_rxq,
                          uint16_t hp_num_txq,
                          struct rte_eth_conf *eth_conf,
@@ -3337,7 +3424,7 @@ int px_eth_dev_configure(uint16_t port_id,
 int px_eth_rx_queue_setup(uint16_t port_id,
                           uint16_t rx_queue_id,
                           uint16_t nb_rx_desc,
-                          unsigned int socket_id,
+                          uint16_t socket_id,
                           struct rte_eth_rxconf *rx_conf,
                           struct rte_mempool *mp)
 {
@@ -3429,7 +3516,7 @@ int px_eth_rx_queue_setup(uint16_t port_id,
 int px_eth_tx_queue_setup(uint16_t port_id,
                           uint16_t tx_queue_id,
                           uint16_t nb_tx_desc,
-                          unsigned int socket_id,
+                          uint16_t socket_id,
                           struct rte_eth_txconf *tx_conf)
 {
     int ret;
@@ -3466,11 +3553,6 @@ rx_and_px(uint16_t port_id,
                                 inner_qid,
                                 rx_pkts + total,
                                 nb_pkts - total);
-
-        px_clock_gettime(TIME_FLAG, &pctx->now_ns);
-#if PX_MEASURE_DELAY
-        px_set_timestamp_batch(rx_pkts + total, recv, &pctx->now_ns);
-#endif
         total += px_core(pctx, rx_pkts + total, recv);
 
         if (++pctx->latent_id == rxq_incr)
@@ -3593,8 +3675,10 @@ px_eth_tx_burst(uint16_t port_id,
                                    nb_pkts_after_uso - offset);
         if (++sent_try > 1)
         {
-            printf("rte_eth_tx_burst: sent_try: %d, offset: %d, nb_pkts_after_uso: %d\n",
-                   sent_try, offset, nb_pkts_after_uso);
+            fprintf(stderr,
+                    "rte_eth_tx_burst: sent_try: %d, "
+                    "offset: %d, nb_pkts_after_uso: %d\n",
+                    sent_try, offset, nb_pkts_after_uso);
             /* if too many tries, give up sending and reset offset */
             break;
         }
@@ -3620,8 +3704,10 @@ px_eth_tx_burst(uint16_t port_id,
                                    read_px_tx_ring - offset);
         if (++sent_try > 1)
         {
-            printf("rte_eth_tx_burst: sent_try: %d, offset: %d, read_px_tx_ring: %d\n",
-                   sent_try, offset, read_px_tx_ring);
+            fprintf(stderr,
+                    "rte_eth_tx_burst: sent_try: %d, "
+                    "offset: %d, read_px_tx_ring: %d\n",
+                    sent_try, offset, read_px_tx_ring);
             /* if too many tries, give up sending and reset offset */
             break;
         }

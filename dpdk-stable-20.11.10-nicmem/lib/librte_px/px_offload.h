@@ -11,7 +11,6 @@ extern "C"
 #include "px_cache.h"
 #include "px_flow.h"
 #include "px_latent.h"
-#include "px_four_tuple.h"
 /*----------------------------------------------------------------------------*/
 // #define PER_PORT_NIC_CACHE_SIZE 400 // use small number to see offload rate
 #define PER_PORT_NIC_CACHE_SIZE 20000

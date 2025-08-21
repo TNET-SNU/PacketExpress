@@ -226,11 +226,13 @@ merge_two_tcp4_packets(struct gro_tcp4_item *item,
 	hdr_len = l2_offset + pkt_head->l2_len + pkt_head->l3_len +
 		pkt_head->l4_len;
 	l2_len = l2_offset > 0 ? pkt_head->outer_l2_len : pkt_head->l2_len;
-	// if (unlikely(pkt_head->pkt_len - l2_len + pkt_tail->pkt_len -
-	// 			hdr_len > MAX_IPV4_PKT_LENGTH))
-	// 	return 0;
 	if (unlikely(pkt_head->pkt_len - l2_len + pkt_tail->pkt_len -
-				hdr_len > 9000))
+				hdr_len > MAX_IPV4_PKT_LENGTH))
+		return 0;
+	// if (unlikely(pkt_head->pkt_len - l2_len + pkt_tail->pkt_len -
+	// 			hdr_len > 9000))
+	// 	return 0;
+	if (unlikely(pkt_head->nb_segs + pkt_tail->nb_segs > 40))
 		return 0;
 
 	/* remove the packet header for the tail packet */

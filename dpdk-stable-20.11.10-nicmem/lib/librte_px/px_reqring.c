@@ -239,7 +239,7 @@ int req_ring_put(int core_id, int queue_id, struct request *req)
     /* check if request queue is full */
     if (rr->tail + 1 == rr->head)
     {
-        // printf("Tail catched up head due to bursty requests, so try next time\n");
+        printf("Tail catched up head due to bursty requests, so try next time\n");
         return -1;
     }
 
@@ -252,8 +252,8 @@ int req_ring_put(int core_id, int queue_id, struct request *req)
     // printf("req_ring_put, core_id: %d, queue_id: %d\n"
     //        "head: %d, tail: %d, cmd: %d\n",
     //        core_id, queue_id, rr->head, rr->tail, req->cmd);
-    // tupledump(&((struct ri_node *)req->node)->key);
-    // tupledump(get_four_tuple(((struct ri_node *)req->node)->pkt));
+    // px_tuple_dump(&((struct ri_node *)req->node)->key);
+    // px_tuple_dump(get_four_tuple(((struct ri_node *)req->node)->pkt));
 
     return 0;
 }

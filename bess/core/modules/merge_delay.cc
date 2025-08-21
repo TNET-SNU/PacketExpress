@@ -29,22 +29,13 @@
 // POSSIBILITY OF SUCH DAMAGE.
 
 #include "merge_delay.h"
-
-static inline void
-waitFor(unsigned int nsecs) {
-	struct timespec start, end;
-	long time;
-	clock_gettime(CLOCK_MONOTONIC, &start);
-  do {
-    clock_gettime(CLOCK_MONOTONIC, &end);
-    time = (end.tv_sec - start.tv_sec) * E9 + (end.tv_nsec - start.tv_nsec);
-  } while (time < nsecs); // Loop until it arrives.
-}
+#include <px.h>
 
 void MergeDelay::ProcessBatch(Context *ctx, bess::PacketBatch *batch) {
-  // printf("core [%d] / merge() / number of packets in a batch: %d\n", sched_getcpu(), batch->cnt());
+  // printf("core [%d] / merge() / number of packets in a batch: %d\n",
+  //        sched_getcpu(), batch->cnt());
   // for (int i = 0; i < batch->cnt(); i++)
-  //   waitFor(1000);
+  //   busy_wait_for(1000);
   RunNextModule(ctx, batch);
 }
 

@@ -4,15 +4,10 @@ extern struct px_dev g_px_dev[RTE_MAX_ETHPORTS];
 void reflect_four_tuple(struct rte_mbuf *pkt,
                         struct rte_mbuf *start)
 {
-    unsigned int four_tuple_off =
-        sizeof(struct rte_ether_hdr) + sizeof(uint32_t) * 3;
-    unsigned int four_tuple_len =
-        sizeof(uint32_t) * 2 + sizeof(uint16_t) * 2;
-
     /* copy 4-tuple of start packet to following packets */
-    memcpy(rte_pktmbuf_mtod_offset(pkt, void *, four_tuple_off),
-           rte_pktmbuf_mtod_offset(start, void *, four_tuple_off),
-           four_tuple_len);
+    memcpy(get_four_tuple(pkt),
+           get_four_tuple(start),
+           sizeof(struct four_tuple));
 }
 /*----------------------------------------------------------------------------*/
 uint16_t
@@ -155,7 +150,9 @@ px_unlink_and_uso(struct rte_mbuf **pkts,
                 //            pkt->l2_len, pkt->l3_len, pkt->l4_len, pkt->pkt_len);
                 //     printf("data_len: %u\n",
                 //            pkt->data_len);
-                //     hexdump("pkt dump", (uint8_t *)pkt->buf_addr + pkt->data_off, pkt->data_len);
+                //     px_hexdump("pkt dump",
+                //                (uint8_t *)pkt->buf_addr + pkt->data_off,
+                //                pkt->data_len);
                 //     rte_pktmbuf_free(pkt);
 
                 //     continue;
@@ -188,12 +185,10 @@ px_unlink_and_uso(struct rte_mbuf **pkts,
                         *iplen = rte_cpu_to_be_16(pkt->l3_len + pkt->l4_len + last_seglen);
                         udplen = get_udp_len(hdr_clone);
                         *udplen = rte_cpu_to_be_16(pkt->l4_len + last_seglen);
-#if PX_MEASURE_DELAY
-                        copy_timestamp(hdr_clone, pkt);
-#endif
+                        put_sw_timestamp(hdr_clone, get_sw_timestamp(pkt));
                         if (g_px_dev[pkt->port].initialized_hairpin)
                         {
-                            copy_four_tuple(hdr_clone, pkt);
+                            copy_orig_four_tuple(hdr_clone, pkt);
                         }
                     }
                     else

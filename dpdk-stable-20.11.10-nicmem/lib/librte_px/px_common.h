@@ -25,6 +25,7 @@ extern "C"
 #include <sys/queue.h>
 #include <arpa/inet.h>
 #include <x86intrin.h>
+#include <math.h>
 #include <rte_version.h>
 #include <rte_ethdev.h>
 #include <rte_mbuf_core.h>
@@ -74,7 +75,6 @@ extern "C"
 #define PX_MEASURE_STATS 1
 #define PX_MEASURE_PER_QUEUE_STAT 0
 #define PX_MEASURE_DIST 0
-#define PX_MEASURE_DELAY 1
 /*----------------------------------------------------------------------------*/
 /**
  * Below are for configuring multi-core and multi-port.
@@ -130,27 +130,27 @@ struct px_dev
     uint16_t num_txq;
 
     /* for packet stalling */
-    int64_t cutoff_ns;
+    uint32_t cutoff_ns;
 
     /* source MAC from this port */
     struct rte_ether_addr mac;
 
     /* whether ReTa entry initialized */
-    uint8_t initialized_reta:1;
+    uint8_t initialized_reta : 1;
 
     /* whether ARP table context initialized */
-    uint8_t initialized_arp:1;
+    uint8_t initialized_arp : 1;
 
     /* whether nicmem context initialized */
-    uint8_t initialized_nicmem:1;
+    uint8_t initialized_nicmem : 1;
 
     /* whether hairpin context configured */
-    uint8_t configured_hairpin:1;
+    uint8_t configured_hairpin : 1;
 
     /* whether hairpin context initialized */
-    uint8_t initialized_hairpin:1;
+    uint8_t initialized_hairpin : 1;
 
-    uint8_t unused:3;
+    uint8_t unused : 3;
 
     uint16_t nb_rx_desc[PX_MAX_QUEUES_PER_PORT];
     uint16_t nb_tx_desc[PX_MAX_QUEUES_PER_PORT];
@@ -158,48 +158,42 @@ struct px_dev
     struct rte_eth_dev_info dev_info;
 };
 /*----------------------------------------------------------------------------*/
-static inline void
-px_clock_gettime(clockid_t clk_id, struct timespec *ts)
+static inline uint64_t
+px_gettime(clockid_t clk_id)
 {
+    struct timespec *ts;
     if (clk_id == CLOCK_CPU_TIMESTAMP)
     {
-        uint64_t tsc = rte_rdtsc();
-        uint64_t tsc_hz = rte_get_tsc_hz();
-
-        /* translate to timespec */
-        ts->tv_sec = tsc / tsc_hz;
-        ts->tv_nsec = (tsc % tsc_hz) * E9 / tsc_hz;
-
-        return;
+        return (uint64_t)((double)rte_rdtsc() * E9 / rte_get_tsc_hz());
     }
     if (clk_id == CLOCK_NIC_TIMESTAMP)
     {
         /* not implemented yet */
-        return;
+        return 0;
     }
 
     clock_gettime(clk_id, ts);
+
+    return (uint64_t)ts->tv_sec * E9 + ts->tv_nsec;
 }
 /*----------------------------------------------------------------------------*/
 #ifdef RTE_FLOW_MEASURE_DELAY
-#define MEASURE(name, cmd)                                              \
-    do                                                                  \
-    {                                                                   \
-        struct timespec _start1, _start2, _end1, _end2;                 \
-        long _time1, _time2;                                            \
-        px_clock_gettime(TIME_FLAG, &_start1);                          \
-        px_clock_gettime(CLOCK_THREAD_CPUTIME_ID, &_start2);            \
-        cmd;                                                            \
-        px_clock_gettime(TIME_FLAG, &_end1);                            \
-        px_clock_gettime(CLOCK_THREAD_CPUTIME_ID, &_end2);              \
-        _time1 = (_end1.tv_sec - _start1.tv_sec) * E9 +                 \
-                 (_end1.tv_nsec - _start1.tv_nsec);                     \
-        _time2 = (_end2.tv_sec - _start2.tv_sec) * E9 +                 \
-                 (_end2.tv_nsec - _start2.tv_nsec);                     \
-        fprintf(stdout, "[%s] Wallclock time: %lf, Thread time: %lf\n", \
-                name,                                                   \
-                (double)_time1 / E9 * E6,                               \
-                (double)_time2 / E9 * E6);                              \
+#define MEASURE(name, cmd)                                                    \
+    do                                                                        \
+    {                                                                         \
+        uint64_t _start1, _start2, _end1, _end2;                              \
+        long _time1, _time2;                                                  \
+        _start1 = px_gettime(TIME_FLAG);                                      \
+        _start2 = px_gettime(CLOCK_THREAD_CPUTIME_ID);                        \
+        cmd;                                                                  \
+        _end1 = px_gettime(TIME_FLAG);                                        \
+        _end2 = px_gettime(CLOCK_THREAD_CPUTIME_ID);                          \
+        _time1 = (_end1 - _start1);                                           \
+        _time2 = (_end2 - _start2);                                           \
+        fprintf(stdout, "[%s] Wallclock time: %lf us, Thread time: %lf us\n", \
+                name,                                                         \
+                (double)_time1 / E9 * E6,                                     \
+                (double)_time2 / E9 * E6);                                    \
     } while (/*CONSTCOND*/ 0);
 #else
 #define MEASURE(name, cmd) \
@@ -278,29 +272,29 @@ struct four_tuple
 } __attribute__((packed));
 /*----------------------------------------------------------------------------*/
 static inline void
-hexdump(const char *title,
-        uint8_t *buf,
-        size_t len)
+px_hexdump(const char *title,
+           void *buf,
+           size_t len)
 {
     fprintf(stdout, "%s\n", title);
     for (size_t i = 0; i < len; i++)
     {
-        fprintf(stdout, "%02X%c", buf[i], ((i + 1) % 16 ? ' ' : '\n'));
+        fprintf(stdout, "%02X%c",
+                ((uint8_t *)buf)[i],
+                ((i + 1) % 16 ? ' ' : '\n'));
     }
     fprintf(stdout, "\n");
 }
 /*----------------------------------------------------------------------------*/
 static inline void
-busy_wait_for(unsigned int nsecs)
+busy_wait_for(unsigned int ns)
 {
-    struct timespec start, end;
-    long time;
-    px_clock_gettime(TIME_FLAG, &start);
+    uint64_t start, end;
+    start = px_gettime(TIME_FLAG);
     do
     {
-        px_clock_gettime(TIME_FLAG, &end);
-        time = (end.tv_sec - start.tv_sec) * E9 + (end.tv_nsec - start.tv_nsec);
-    } while (time < nsecs); // Loop until it arrives.
+        end = px_gettime(TIME_FLAG);
+    } while (end - start < ns); // Loop until it arrives.
 }
 /*----------------------------------------------------------------------------*/
 static inline int
@@ -819,7 +813,8 @@ update_iplen(struct rte_mbuf *pkt)
 }
 /*----------------------------------------------------------------------------*/
 static inline void
-update_ipid(struct rte_mbuf *pkt, uint16_t new_id)
+update_ipid(struct rte_mbuf *pkt,
+            uint16_t new_id)
 {
     uint16_t *ip_id = get_ip_id(pkt);
     *ip_id = rte_cpu_to_be_16(new_id);
@@ -834,7 +829,7 @@ update_udplen(struct rte_mbuf *pkt)
 }
 /*----------------------------------------------------------------------------*/
 static inline void
-tupledump(struct four_tuple *ft)
+px_tuple_dump(struct four_tuple *ft)
 {
     // printf("pkt_len: %d, l2_len: %d, l3_len: %d, l4_len: %d\n",
     //        pkt->pkt_len, pkt->l2_len, pkt->l3_len, pkt->l4_len);
@@ -845,6 +840,117 @@ tupledump(struct four_tuple *ft)
            *((uint8_t *)&ft->dst_ip), *((uint8_t *)&ft->dst_ip + 1),
            *((uint8_t *)&ft->dst_ip + 2), *((uint8_t *)&ft->dst_ip + 3),
            rte_be_to_cpu_16(ft->dst_port));
+}
+/*----------------------------------------------------------------------------*/
+static inline struct four_tuple *
+get_orig_four_tuple(struct rte_mbuf *pkt)
+{
+    /* check if the headroom is used for 4-tuple */
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    if (!(pkt->ol_flags & (PKT_FIRST_FREE << 1)))
+#else
+    if (!(pkt->ol_flags & (RTE_MBUF_F_FIRST_FREE << 1)))
+#endif
+    {
+        return NULL;
+    }
+
+    /* return the tuple from the headroom */
+    return (struct four_tuple *)pkt->buf_addr;
+}
+/*----------------------------------------------------------------------------*/
+static inline int
+put_orig_four_tuple(struct rte_mbuf *pkt)
+{
+    /* check if the headroom is used for 4-tuple */
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    if (pkt->ol_flags & (PKT_FIRST_FREE << 1))
+#else
+    if (pkt->ol_flags & (RTE_MBUF_F_FIRST_FREE << 1))
+#endif
+    {
+        /* headroom already used for 4-tuple */
+        return -1;
+    }
+
+    /* backup the tuple in the headroom */
+    memcpy(pkt->buf_addr, get_orig_four_tuple(pkt), sizeof(struct four_tuple));
+
+    /* mark that the headroom is used for 4-tuple */
+    pkt->ol_flags |= (PKT_FIRST_FREE << 1);
+
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline int
+copy_orig_four_tuple(struct rte_mbuf *dst,
+                     struct rte_mbuf *src)
+{
+    /* check if the headroom is used for 4-tuple */
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    if (!(src->ol_flags & (PKT_FIRST_FREE << 1)))
+#else
+    if (!(src->ol_flags & (RTE_MBUF_F_FIRST_FREE << 1)))
+#endif
+    {
+        return -1;
+    }
+
+    dst->ol_flags |= (PKT_FIRST_FREE << 1);
+
+    memcpy(dst->buf_addr, src->buf_addr, sizeof(struct four_tuple));
+
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+reset_orig_four_tuple(struct rte_mbuf *pkt)
+{
+    /* check if the headroom is used for 4-tuple */
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    if (!(pkt->ol_flags & (PKT_FIRST_FREE << 1)))
+#else
+    if (!(pkt->ol_flags & (RTE_MBUF_F_FIRST_FREE << 1)))
+#endif
+    {
+        return;
+    }
+
+    /* rollback the flags */
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    pkt->ol_flags &= ~(PKT_FIRST_FREE << 1);
+#else
+    pkt->ol_flags &= ~(RTE_MBUF_F_FIRST_FREE << 1);
+#endif
+
+    /* remove the tuple from the headroom */
+    memset(pkt->buf_addr, 0, sizeof(struct four_tuple));
+}
+/*----------------------------------------------------------------------------*/
+/**
+ * Below functions are used when timestamping in SW without hardware support.
+ * They are used to put timestamp in the headroom of mbuf, and get timestamp
+ * from the headroom of mbuf.
+ * Note that the timestamp is stored after the original four_tuple.
+ */
+/*----------------------------------------------------------------------------*/
+static inline void
+put_sw_timestamp(struct rte_mbuf *pkt,
+                 uint64_t timestamp)
+{
+    uint64_t *timestamp_pos =
+        (uint64_t *)((uint8_t *)pkt->buf_addr +
+                     pkt->data_off - sizeof(uint64_t));
+
+    /* backup the tuple in the headroom */
+    *timestamp_pos = timestamp;
+}
+/*----------------------------------------------------------------------------*/
+static inline uint64_t
+get_sw_timestamp(struct rte_mbuf *pkt)
+{
+    return *(uint64_t *)((uint8_t *)pkt->buf_addr +
+                         pkt->data_off - sizeof(uint64_t));
 }
 /*----------------------------------------------------------------------------*/
 #ifdef __cplusplus

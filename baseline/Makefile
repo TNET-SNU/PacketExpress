@@ -45,10 +45,10 @@ CFLAGS += -D SG_DMA=1
 # Choose one of below
 
 # 1. Semantic test on
-CFLAGS += -D SEMANTIC_TEST=1
+# CFLAGS += -D SEMANTIC_TEST=1
 
 # 2. Semantic test off
-# CFLAGS += -D SEMANTIC_TEST=0
+CFLAGS += -D SEMANTIC_TEST=0
 
 ################################################################################
 

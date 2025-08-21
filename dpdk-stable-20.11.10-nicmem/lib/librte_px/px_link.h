@@ -94,7 +94,10 @@ reflect_encap_and_mac(struct rte_mbuf *cur,
     uint8_t copy_len = RTE_ETHER_ADDR_LEN * 2;
 
     /* add encap len to copy len */
-    copy_len += (encap_len > 0) ? encap_len : 0;
+    if (encap_len > 0)
+    {
+        copy_len += encap_len;
+    }
 
     /* make the header space as same as start item's */
     cur->data_off -= encap_len;
@@ -102,7 +105,7 @@ reflect_encap_and_mac(struct rte_mbuf *cur,
     cur->pkt_len += encap_len;
 
     /* check insanity */
-    if (!rte_pktmbuf_mtod(cur, void *))
+    if (!rte_pktmbuf_mtod(cur, void *) || !rte_pktmbuf_mtod(start, void *))
     {
         /* failed to adjust header space for en/decaped packet */
         rte_pktmbuf_free(cur);

@@ -25,9 +25,9 @@ void OffloadManager::ProcessBatch(Context *ctx, bess::PacketBatch *batch) {
   for (int i = 0; i < batch->cnt(); i++) {
     bess::Packet *p = batch->pkts()[i];
 
-    hexdump("backup 4 tuple",
-            (uint8_t *)search_four_tuple(reinterpret_cast<rte_mbuf *>(p)),
-            sizeof(struct four_tuple));
+    px_hexdump("backup 4 tuple",
+               get_orig_four_tuple(reinterpret_cast<rte_mbuf *>(p)),
+               sizeof(struct four_tuple));
 
     /* now create new rule */
     if (px_flow_create(ctx->wid, reinterpret_cast<rte_mbuf *>(p)) < 0)

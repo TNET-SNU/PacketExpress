@@ -8,7 +8,7 @@ extern "C"
 /*----------------------------------------------------------------------------*/
 #include "px_common.h"
 #include "px_cache.h"
-#include "px_delay.h"
+#include "px_iat.h"
 /*----------------------------------------------------------------------------*/
 /*
  * Ethernet frame overhead
@@ -30,7 +30,6 @@ struct px_rx_stat
     /* every packets */
     uint64_t bytes_cnt;
     uint64_t pkt_cnt;
-    uint64_t pkt_cnt_in_batch;
 
     /* only packets with payload */
     uint64_t data_bytes_cnt;
@@ -38,13 +37,6 @@ struct px_rx_stat
     uint64_t data_pkt_segs_cnt;
     uint64_t data_pkt_cnt_in_batch;
     uint64_t batch_cnt;
-
-#if PX_MEASURE_DELAY
-    /* sum of packets' delay in microsecond */
-    // uint64_t delay_us;
-    /* sum of packets' delay in nanosecond */
-    uint64_t delay_ns;
-#endif
 
 #if PX_MEASURE_DIST
     /* distribution of packets with payload */
@@ -56,30 +48,12 @@ struct px_tx_stat
     int reset;
     int ready;
 
-    /* every packets */
-    uint64_t bytes_cnt;
-    uint64_t pkt_cnt;
-    uint64_t pkt_cnt_in_batch;
-
     /* only packets with payload */
-    uint64_t data_bytes_cnt;
     uint64_t data_pkt_cnt;
     uint64_t data_downlink_pkt_cnt;
-    uint64_t data_pkt_segs_cnt;
-    uint64_t data_pkt_cnt_in_batch;
-    uint64_t batch_cnt;
 
-#if PX_MEASURE_DELAY
-    /* sum of packets' delay in microsecond */
-    // uint64_t delay_us;
     /* sum of packets' delay in nanosecond */
     uint64_t delay_ns;
-#endif
-
-#if PX_MEASURE_DIST
-    /* distribution of packets with payload */
-    uint64_t dist[UINT16_MAX / DIST_UNIT + 1];
-#endif
 
     uint64_t _1_seg_cnt;
     uint64_t _2_seg_cnt;

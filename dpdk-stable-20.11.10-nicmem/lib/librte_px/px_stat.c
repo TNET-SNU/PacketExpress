@@ -77,13 +77,12 @@ void px_update_tx_stats(uint16_t port_id,
 {
     struct px_tx_stat *tx_stat;
     struct rte_mbuf *pkt;
-    struct timespec now_ns;
-    int64_t diff = 0;
     uint64_t leftover = 0;
     uint32_t orig_segsz, target_segsz;
     uint32_t data_len;
     int max_segnum, i;
     tx_stat = &g_px_tx_stat[port_id][queue_id];
+    uint64_t now = px_gettime(TIME_FLAG);
 
     /* if main core has already read my stats, reset mine */
     if (tx_stat->reset)
@@ -106,13 +105,8 @@ void px_update_tx_stats(uint16_t port_id,
         {
             tx_stat->data_pkt_cnt++;
             /* measure delay */
-#if PX_MEASURE_DELAY
-            px_clock_gettime(TIME_FLAG, &now_ns);
-            diff = get_nsec_diff(&now_ns,
-                                 get_timestamp_from_headroom(pkt));
-            reset_timestamp_on_headroom(pkt);
-            tx_stat->delay_ns += diff;
-#endif
+            tx_stat->delay_ns += now - get_sw_timestamp(pkt);
+            put_sw_timestamp(pkt, 0);
             /* calculate conversion yield */
             if (g_is_semantic_test)
             {
@@ -170,12 +164,20 @@ void px_print_stats(int args)
     (void)args;
     struct px_rx_stat *rx_iter, rx_total = {0};
     struct px_tx_stat *tx_iter, tx_total = {0};
+    uint64_t iat_burst_iat_iter, iat_burst_iat_total = 0;
+    uint64_t iat_data_len_iter, iat_data_len_total = 0;
+    uint64_t iat_count_iter, iat_count_total = 0;
     int port_id, queue_id;
 
     for (port_id = 0; port_id < g_num_ports; port_id++)
     {
         for (queue_id = 0; queue_id < MAX(g_num_rxqs, g_num_txqs); queue_id++)
         {
+            iat_local_stat(port_id,
+                           queue_id,
+                           &iat_burst_iat_iter,
+                           &iat_data_len_iter,
+                           &iat_count_iter);
             rx_iter = &g_px_rx_stat[port_id][queue_id];
             tx_iter = &g_px_tx_stat[port_id][queue_id];
             if (!rx_iter->data_pkt_cnt && !tx_iter->data_pkt_cnt)
@@ -184,24 +186,22 @@ void px_print_stats(int args)
             }
 #if PX_MEASURE_PER_QUEUE_STAT
             /* per queue stat */
-            printf(" |-[P%2d][Q%2d] "
-                   "Tput %5lu Gbps, %5lu Kpps, "
-#if PX_MEASURE_DELAY
-                   "Avg. delay: %5lu ns, "
-#endif
+            printf("  [%2d-%2d] "
+                   "Tput %4lu Gbps, %5lu Kpps, "
+                   "delay: %5lu ns, "
                    //    "Conv. Yield: %2.1f%%, "
                    "Conv. Yield: %2.1f%%, "
-                   "Avg. pkt size: %5lu, "
-                   "Avg. segs/pkt: %1lu, "
-                   "Avg. batch size: %1lu, "
+                   "pkt size: %5lu, "
+                   "IAT: %5lu ns, "
+                   "LRO size: %5lu, "
+                   "segs/pkt: %1lu, "
+                   "batch size: %1lu, "
                    "Num of pkts: %5lu\n",
                    port_id, queue_id,
                    rx_iter->bytes_cnt * 8 / E9, rx_iter->pkt_cnt / E3,
-#if PX_MEASURE_DELAY
                    tx_iter->data_pkt_cnt
                        ? tx_iter->delay_ns / tx_iter->data_pkt_cnt
                        : 0,
-#endif
                    //    (tx_iter->iMTU_cnt + tx_iter->under_iMTU_cnt)
                    //        ? (double)tx_iter->iMTU_cnt /
                    //              (tx_iter->iMTU_cnt + tx_iter->under_iMTU_cnt) *
@@ -218,6 +218,12 @@ void px_print_stats(int args)
                        : 0,
                    rx_iter->data_pkt_cnt
                        ? rx_iter->data_bytes_cnt / rx_iter->data_pkt_cnt
+                       : 0,
+                   iat_count_iter
+                       ? iat_burst_iat_iter / iat_count_iter
+                       : 0,
+                   iat_count_iter
+                       ? iat_data_len_iter / iat_count_iter
                        : 0,
                    rx_iter->data_pkt_cnt
                        ? rx_iter->data_pkt_segs_cnt / rx_iter->data_pkt_cnt
@@ -261,33 +267,32 @@ void px_print_stats(int args)
             tx_total.under_iMTU_cnt += tx_iter->under_iMTU_cnt;
             tx_total.iMTU_cnt += tx_iter->iMTU_cnt;
             tx_total.data_downlink_pkt_cnt += tx_iter->data_downlink_pkt_cnt;
-#if PX_MEASURE_DELAY
             tx_total.delay_ns += tx_iter->delay_ns;
             tx_total.data_pkt_cnt += tx_iter->data_pkt_cnt;
-#endif
+            iat_burst_iat_total += iat_burst_iat_iter;
+            iat_data_len_total += iat_data_len_iter;
+            iat_count_total += iat_count_iter;
 
             /* notify reset to workers */
             rx_iter->reset = 1;
             tx_iter->reset = 1;
         }
     }
-    printf("[   TOTAL   ] "
-           "Tput %5lu Gbps, %5lu Kpps, "
-#if PX_MEASURE_DELAY
-           "Avg. delay: %5lu ns, "
-#endif
+    printf("[ TOTAL ] "
+           "Tput %4lu Gbps, %5lu Kpps, "
+           "delay: %5lu ns, "
            //    "Conv. Yield: %2.1f%%, "
            "Conv. Yield: %2.1f%%, "
-           "Avg. pkt size: %5lu, "
-           "Avg. segs/pkt: %1lu, "
-           "Avg. batch size: %1lu, "
-           "Num of pkts: %5lu\n\n",
+           "pkt size: %5lu, "
+           "IAT: %5lu ns, "
+           "LRO size: %5lu, "
+           "segs/pkt: %1lu, "
+           "batch size: %1lu, "
+           "Num of pkts: %5lu\n",
            rx_total.bytes_cnt * 8 / E9, rx_total.pkt_cnt / E3,
-#if PX_MEASURE_DELAY
            tx_total.data_pkt_cnt
                ? tx_total.delay_ns / tx_total.data_pkt_cnt
                : 0,
-#endif
            //    (tx_total.iMTU_cnt + tx_total.under_iMTU_cnt)
            //        ? (double)tx_total.iMTU_cnt /
            //              (tx_total.iMTU_cnt + tx_total.under_iMTU_cnt) * 100
@@ -303,6 +308,12 @@ void px_print_stats(int args)
                : 0,
            rx_total.data_pkt_cnt
                ? rx_total.data_bytes_cnt / rx_total.data_pkt_cnt
+               : 0,
+           iat_count_total
+               ? iat_burst_iat_total / iat_count_total
+               : 0,
+           iat_count_total
+               ? iat_data_len_total / iat_count_total
                : 0,
            rx_total.data_pkt_cnt
                ? rx_total.data_pkt_segs_cnt / rx_total.data_pkt_cnt

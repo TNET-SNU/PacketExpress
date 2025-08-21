@@ -25,7 +25,7 @@ int px_nicmem_free(uint16_t port_id)
 /*----------------------------------------------------------------------------*/
 int px_nicmem_configure(uint16_t port_id,
                         uint16_t pkt_size,
-                        unsigned int num_nicmem)
+                        uint32_t num_nicmem)
 {
     struct px_nicmem_ctx *nm_ctx = &g_px_nicmem_ctx[port_id];
     int ret, sid = rte_eth_dev_socket_id(port_id);

@@ -30,7 +30,7 @@
 #include <rte_mbuf_core.h>
 #include <rte_thread.h>
 #include <rte_lcore.h>
-#include "px.h"
+#include <px.h>
 /*----------------------------------------------------------------------------*/
 /* Essential macros */
 #define MBUF_DATA_SIZE 9024
@@ -105,7 +105,7 @@ static uint16_t g_num_sockets = 1;
 static uint16_t g_num_cores = 1;
 static uint16_t g_num_ports = 0;
 static struct rte_ether_addr port_mac[RTE_MAX_ETHPORTS] = {{{0}}};
-static struct rte_mempool *g_pktmbuf_pool[RTE_MAX_LCORE] = {NULL};
+static struct rte_mempool *g_pktmbuf_pool[RTE_MAX_NUMA_NODES] = {NULL};
 static struct rte_eth_dev_info g_dev_info[RTE_MAX_ETHPORTS];
 /*----------------------------------------------------------------------------*/
 static void
@@ -240,7 +240,7 @@ port_init(uint16_t portid, uint16_t num_queue)
         /* init RX queue on each port per CPU */
         ret = rte_eth_rx_queue_setup(portid, queue_id, nb_rxd, sid,
                                      &g_dev_info[portid].default_rxconf,
-                                     g_pktmbuf_pool[queue_id]);
+                                     g_pktmbuf_pool[sid]);
         if (ret < 0)
         {
             rte_exit(EXIT_FAILURE, "rte_eth_rx_queue_setup: "
@@ -505,13 +505,12 @@ int main(int argc, char **argv)
     // printf("device_count: %u\n", g_num_ports);
 
     /* mbuf pool creation */
-    for (core_id = 0; core_id < g_num_cores; core_id++)
+    for (sid = 0; sid < g_num_sockets; sid++)
     {
-        char name[20];
-        sid = rte_lcore_to_socket_id(core_id);
-        sprintf(name, "mempool-%d", core_id);
-        g_pktmbuf_pool[core_id] =
-            rte_mempool_create(name, nb_mbuf / g_num_cores,
+        char name[MAX_NAME_SIZE];
+        sprintf(name, "mempool-%d", sid);
+        g_pktmbuf_pool[sid] =
+            rte_mempool_create(name, nb_mbuf / g_num_sockets,
                                MBUF_DATA_SIZE +
                                    sizeof(struct rte_mbuf) +
                                    RTE_PKTMBUF_HEADROOM,
@@ -519,8 +518,8 @@ int main(int argc, char **argv)
                                sizeof(struct rte_pktmbuf_pool_private),
                                rte_pktmbuf_pool_init, NULL,
                                rte_pktmbuf_init, NULL,
-                               sid, MEMPOOL_F_SP_PUT | MEMPOOL_F_SC_GET);
-        if (!g_pktmbuf_pool[core_id])
+                               sid, 0);
+        if (!g_pktmbuf_pool[sid])
         {
             rte_exit(EXIT_FAILURE,
                      "Cannot init data mbuf pool in sid: %d\n", sid);

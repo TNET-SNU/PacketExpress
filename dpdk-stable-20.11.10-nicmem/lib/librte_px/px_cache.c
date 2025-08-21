@@ -33,7 +33,7 @@ void lru_queue_print_all(int port_id)
            cm->total_cached_size - cm->total_evicted_size);
     while (node->flow)
     {
-        tupledump(&node->key);
+        px_tuple_dump(&node->key);
         node = node->next;
         if (node->flow)
         {

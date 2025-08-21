@@ -7,7 +7,7 @@ extern "C"
 #endif
 /*----------------------------------------------------------------------------*/
 #include "px_common.h"
-#include "px_delay.h"
+#include "px_iat.h"
 /*----------------------------------------------------------------------------*/
 #define DEFAULT_eMSS (DEFAULT_eMTU -                \
                       sizeof(struct rte_ipv4_hdr) - \
@@ -38,7 +38,7 @@ struct px_mss_ctx
 struct flow_mss_entry
 {
     uint32_t mss;
-    struct timespec last_update;
+    uint64_t last_update;
 };
 /*----------------------------------------------------------------------------*/
 static inline uint16_t
@@ -70,13 +70,15 @@ get_tcp_mss(struct rte_mbuf *pkt);
 /*----------------------------------------------------------------------------*/
 void update_mss(uint16_t *mss_ptr, uint16_t new_mss, int direction);
 /*----------------------------------------------------------------------------*/
-void mss_flush_timeout(struct px_mss_ctx *ctx);
+void mss_flush_timeout(uint16_t port_id,
+                       uint16_t queue_id);
 /*----------------------------------------------------------------------------*/
-int mss_search_entry(struct px_mss_ctx *ctx,
+int mss_search_entry(uint16_t port_id,
+                     uint16_t queue_id,
                      uint32_t rss,
                      struct four_tuple *key,
                      uint32_t *mss,
-                     struct timespec *now);
+                     uint64_t now);
 /*----------------------------------------------------------------------------*/
 uint8_t *mss_bloom_init(void);
 /*----------------------------------------------------------------------------*/
@@ -94,19 +96,22 @@ void mss_bloom_delete(uint8_t *filter,
                       uint32_t rss,
                       struct four_tuple *key);
 /*----------------------------------------------------------------------------*/
-struct px_mss_ctx *mss_init_ctx(uint16_t port_id,
-                                uint16_t queue_id,
-                                uint32_t num_entry);
+int mss_init_ctx(uint16_t port_id,
+                 uint16_t queue_id,
+                 uint32_t num_entry);
 /*----------------------------------------------------------------------------*/
-int mss_destroy_ctx(struct px_mss_ctx *ctx);
+int mss_destroy_ctx(uint16_t port_id,
+                    uint16_t queue_id);
 /*----------------------------------------------------------------------------*/
-int mss_insert_entry(struct px_mss_ctx *ctx,
+int mss_insert_entry(uint16_t port_id,
+                     uint16_t queue_id,
                      uint32_t rss,
                      struct four_tuple *key,
                      uint32_t mss,
-                     struct timespec *now);
+                     uint64_t now);
 /*----------------------------------------------------------------------------*/
-int mss_evict_entry(struct px_mss_ctx *ctx,
+int mss_evict_entry(uint16_t port_id,
+                    uint16_t queue_id,
                     uint32_t rss,
                     struct four_tuple *key);
 /*----------------------------------------------------------------------------*/

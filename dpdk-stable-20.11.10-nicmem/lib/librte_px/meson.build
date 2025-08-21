@@ -8,7 +8,7 @@ sources = files(
         'px_rule.c',
         'px_link.c',
         'px_stat.c',
-        'px_delay.c',
+        'px_iat.c',
         'px_mss.c',
         'px_nicmem.c',
         'px_flow.c',
@@ -25,7 +25,7 @@ headers = files(
         'px_rule.h',
         'px_link.h',
         'px_stat.h',
-        'px_delay.h',
+        'px_iat.h',
         'px_mss.h',
         'px_nicmem.h',
         'px_flow.h',
@@ -33,6 +33,5 @@ headers = files(
         'px_arp.h',
         'px_reqring.h',
         'px_offload.h',
-        'px_four_tuple.h'
 )
-deps += ['ethdev', 'hash', 'gro']
+deps += ['ethdev', 'hash', 'gro', 'gso']

@@ -51,14 +51,20 @@ CFLAGS += -D USE_LRO=1
 # 2. CUSTOM GRO on, no latent RXQ, no stall
 # CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=1 -D CUTOFF_NS=0 -D USE_LINK=0
 
-# 3. CUSTOM GRO on, no stall
+# 3. CUSTOM GRO on, no latent RXQ, stall
+# CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=1 -D CUTOFF_NS=60000 -D USE_LINK=0
+
+# 4. CUSTOM GRO on, latent RXQ 4, no stall
 # CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D CUTOFF_NS=0 -D USE_LINK=0
 
-# 4. CUSTOM GRO on, stall 72us
-CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D CUTOFF_NS=120000 -D USE_LINK=0
+# 5. CUSTOM GRO on, latent RXQ 4, stall
+CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D CUTOFF_NS=60000 -D USE_LINK=0
 
-# 6. CUSTOM GRO + LINKING
+# 6. CUSTOM GRO on, latent RXQ 4, no stall, linking
 # CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D CUTOFF_NS=0 -D USE_LINK=1
+
+# 7. CUSTOM GRO on, latent RXQ 4, stall, linking
+# CFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D CUTOFF_NS=60000 -D USE_LINK=1
 
 ################################################################################
 

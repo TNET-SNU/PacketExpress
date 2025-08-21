@@ -15,7 +15,7 @@ int px_flow_create(int core_id, struct rte_mbuf *pkt)
     struct ri_node *target, *new;
     struct request req;
     struct rte_mbuf *clone;
-    struct four_tuple *orig_ft = search_four_tuple(pkt);
+    struct four_tuple *orig_ft = get_orig_four_tuple(pkt);
 
     /* below is to control flow creation ratio */
     // if ((orig_ft->src_port + orig_ft->dst_port) % 5 >= 4) // create 80% of flows
@@ -111,7 +111,7 @@ int px_flow_delete(int core_id, struct rte_mbuf *pkt)
     struct ri_node *target;
     struct request req;
     enum cache_cmd cmd;
-    struct four_tuple *orig_ft = search_four_tuple(pkt);
+    struct four_tuple *orig_ft = get_orig_four_tuple(pkt);
     struct ri_node node = {
         .key = *orig_ft,
         .pkt = pkt,
@@ -146,7 +146,7 @@ static inline struct ri_node *
 px_flow_search(int core_id, struct rte_mbuf *pkt)
 {
     struct ri_node *target;
-    struct four_tuple *orig_ft = search_four_tuple(pkt);
+    struct four_tuple *orig_ft = get_orig_four_tuple(pkt);
     struct ri_node node = {
         .key = *orig_ft,
         .pkt = pkt,
@@ -173,7 +173,7 @@ int px_flow_stat(int core_id, struct rte_mbuf *pkt, struct count *stat)
 {
     struct ri_node *target;
     struct rte_flow_query_count query;
-    struct four_tuple *orig_ft = search_four_tuple(pkt);
+    struct four_tuple *orig_ft = get_orig_four_tuple(pkt);
     struct ri_node node = {
         .key = *orig_ft,
         .pkt = pkt,
@@ -265,12 +265,12 @@ px_flow_slave_main(void *arg)
             {
                 /* new request is on ring */
                 node = req->node;
-                
+
                 printf("px_flow_slave_main, core_id: %d, port_id: %d\n"
                        "req: %p, cmd: %d, node: %p\n",
                        core_id, port_id, req, req->cmd, req->node);
-                tupledump(&node->key);
-                tupledump(get_four_tuple(node->pkt));
+                px_tuple_dump(&node->key);
+                px_tuple_dump(get_four_tuple(node->pkt));
                 /* make sure this thread is responsible for this request */
                 if (port_id != node->pkt->port)
                 {
@@ -298,8 +298,8 @@ px_flow_slave_main(void *arg)
                         }
                         if (!node->flow)
                         {
-                            tupledump(&node->key);
-                            tupledump(get_four_tuple(node->pkt));
+                            px_tuple_dump(&node->key);
+                            px_tuple_dump(get_four_tuple(node->pkt));
                             printf("px_flow_create failed!\n");
                             /* do not consume the ring */
                             continue;
