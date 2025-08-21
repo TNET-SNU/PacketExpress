@@ -12,7 +12,8 @@ DPDK_21 {
 	px_eth_dev_configure;
 	px_eth_stats_get;
 	px_start_print_thread;
-	px_update_stats;
+	px_update_rx_stats;
+	px_update_tx_stats;
 	px_print_stats;
 	px_stat_cb;
 	px_eth_rx_queue_setup;
@@ -43,11 +44,11 @@ DPDK_21 {
 
 	hp_context_init;
 	hp_context_destroy;
-	hp_create_rule;
-	hp_delete_rule;
-	hp_stat_rule;
-	hp_nic_cache_stat;
-	hp_host_hash_stat;
+	px_flow_create;
+	px_flow_delete;
+	px_flow_stat;
+	px_flow_nic_cache_stat;
+	px_flow_host_cache_stat;
 	
 	local: *;
 };
