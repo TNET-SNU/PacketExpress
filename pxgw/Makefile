@@ -48,16 +48,16 @@ CFLAGS += -D USE_LRO=1
 # 1. DPDK GRO on
 # CFLAGS += -D USE_GRO=1
 
-# 2. CUSTOM GRO on, no stall
+# 2. CUSTOM GRO on, no delay
 CFLAGS += -D USE_PX=1 -D CUTOFF_NS=0 -D USE_LINK=0
 
-# 3. CUSTOM GRO on, stall
+# 3. CUSTOM GRO on, delay
 # CFLAGS += -D USE_PX=1 -D CUTOFF_NS=120000 -D USE_LINK=0
 
-# 4. CUSTOM GRO on, no stall, linking
+# 4. CUSTOM GRO on, no delay, linking
 # CFLAGS += -D USE_PX=1 -D CUTOFF_NS=0 -D USE_LINK=1
 
-# 5. CUSTOM GRO on, stall, linking
+# 5. CUSTOM GRO on, delay, linking
 # CFLAGS += -D USE_PX=1 -D CUTOFF_NS=120000 -D USE_LINK=1
 
 ################################################################################

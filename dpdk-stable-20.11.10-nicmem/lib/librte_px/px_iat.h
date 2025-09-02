@@ -186,9 +186,9 @@ void iat_flush_timeout(uint16_t port_id,
 static inline float
 iat_time_factor(uint32_t missing_segs_nb)
 {
-    /* below is for naive stall */
+    /* below is for naive delaying */
     static const float timeout_factor_naive[] = {
-        00.00f, // no need to stall
+        00.00f, // no need to delay
         01.00f, // missing_segs = 1
         02.00f, // missing_segs = 2
         03.00f, // missing_segs = 3
@@ -212,7 +212,7 @@ iat_time_factor(uint32_t missing_segs_nb)
     };
     /* below is for 95% reception rate */
     static const float timeout_factor_95[] = {
-        00.00f, // no need to stall
+        00.00f, // no need to delay
         03.00f, // missing_segs = 1
         04.74f, // missing_segs = 2
         06.30f, // missing_segs = 3
@@ -236,7 +236,7 @@ iat_time_factor(uint32_t missing_segs_nb)
     };
     /* below is for 99% reception rate */
     static const float timeout_factor_99[] = {
-        00.00f, // no need to stall
+        00.00f, // no need to delay
         04.61f, // missing_segs = 1
         06.64f, // missing_segs = 2
         08.41f, // missing_segs = 3
@@ -260,7 +260,7 @@ iat_time_factor(uint32_t missing_segs_nb)
     };
     /* below is for 99.9% reception rate */
     static const float timeout_factor_999[] = {
-        00.00f, // no need to stall
+        00.00f, // no need to delay
         06.91f, // missing_segs = 1
         09.88f, // missing_segs = 2
         11.26f, // missing_segs = 3

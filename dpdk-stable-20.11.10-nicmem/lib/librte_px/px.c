@@ -817,7 +817,6 @@ insert_item(struct px_ctx *pctx,
     cur_item->firstseg = firstseg;
     cur_item->lastseg = lastseg;
     cur_item->next_item_idx = INVALID_INDEX;
-    // cur_item->stall_count = stall_count;
 
     if (prev_item)
     {
@@ -1020,11 +1019,11 @@ Error:
 }
 /*----------------------------------------------------------------------------*/
 /*
- * Determine if the current packet should be stalled
+ * Determine if the current packet should be delayed
  * based on the time difference and the original segment size
  */
 static inline int
-is_stall_needed(struct px_ctx *pctx,
+is_delay_needed(struct px_ctx *pctx,
                 struct rte_mbuf *cur_pkt,
                 uint64_t timestamp,
                 uint32_t orig_segsz,
@@ -1039,7 +1038,7 @@ is_stall_needed(struct px_ctx *pctx,
     max_seg_nb = target_segsz / orig_segsz;
     if ((max_seg_nb == 0) || (data_len >= target_segsz))
     {
-        /* no need to stall */
+        /* no need to delay */
         return 0;
     }
     ret = iat_search_entry(pctx->port_id,
@@ -1091,7 +1090,7 @@ is_stall_needed(struct px_ctx *pctx,
 }
 /*----------------------------------------------------------------------------*/
 /*
- * Returns 1 if the packet is stalled, 0 if not stalled.
+ * Returns 1 if the packet is stashed, 0 if not stashed.
  */
 static inline int
 handle_incomplete(struct px_ctx *pctx,
@@ -1109,17 +1108,17 @@ handle_incomplete(struct px_ctx *pctx,
 
     if (force)
     {
-        /* insert to stalled item array */
-        if (insert_stall(pctx,
+        /* insert to stash item array */
+        if (insert_stash(pctx,
                          firstseg,
                          lastseg,
                          timestamp) < 0)
         {
-            fprintf(stderr, "stall table overflow\n");
+            fprintf(stderr, "stash table overflow\n");
             goto Enqueue;
         }
 
-        return 1; // stalled
+        return 1; // stashed
     }
 
     /*
@@ -1132,24 +1131,24 @@ handle_incomplete(struct px_ctx *pctx,
         goto Enqueue;
     }
 
-    /* if stall nsec is marginal */
-    if (is_stall_needed(pctx, firstseg, timestamp, orig_segsz, target_segsz))
+    /* if delay nsec is marginal */
+    if (is_delay_needed(pctx, firstseg, timestamp, orig_segsz, target_segsz))
     {
-        /* can stall, so insert to stalled item array */
-        if (insert_stall(pctx,
+        /* can delay, so insert to stash item array */
+        if (insert_stash(pctx,
                          firstseg,
                          lastseg,
                          timestamp) < 0)
         {
-            fprintf(stderr, "stall table overflow\n");
+            fprintf(stderr, "stash table overflow\n");
             goto Enqueue;
         }
 
-        return 1; // stalled
+        return 1; // stashed
     }
 
 Enqueue:
-    /* give up merge and enqueue to stall ring */
+    /* give up merge and enqueue to RX ring */
     if (is_udp(firstseg))
     {
         /* if nicmem enabled, nb_segs is 2 by default */
@@ -1171,7 +1170,7 @@ Enqueue:
         rte_pktmbuf_free(firstseg);
     }
 
-    return 0; // not stalled
+    return 0; // not stashed
 }
 /*----------------------------------------------------------------------------*/
 /*
@@ -1332,7 +1331,7 @@ assemble_tcp(struct px_ctx *pctx,
         cur_item = &pctx->items[cur_item->next_item_idx];
     }
 
-    /* retransmission case, give up stall */
+    /* retransmission case, give up delaying */
     // if (stall_limit)
     // {
     //     if (cmp == 3)
@@ -2057,13 +2056,13 @@ link_and_flush(struct px_ctx *pctx,
     struct px_item *cur_item;
     uint16_t item_idx, idx = 0, *start_id, id_diff;
     uint32_t saved_segsz, target_segsz, orig_segsz, last_segsz;
-    int ret, stall_this_flow;
+    int ret, delay_this_flow;
 
     for (int i = 0; i < pctx->flow_num; i++)
     {
         saved_segsz = 0;
         target_segsz = 0;
-        stall_this_flow = 0;
+        delay_this_flow = 0;
         cur_flow = &pctx->flows[i];
 
         /* remove bucket of this flow */
@@ -2141,13 +2140,13 @@ link_and_flush(struct px_ctx *pctx,
                 /* check if delayed merging needed and if is from outside */
                 if (g_is_semantic_test && is_px(cur_pkt))
                 {
-                    goto No_stall_tcp;
+                    goto No_delay_tcp;
                 }
                 /* only for incoming packets when delayed merging enabled */
                 if (pctx->stash_array)
                 {
-                    /* check if previous packet is stalled */
-                    if (stall_this_flow)
+                    /* check if previous packet is delayed */
+                    if (delay_this_flow)
                     {
                         update_tcp(cur_pkt, target_segsz);
                         ret = handle_incomplete(pctx,
@@ -2161,13 +2160,13 @@ link_and_flush(struct px_ctx *pctx,
                         continue;
                     }
 
-                    /* check if current packet should be stalled */
+                    /* check if current packet should be delayed */
                     assert(target_segsz >= orig_segsz);
                     if (get_data_len(cur_pkt) <= target_segsz - orig_segsz)
                     {
                         /*
                          * size of this packet is R < 9K
-                         * stall current packet (R) to merge more
+                         * delay current packet (R) to merge more
                          */
                         update_tcp(cur_pkt, target_segsz);
                         ret = handle_incomplete(pctx,
@@ -2179,7 +2178,7 @@ link_and_flush(struct px_ctx *pctx,
                                                 0);
                         if (ret == 1)
                         {
-                            stall_this_flow = 1;
+                            delay_this_flow = 1;
                         }
                         continue;
                     }
@@ -2199,7 +2198,7 @@ link_and_flush(struct px_ctx *pctx,
                         /*
                          * size of this packet is 9K * N + R
                          * flush complete packets (N)
-                         * stall duplicated edge (R) to merge more
+                         * stash duplicated edge (R) to merge more
                          */
                         update_tcp(edge, target_segsz);
                         ret = handle_incomplete(pctx,
@@ -2211,11 +2210,11 @@ link_and_flush(struct px_ctx *pctx,
                                                 0);
                         if (ret == 1)
                         {
-                            stall_this_flow = 1;
+                            delay_this_flow = 1;
                         }
                     }
                 }
-            No_stall_tcp:
+            No_delay_tcp:
                 // fprintf(stdout, "target_segsz: %d\n", target_segsz);
                 update_tcp(cur_pkt, target_segsz);
             }
@@ -2319,14 +2318,14 @@ link_and_flush(struct px_ctx *pctx,
                 /* check if delayed merging needed and if is from outside */
                 if (g_is_semantic_test && is_px(cur_pkt))
                 {
-                    goto No_stall_udp;
+                    goto No_delay_udp;
                 }
                 /* only for incoming packets when delayed merging enabled */
                 if (pctx->stash_array)
                 {
-                    if (stall_this_flow)
+                    if (delay_this_flow)
                     {
-                        /* check if previous packet is stalled */
+                        /* check if previous packet is delayed */
                         handle_incomplete(pctx,
                                           cur_pkt,
                                           cur_item->lastseg,
@@ -2337,13 +2336,13 @@ link_and_flush(struct px_ctx *pctx,
                         continue;
                     }
 
-                    /* check if current packet should be stalled */
+                    /* check if current packet should be delayed */
                     assert(target_segsz >= orig_segsz);
                     if (get_data_len(cur_pkt) <= target_segsz - orig_segsz)
                     {
                         /*
                          * size of this packet < 9K
-                         * stall current packet to merge more
+                         * stash current packet to merge more
                          */
                         ret = handle_incomplete(pctx,
                                                 cur_pkt,
@@ -2354,7 +2353,7 @@ link_and_flush(struct px_ctx *pctx,
                                                 0);
                         if (ret == 1)
                         {
-                            stall_this_flow = 1;
+                            delay_this_flow = 1;
                         }
                         continue;
                     }
@@ -2364,7 +2363,7 @@ link_and_flush(struct px_ctx *pctx,
                     //         get_data_len(cur_pkt),
                     //         target_segsz);
                 }
-            No_stall_udp:
+            No_delay_udp:
                 update_udp(cur_pkt);
 
                 /* make UDP packets continuous for UDP_GRO at endpoints */
@@ -2405,7 +2404,7 @@ link_and_flush(struct px_ctx *pctx,
             /* flush */
             if (idx == nb_pkts)
             {
-                /* given batch is full, so enqueue to stall ring */
+                /* given batch is full, so enqueue to RX ring */
                 if (px_ring_enqueue(&pctx->rx_ring, &cur_pkt, 1) != 1)
                 {
                     /* enqueue failed, drop the packet */
@@ -2510,7 +2509,7 @@ px_core(struct px_ctx *pctx,
     /* stage 0: get SW timestamp first */
     pctx->now_ns = px_gettime(TIME_FLAG);
 
-    /* Stage 1: try GRO with stalled items */
+    /* Stage 1: try GRO with stashed items */
     if (pctx->stash_array)
     {
         stash = &pctx->stash_array[pctx->latent_id];

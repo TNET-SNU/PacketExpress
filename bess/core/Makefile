@@ -148,16 +148,16 @@ CXXFLAGS += -D USE_LRO=1
 # 1. DPDK GRO on
 # CXXFLAGS += -D USE_GRO=1
 
-# 2. CUSTOM GRO on, no stall
+# 2. CUSTOM GRO on, no delay
 CXXFLAGS += -D USE_PX=1 -D CUTOFF_NS=0 -D USE_LINK=0
 
-# 3. CUSTOM GRO on, stall
+# 3. CUSTOM GRO on, delay
 # CXXFLAGS += -D USE_PX=1 -D CUTOFF_NS=120000 -D USE_LINK=0
 
 # 4. CUSTOM GRO + LINKING
 # CXXFLAGS += -D USE_PX=1 -D CUTOFF_NS=0 -D USE_LINK=1
 
-# 5. CUSTOM GRO + LINKING, stall
+# 5. CUSTOM GRO + LINKING, delay
 # CXXFLAGS += -D USE_PX=1 -D CUTOFF_NS=120000 -D USE_LINK=1
 
 ################################################################################

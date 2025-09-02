@@ -129,7 +129,7 @@ struct px_dev
     uint16_t emtu_size;
     uint16_t reta_size;
 
-    /* for packet stalling */
+    /* for packet delaying */
     uint32_t cutoff_ns;
 
     struct rte_eth_dev_info dev_info;

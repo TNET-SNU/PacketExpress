@@ -73,11 +73,11 @@ struct px_item
 
 struct px_stash
 {
-    /* current stalled item number */
-    /* since stalling is stateful, we keep per-latent-queue stash num */
+    /* current stashed item number */
+    /* since stashing is stateful, we keep per-latent-queue stash num */
     uint16_t num;
-    /* array of stalled item array */
-    /* since stalling is stateful, we keep per-latent-queue stash array */
+    /* array of stashed item array */
+    /* since stashing is stateful, we keep per-latent-queue stash array */
     struct px_item *items;
 };
 

@@ -219,7 +219,7 @@ px_unlink_and_uso(struct rte_mbuf **pkts,
                     /* flush hdr_clone to out buffer */
                     if (idx == nb_out)
                     {
-                        /* given batch is full, so enqueue to stall ring */
+                        /* given batch is full, so enqueue to TX ring */
                         if (px_ring_enqueue(tx_ring, &hdr_clone, 1) != 1)
                         {
                             /* enqueue failed, drop the packet */
@@ -252,7 +252,7 @@ px_unlink_and_uso(struct rte_mbuf **pkts,
                 /* flush */
                 if (idx == nb_out)
                 {
-                    /* given batch is full, so enqueue to stall ring */
+                    /* given batch is full, so enqueue to TX ring */
                     if (px_ring_enqueue(tx_ring, &pkt, 1) != 1)
                     {
                         /* enqueue failed, drop the packet */
