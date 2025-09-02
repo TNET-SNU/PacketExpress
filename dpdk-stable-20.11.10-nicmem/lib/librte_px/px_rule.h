@@ -140,14 +140,14 @@ int decode_action_rule(struct decoded_action *rule,
                        struct px_action *actions,
                        uint16_t nb_actions);
 /*----------------------------------------------------------------------------*/
-int px_add_rule(uint16_t port_id,
+int px_rule_add(uint16_t port_id,
                 uint16_t queue_id,
                 struct px_pattern *patterns,
                 int nb_patterns,
                 struct px_action *actions,
                 int nb_actions);
 /*----------------------------------------------------------------------------*/
-void px_del_rule(uint16_t port_id,
+void px_rule_del(uint16_t port_id,
                  uint16_t queue_id,
                  int px_id);
 /*----------------------------------------------------------------------------*/

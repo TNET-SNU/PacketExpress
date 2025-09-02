@@ -32,8 +32,9 @@
 #include <px.h>
 
 void MergeDelay::ProcessBatch(Context *ctx, bess::PacketBatch *batch) {
-  // printf("core [%d] / merge() / number of packets in a batch: %d\n",
-  //        sched_getcpu(), batch->cnt());
+  // fprintf(stdout,
+  //         "core [%d] / merge() / number of packets in a batch: %d\n",
+  //         sched_getcpu(), batch->cnt());
   // for (int i = 0; i < batch->cnt(); i++)
   //   busy_wait_for(1000);
   RunNextModule(ctx, batch);

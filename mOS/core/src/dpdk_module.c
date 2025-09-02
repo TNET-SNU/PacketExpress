@@ -230,7 +230,7 @@ dpdk_send_pkts(struct mtcp_thread_context *ctxt, int nif)
 		UNUSED(mtcp);
 #endif
 
-#if !USE_CGRO && (USE_LRO || USE_DGRO)
+#if !USE_PX && (USE_LRO || USE_GRO)
 		px_setup_tso_burst(nif, qid,
 						   dpc->wmbufs[nif].m_table,
 						   dpc->wmbufs[nif].len,
@@ -287,18 +287,18 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 		return 0;
 	
 	/* rx from data mbuf */
-#if USE_CGRO
+#if USE_PX
 	ret = px_eth_rx_burst(ifidx, qid,
 			dpc->rmbufs[ifidx].m_table, MAX_PKT_BURST);
 #else
 	ret = rte_eth_rx_burst(ifidx, qid,
 			dpc->rmbufs[ifidx].m_table, MAX_PKT_BURST);
-#if (USE_LRO || USE_DGRO)
+#if (USE_LRO || USE_GRO)
 	px_parse_batch(ifidx, qid,
 				   dpc->rmbufs[ifidx].m_table, ret,
 				   !JUMBO_FRAME, 1, SEMANTIC_TEST);
 #endif
-#if USE_DGRO
+#if USE_GRO
 	struct rte_gro_param gro_param = {
 		.gro_types = RTE_GRO_TCP_IPV4,
 		.max_flow_num = MAX_PKT_BURST,
@@ -307,7 +307,7 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 	};
 	ret = rte_gro_reassemble_burst(dpc->rmbufs[ifidx].m_table, ret, &gro_param);
 #endif
-	px_update_rx_stats(ifidx, qid, dpc->rmbufs[ifidx].m_table, ret);
+	px_stat_update_rx(ifidx, qid, dpc->rmbufs[ifidx].m_table, ret);
 #endif
 	dpc->rmbufs[ifidx].len = ret;
 
@@ -566,7 +566,7 @@ dpdk_load_module_lower_half(void)
 #else
                         			0,
 #endif
-#if USE_CGRO || USE_DGRO
+#if USE_PX || USE_GRO
 									1,
 #else
 									0,
@@ -589,21 +589,18 @@ dpdk_load_module_lower_half(void)
 			/* init port */
 			printf("[port %u] Initializing port... ", (unsigned) portid);
 			fflush(stdout);
-#if (USE_CGRO || NICMEM || NUM_HAIRPIN_Q)
+#if (USE_PX || NICMEM || NUM_HAIRPIN_Q)
 			ret = px_eth_dev_configure(portid,
 									   num_queue,
 									   num_queue,
-#if USE_CGRO
-									   NUM_LATENT_RXQ,
-#else
-									   1,
-#endif
+									   0,
+									   0,
 #if NICMEM
 									   nb_rxd,
 #else
 									   0,
 #endif
-#if USE_CGRO
+#if USE_PX
 									   CUTOFF_NS,
 #else
 									   0,
@@ -641,7 +638,7 @@ dpdk_load_module_lower_half(void)
 				if (!(g_config.mos->netdev_table->ent[eth_idx]->cpu_mask & (1L << rxlcore_id)))
 					continue;
 				/* first RX queue for data */
-#if (USE_CGRO || NICMEM || NUM_HAIRPIN_Q)
+#if (USE_PX || NICMEM || NUM_HAIRPIN_Q)
 				ret = px_eth_rx_queue_setup(portid, queue_id, nb_rxd,
 											rte_eth_dev_socket_id(portid),
 											&dev_info[portid].default_rxconf,
@@ -676,16 +673,6 @@ dpdk_load_module_lower_half(void)
 				queue_id++;
 			}
 
-#if USE_CGRO
-			ret = px_init(portid,
-						  MAX_PKT_BURST,
-						  !JUMBO_FRAME ? 4096 : 0,
-						  CUTOFF_NS ? 4096 : 0,
-						  NULL, NULL, USE_LINK, SEMANTIC_TEST);
-			if (ret < 0)
-				rte_exit(EXIT_FAILURE, "px_init failed\n");
-#endif
-
 			/* Start device */
 			ret = rte_eth_dev_start(portid);
 			if (ret < 0)
@@ -696,6 +683,19 @@ dpdk_load_module_lower_half(void)
 
 			printf("done: \n");
 			rte_eth_promiscuous_enable(portid);
+
+#if USE_PX
+			ret = px_init(portid,
+						  MAX_PKT_BURST,
+						  !JUMBO_FRAME ? 8192 : 0,
+						  CUTOFF_NS ? 8192 : 0,
+						  NULL,
+						  NULL,
+						  USE_LINK,
+						  SEMANTIC_TEST);
+			if (ret < 0)
+				rte_exit(EXIT_FAILURE, "px_init failed\n");
+#endif
 
 			/* retrieve current flow control settings per port */
 			memset(&fc_conf, 0, sizeof(fc_conf));

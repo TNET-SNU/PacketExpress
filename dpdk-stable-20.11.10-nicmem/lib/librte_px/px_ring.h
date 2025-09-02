@@ -10,14 +10,15 @@ extern "C"
 /*----------------------------------------------------------------------------*/
 struct px_ring
 {
-	uint16_t head;
-	uint16_t tail;
-	uint16_t size;
-	uint16_t occupied;
-	struct rte_mbuf **queue;
+    uint16_t head;
+    uint16_t tail;
+    uint16_t size;
+    uint16_t occupied;
+    struct rte_mbuf **queue;
 };
 /*----------------------------------------------------------------------------*/
-int px_ring_init(struct px_ring *ring, uint16_t size);
+int px_ring_init(struct px_ring *ring,
+                 uint16_t size);
 /*----------------------------------------------------------------------------*/
 void px_ring_deinit(struct px_ring *ring);
 /*----------------------------------------------------------------------------*/
@@ -158,82 +159,6 @@ px_ring_dequeue(struct px_ring *ring,
 
     return n;
 }
-/*----------------------------------------------------------------------------*/
-/* dequeue only moves head */
-// static inline uint16_t
-// tx_ring_transmit(uint16_t port_id,
-//                  uint16_t queue_id,
-//                  struct px_ring *ring,
-//                  uint16_t n)
-// {
-//     struct rte_mbuf **queue = ring->queue;
-//     uint16_t head = ring->head;
-//     uint16_t tail = ring->tail;
-//     uint16_t size = ring->size;
-//     uint16_t diff;
-//     uint16_t sent;
-
-//     /* forward case */
-//     if (head <= tail)
-//     {
-//         diff = tail - head;
-//         if (n >= diff)
-//         {
-//             /* dequeue all */
-//             while((sent = rte_eth_tx_burst(port_id, queue_id, queue + head, diff)) < diff)
-//             {
-//                 head += sent;
-//                 diff -= sent;
-//             }
-//             memcpy(table, queue + head,
-//                    diff * sizeof(struct rte_mbuf *));
-            
-//             ring->head = tail;
-
-//             return diff;
-//         }
-//         memcpy(table, queue + head,
-//                n * sizeof(struct rte_mbuf *));
-//         ring->head += n;
-//         if (head + n >= size)
-//         {
-//             ring->head -= size;
-//         }
-
-//         return n;
-//     }
-//     /* reverse case */
-//     diff = tail + size - head;
-//     if (n >= diff)
-//     {
-//         /* dequeue all */
-//         memcpy(table, queue + head,
-//                (size - head) * sizeof(struct rte_mbuf *));
-//         memcpy(table + size - head, queue,
-//                tail * sizeof(struct rte_mbuf *));
-//         ring->head = tail;
-
-//         return diff;
-//     }
-//     if (n > size - head)
-//     {
-//         memcpy(table, queue + head,
-//                (size - head) * sizeof(struct rte_mbuf *));
-//         memcpy(table + size - head, queue,
-//                (n - (size - head)) * sizeof(struct rte_mbuf *));
-//         ring->head = n - (size - head);
-
-//         return n;
-//     }
-//     memcpy(table, queue + head, n * sizeof(struct rte_mbuf *));
-//     ring->head += n;
-//     if (head + n >= size)
-//     {
-//         ring->head -= size;
-//     }
-
-//     return n;
-// }
 /*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 }

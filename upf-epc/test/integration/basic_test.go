@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	configDefault              = "default.json"
+	configDefault              = iota
 	configUPFBasedIPAllocation = "ue_ip_alloc.json"
 )
 

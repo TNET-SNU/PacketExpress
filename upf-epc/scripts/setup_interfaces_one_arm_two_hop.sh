@@ -47,8 +47,8 @@ routes=("10.1.90.0/24" "10.1.95.0/24"
 num_ifaces=${#ifaces[@]}
 for ((i = 0; i < num_ifaces; i++)); do
     sudo ethtool -K "${ifaces[$i]}" tso on lro on gro on gso on
-	# sudo ethtool -A "${ifaces[$i]}" rx off tx off
-	# sudo ethtool -G "${ifaces[$i]}" rx 8192 tx 8192
+	sudo ethtool -A "${ifaces[$i]}" rx off tx off
+	sudo ethtool -G "${ifaces[$i]}" rx 8192 tx 8192
 done
 
 # turn on SR-IOV switchdev mode

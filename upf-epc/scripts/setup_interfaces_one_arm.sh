@@ -34,7 +34,8 @@ nhipaddrs=(10.1.90.2 10.1.95.2  # stream1 stream2
 # Static MAC addresses of the neighbors of gateway interface(s)
 nhmacaddrs=(58:a2:e1:a7:a9:ee a0:88:c2:d6:9d:d2  # stream1 stream2
 			a0:88:c2:d6:9e:32 58:a2:e1:a7:a8:b6  # stream3 stream4
-			58:a2:e1:a7:a9:fe 58:a2:e1:a7:aa:7e  # stream5 stream6
+			# 58:a2:e1:a7:a9:fe 58:a2:e1:a7:aa:7e  # stream5 stream6
+			a0:88:c2:d2:df:f2 58:a2:e1:a7:aa:7e  # stream10 stream6
 			58:a2:e1:a7:a9:7e 58:a2:e1:a7:aa:86) # stream7 stream8
 
 # IPv4 route table entries in cidr format per port
@@ -47,8 +48,8 @@ routes=("10.1.90.0/24" "10.1.95.0/24"
 num_ifaces=${#ifaces[@]}
 for ((i = 0; i < num_ifaces; i++)); do
     sudo ethtool -K "${ifaces[$i]}" tso on lro on gro on gso on
-	# sudo ethtool -A "${ifaces[$i]}" rx off tx off
-	# sudo ethtool -G "${ifaces[$i]}" rx 8192 tx 8192
+	sudo ethtool -A "${ifaces[$i]}" rx off tx off
+	sudo ethtool -G "${ifaces[$i]}" rx 8192 tx 8192
 done
 
 # turn on SR-IOV switchdev mode

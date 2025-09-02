@@ -1,4 +1,5 @@
 #include "px_flow.h"
+/*----------------------------------------------------------------------------*/
 /* global hairpin context in px_offload.c */
 extern struct px_hairpin_ctx g_hp_ctx[RTE_MAX_ETHPORTS];
 /* global ARP context in px_arp.c */
@@ -21,7 +22,7 @@ onload_ctrl_pkts(uint16_t port_id)
         /* set the rule on the main group. */
         .group = 0,
         /* give the offload rule the lowest priority (higer value = lower priority) */
-        .priority = 2,
+        .priority = 3,
         /* Rx flow */
         .ingress = 1,
         .egress = 0,
@@ -64,64 +65,106 @@ onload_ctrl_pkts(uint16_t port_id)
     /* create SYN rule */
     tcp_spec.hdr.tcp_flags = RTE_TCP_SYN_FLAG;
 #if VALIDATE_FLOW_RULE
-    if (px_latent_flow_validate(port_id, &attr, tcp_patterns, actions, &error) < 0)
+    if (px_latent_flow_validate(port_id,
+                                &attr,
+                                tcp_patterns,
+                                actions,
+                                &error) < 0)
     {
-        fprintf(stderr, "[port %d] px_latent_flow_validate() failed for SYN onload. "
-                        "Error type: %d, Error msg: %s\n",
+        fprintf(stderr,
+                "[%s:%s:%d] [port %d] "
+                "px_latent_flow_validate() failed for SYN onload. "
+                "Error type: %d, Error msg: %s\n",
+                __FILE__, __func__, __LINE__,
                 port_id, error.type, error.message);
-
         return -1;
     }
 #endif
     hp_ctx->common_onload_rule[0] =
-        px_latent_flow_create(port_id, &attr, tcp_patterns, actions, &error);
+        px_latent_flow_create(port_id,
+                              &attr,
+                              tcp_patterns,
+                              actions,
+                              &error);
     if (!hp_ctx->common_onload_rule[0])
     {
-        fprintf(stderr, "[port %d] px_latent_flow_create() failed for SYN onload. "
-                        "Error type: %d, Error msg: %s\n",
+        fprintf(stderr,
+                "[%s:%s:%d] [port %d] "
+                "px_latent_flow_create() failed for SYN onload. "
+                "Error type: %d, Error msg: %s\n",
+                __FILE__, __func__, __LINE__,
                 port_id, error.type, error.message);
+        return -1;
     }
 
     /* create FIN rule */
     tcp_spec.hdr.tcp_flags = RTE_TCP_FIN_FLAG;
 #if VALIDATE_FLOW_RULE
-    if (px_latent_flow_validate(port_id, &attr, tcp_patterns, actions, &error) < 0)
+    if (px_latent_flow_validate(port_id,
+                                &attr,
+                                tcp_patterns,
+                                actions,
+                                &error) < 0)
     {
-        fprintf(stderr, "[port %d] px_latent_flow_validate() failed for FIN onload. "
-                        "Error type: %d, Error msg: %s\n",
+        fprintf(stderr,
+                "[%s:%s:%d] [port %d] "
+                "px_latent_flow_validate() failed for FIN onload. "
+                "Error type: %d, Error msg: %s\n",
+                __FILE__, __func__, __LINE__,
                 port_id, error.type, error.message);
-
         return -1;
     }
 #endif
     hp_ctx->common_onload_rule[1] =
-        px_latent_flow_create(port_id, &attr, tcp_patterns, actions, &error);
+        px_latent_flow_create(port_id,
+                              &attr,
+                              tcp_patterns,
+                              actions,
+                              &error);
     if (!hp_ctx->common_onload_rule[1])
     {
-        fprintf(stderr, "[port %d] px_latent_flow_create() failed for FIN onload. "
-                        "Error type: %d, Error msg: %s\n",
+        fprintf(stderr,
+                "[%s:%s:%d] [port %d] "
+                "px_latent_flow_create() failed for FIN onload. "
+                "Error type: %d, Error msg: %s\n",
+                __FILE__, __func__, __LINE__,
                 port_id, error.type, error.message);
+        return -1;
     }
 
     /* create RST rule */
     tcp_spec.hdr.tcp_flags = RTE_TCP_RST_FLAG;
 #if VALIDATE_FLOW_RULE
-    if (px_latent_flow_validate(port_id, &attr, tcp_patterns, actions, &error) < 0)
+    if (px_latent_flow_validate(port_id,
+                                &attr,
+                                tcp_patterns,
+                                actions,
+                                &error) < 0)
     {
-        fprintf(stderr, "[port %d] px_latent_flow_validate() failed for RST onload. "
-                        "Error type: %d, Error msg: %s\n",
+        fprintf(stderr,
+                "[%s:%s:%d] [port %d] "
+                "px_latent_flow_validate() failed for RST onload. "
+                "Error type: %d, Error msg: %s\n",
+                __FILE__, __func__, __LINE__,
                 port_id, error.type, error.message);
-
         return -1;
     }
 #endif
     hp_ctx->common_onload_rule[2] =
-        px_latent_flow_create(port_id, &attr, tcp_patterns, actions, &error);
+        px_latent_flow_create(port_id,
+                              &attr,
+                              tcp_patterns,
+                              actions,
+                              &error);
     if (!hp_ctx->common_onload_rule[2])
     {
-        fprintf(stderr, "[port %d] px_latent_flow_create() failed for RST onload. "
-                        "Error type: %d, Error msg: %s\n",
+        fprintf(stderr,
+                "[%s:%s:%d] [port %d] "
+                "px_latent_flow_create() failed for RST onload. "
+                "Error type: %d, Error msg: %s\n",
+                __FILE__, __func__, __LINE__,
                 port_id, error.type, error.message);
+        return -1;
     }
 
     /* create ICMP rule */
@@ -139,22 +182,36 @@ onload_ctrl_pkts(uint16_t port_id)
     ipv4_mask.hdr.next_proto_id = UINT8_MAX;
     ipv4_spec.hdr.next_proto_id = IPPROTO_ICMP;
 #if VALIDATE_FLOW_RULE
-    if (px_latent_flow_validate(port_id, &attr, icmp_patterns, actions, &error) < 0)
+    if (px_latent_flow_validate(port_id,
+                                &attr,
+                                icmp_patterns,
+                                actions,
+                                &error) < 0)
     {
-        fprintf(stderr, "[port %d] px_latent_flow_validate() failed for ICMP onload. "
-                        "Error type: %d, Error msg: %s\n",
+        fprintf(stderr,
+                "[%s:%s:%d] [port %d] "
+                "px_latent_flow_validate() failed for ICMP onload. "
+                "Error type: %d, Error msg: %s\n",
+                __FILE__, __func__, __LINE__,
                 port_id, error.type, error.message);
-
         return -1;
     }
 #endif
     hp_ctx->common_onload_rule[3] =
-        px_latent_flow_create(port_id, &attr, icmp_patterns, actions, &error);
+        px_latent_flow_create(port_id,
+                              &attr,
+                              icmp_patterns,
+                              actions,
+                              &error);
     if (!hp_ctx->common_onload_rule[3])
     {
-        fprintf(stderr, "[port %d] px_latent_flow_create() failed for ICMP onload. "
-                        "Error type: %d, Error msg: %s\n",
+        fprintf(stderr,
+                "[%s:%s:%d] [port %d] "
+                "px_latent_flow_create() failed for ICMP onload. "
+                "Error type: %d, Error msg: %s\n",
+                __FILE__, __func__, __LINE__,
                 port_id, error.type, error.message);
+        return -1;
     }
 
     return 0;
@@ -180,6 +237,7 @@ offload_all_flows(uint16_t port_id)
         .ingress = 1,
         .egress = 0,
         .transfer = 0};
+    int i;
 
     /* make patterns */
     struct rte_flow_item_eth eth_spec = {0};
@@ -219,7 +277,7 @@ offload_all_flows(uint16_t port_id)
         {.type = RTE_FLOW_ACTION_TYPE_END}};
 
     /* make rte_flow rules for all ARP entries */
-    for (int i = 0; i < g_arp_ctx.table_size; i++)
+    for (i = 0; i < g_arp_ctx.table_size; i++)
     {
         /* update DST IP in pattern and DST MAC in action */
         ipv4_spec.hdr.dst_addr = g_arp_ctx.arp_bin_table[i].ip;
@@ -229,23 +287,34 @@ offload_all_flows(uint16_t port_id)
 
         /* create main traffic rule */
 #if VALIDATE_FLOW_RULE
-        if (px_latent_flow_validate(port_id, &attr, patterns, actions, &error) < 0)
+        if (px_latent_flow_validate(port_id,
+                                    &attr,
+                                    patterns,
+                                    actions,
+                                    &error) < 0)
         {
-            fprintf(stderr, "[port %d] px_latent_flow_validate() failed. "
-                            "Error type: %d, Error msg: %s\n",
+            fprintf(stderr,
+                    "[%s:%s:%d] [port %d] px_latent_flow_validate() failed. "
+                    "Error type: %d, Error msg: %s\n",
+                    __FILE__, __func__, __LINE__,
                     port_id, error.type, error.message);
-
             return -1;
         }
 #endif
 
         hp_ctx->common_offload_rule[i] =
-            px_latent_flow_create(port_id, &attr, patterns, actions, &error);
+            px_latent_flow_create(port_id,
+                                  &attr,
+                                  patterns,
+                                  actions,
+                                  &error);
         if (!hp_ctx->common_offload_rule[i])
         {
-            fprintf(stderr, "%d [port %d] px_latent_flow_create() failed. "
-                            "Error type: %d, Error msg: %s\n",
-                    __LINE__, port_id, error.type, error.message);
+            fprintf(stderr,
+                    "[%s:%s:%d] [port %d] px_latent_flow_create() failed. "
+                    "Error type: %d, Error msg: %s\n",
+                    __FILE__, __func__, __LINE__,
+                    port_id, error.type, error.message);
         }
     }
 
@@ -260,7 +329,8 @@ int px_flow_create_optout(uint16_t port_id)
     ret = offload_all_flows(port_id);
     if (ret < 0)
     {
-        fprintf(stderr, "[port %d] offload_all_flows() failed, ret: %d\n",
+        fprintf(stderr,
+                "[port %d] offload_all_flows() failed, ret: %d\n",
                 port_id, ret);
         return ret;
     }
@@ -269,7 +339,9 @@ int px_flow_create_optout(uint16_t port_id)
     ret = onload_ctrl_pkts(port_id);
     if (ret < 0)
     {
-        fprintf(stderr, "[port %d] onload_ctrl_pkts() failed, ret: %d\n",
+        fprintf(stderr,
+                "[%s:%s:%d] [port %d] onload_ctrl_pkts failed, ret: %d\n",
+                __FILE__, __func__, __LINE__,
                 port_id, ret);
         return ret;
     }
@@ -281,29 +353,40 @@ struct rte_flow *
 px_flow_create_static(uint16_t port_id,
                       const struct rte_flow_attr *attr,
                       const struct rte_flow_item patterns[],
-                      const struct rte_flow_action actions[],
-                      struct rte_flow_error *error)
+                      const struct rte_flow_action actions[])
 {
+    struct rte_flow_error error;
     struct rte_flow *flow = NULL;
 
 #if VALIDATE_FLOW_RULE
-    if (px_latent_flow_validate(port_id, attr, patterns, actions, error) < 0)
+    if (px_latent_flow_validate(port_id,
+                                attr,
+                                patterns,
+                                actions,
+                                &error) < 0)
     {
-        fprintf(stderr, "[port %d] px_latent_flow_validate() failed. "
-                        "Error type: %d, Error msg: %s\n",
-                port_id, error->type, error->message);
+        fprintf(stderr,
+                "[port %d] px_latent_flow_validate() failed. "
+                "Error type: %d, Error msg: %s\n",
+                port_id, error.type, error.message);
         return NULL;
     }
 #endif
 
     MEASURE(
         "px_latent_flow_create",
-        flow = px_latent_flow_create(port_id, attr, patterns, actions, error);
+        flow = px_latent_flow_create(port_id,
+                                     attr,
+                                     patterns,
+                                     actions,
+                                     &error);
         if (!flow) {
-            fprintf(stderr, "%d [port %d] px_latent_flow_create() failed. "
-                            "Error type: %d, Error msg: %s\n",
-                    __LINE__, port_id, error->type, error->message);
-        });
+            fprintf(stderr,
+                    "[%s:%s:%d] [port %d] px_latent_flow_create() failed. "
+                    "Error type: %d, Error msg: %s\n",
+                    __FILE__, __func__, __LINE__,
+                    port_id, error.type, error.message);
+        })
 
     return flow;
 }
@@ -491,10 +574,16 @@ px_flow_create_offload_auto(uint16_t port_id,
 
     /* create main flow rule */
 #if VALIDATE_FLOW_RULE
-    if (px_latent_flow_validate(port_id, &attr, patterns, actions, &error) < 0)
+    if (px_latent_flow_validate(port_id,
+                                &attr,
+                                patterns,
+                                actions,
+                                &error) < 0)
     {
-        fprintf(stderr, "[port %d] px_latent_flow_validate() failed. "
-                        "Error type: %d, Error msg: %s\n",
+        fprintf(stderr,
+                "[%s:%s:%d] [port %d] px_latent_flow_validate() failed. "
+                "Error type: %d, Error msg: %s\n",
+                __FILE__, __func__, __LINE__,
                 port_id, error.type, error.message);
         return NULL;
     }
@@ -502,12 +591,19 @@ px_flow_create_offload_auto(uint16_t port_id,
 
     MEASURE(
         "px_latent_flow_create",
-        flow = px_latent_flow_create(port_id, &attr, patterns, actions, &error);
+        flow = px_latent_flow_create(port_id,
+                                     &attr,
+                                     patterns,
+                                     actions,
+                                     &error);
         if (!flow) {
-            fprintf(stderr, "%d [port %d] px_latent_flow_create() failed. "
-                            "Error type: %d, Error msg: %s\n",
-                    __LINE__, port_id, error.type, error.message);
-        });
+            fprintf(stderr,
+                    "[%s:%s:%d] [port %d] px_latent_flow_create() failed. "
+                    "Error type: %d, Error msg: %s\n",
+                    __FILE__, __func__, __LINE__,
+                    port_id, error.type, error.message);
+            return NULL;
+        })
 
     return flow;
 }
@@ -623,10 +719,16 @@ px_flow_create_onload_auto(uint16_t port_id,
 
     /* create main flow rule */
 #if VALIDATE_FLOW_RULE
-    if (px_latent_flow_validate(port_id, &attr, patterns, actions, &error) < 0)
+    if (px_latent_flow_validate(port_id,
+                                &attr,
+                                patterns,
+                                actions,
+                                &error) < 0)
     {
-        fprintf(stderr, "[port %d] px_latent_flow_validate() failed. "
-                        "Error type: %d, Error msg: %s\n",
+        fprintf(stderr,
+                "[%s:%s:%d] [port %d] px_latent_flow_validate() failed. "
+                "Error type: %d, Error msg: %s\n",
+                __FILE__, __func__, __LINE__,
                 port_id, error.type, error.message);
         return NULL;
     }
@@ -634,17 +736,23 @@ px_flow_create_onload_auto(uint16_t port_id,
 
     MEASURE(
         "px_latent_flow_create",
-        flow = px_latent_flow_create(port_id, &attr, patterns, actions, &error);
+        flow = px_latent_flow_create(port_id,
+                                     &attr,
+                                     patterns,
+                                     actions,
+                                     &error);
         if (!flow) {
-            fprintf(stderr, "%d [port %d] px_latent_flow_create() failed. "
-                            "Error type: %d, Error msg: %s\n",
-                    __LINE__, port_id, error.type, error.message);
-        });
+            fprintf(stderr,
+                    "[%s:%s:%d] [port %d] px_latent_flow_create() failed. "
+                    "Error type: %d, Error msg: %s\n",
+                    __FILE__, __func__, __LINE__,
+                    port_id, error.type, error.message);
+        })
 
     return flow;
 }
 /*----------------------------------------------------------------------------*/
-int px_destroy_flow(uint16_t port_id, struct rte_flow *flow)
+int px_flow_destroy(uint16_t port_id, struct rte_flow *flow)
 {
     struct rte_flow_error error;
 
@@ -652,16 +760,18 @@ int px_destroy_flow(uint16_t port_id, struct rte_flow *flow)
     MEASURE(
         "rte_flow_destroy",
         if (rte_flow_destroy(port_id, flow, &error) < 0) {
-            fprintf(stderr, "[port %d] rte_flow_destroy() failed, Error msg: %s\n",
-                    port_id, error.message);
-
+            fprintf(stderr,
+                    "[%s:%s:%d] [port %d] rte_flow_destroy() failed. "
+                    "Error type: %d, Error msg: %s\n",
+                    __FILE__, __func__, __LINE__,
+                    port_id, error.type, error.message);
             return -1;
-        });
+        })
 
     return 0;
 }
 /*----------------------------------------------------------------------------*/
-int px_query_flow(uint16_t port_id,
+int px_flow_query(uint16_t port_id,
                   struct rte_flow *flow,
                   struct rte_flow_query_count *query_result)
 {
@@ -677,16 +787,29 @@ int px_query_flow(uint16_t port_id,
     query_result->reset = 1;
     MEASURE(
         "rte_flow_query",
-        if (rte_flow_query(port_id, flow, query_action, query_result, &error) < 0) {
-            fprintf(stderr, "[port %d] rte_flow_query() failed, Error msg: %s\n",
-                    port_id, error.message);
+        if (rte_flow_query(port_id,
+                           flow,
+                           query_action,
+                           query_result,
+                           &error) < 0) {
+            fprintf(stderr,
+                    "[%s:%s:%d] [port %d] rte_flow_query() failed. "
+                    "Error type: %d, Error msg: %s\n",
+                    __FILE__, __func__, __LINE__,
+                    port_id, error.type, error.message);
 
             return -1;
-        });
-    // printf("hits: %lu bytes: %lu\n",
-    //         query_result->hits, query_result->bytes);
-    // printf("reset: %d, hits_set: %d, bytes_set: %d\n",
-    //         query_result->reset, query_result->hits_set, query_result->bytes_set);
+        })
+
+    fprintf(stdout,
+            "hits: %lu bytes: %lu\n",
+            query_result->hits,
+            query_result->bytes);
+    fprintf(stdout,
+            "reset: %d, hits_set: %d, bytes_set: %d\n",
+            query_result->reset,
+            query_result->hits_set,
+            query_result->bytes_set);
 
     return 0;
 }

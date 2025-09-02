@@ -146,20 +146,6 @@ void Qos::ProcessBatch(Context *ctx, bess::PacketBatch *batch) {
       }
     }
   }
-#ifdef LARGE_BATCH
-#define MINIBATCH RTE_HASH_LOOKUP_BULK_MAX
-  uint64_t hit_mask[bess::PacketBatch::kMaxBurst / MINIBATCH] = {0};
-  int i;
-  for (i = 0; i < (cnt - 1) / MINIBATCH; i++)
-    hit_mask[i] = table_.Find(keys + i * MINIBATCH, val + i * MINIBATCH, MINIBATCH);
-  hit_mask[i] = table_.Find(keys + i * MINIBATCH, val + i * MINIBATCH, cnt % MINIBATCH);
-  for (int j = 0; j < cnt; j++) {
-    pkt = batch->pkts()[j];
-    if ((hit_mask[j / MINIBATCH] & ((uint64_t)1ULL << (j % MINIBATCH))) == 0) {
-      EmitPacket(ctx, pkt, default_gate);
-      continue;
-    }
-#else
   uint64_t hit_mask = table_.Find(keys, val, cnt);
   for (int j = 0; j < cnt; j++) {
     pkt = batch->pkts()[j];
@@ -167,7 +153,6 @@ void Qos::ProcessBatch(Context *ctx, bess::PacketBatch *batch) {
       EmitPacket(ctx, pkt, default_gate);
       continue;
     }
-#endif
 
     uint16_t ogate = val[j]->ogate;
     DLOG(INFO) << "ogate : " << ogate << std::endl;
@@ -362,11 +347,6 @@ CommandResponse Qos::ExtractKeyMask(const T &arg, MeteringKey *key,
 }
 
 CommandResponse Qos::CommandAdd(const bess::pb::QosCommandAddArg &arg) {
-  // static int cnt = 0;
-  // printf("(qos) [core: %d] cnt: %d\n", sched_getcpu(), cnt++);
-  // int bs = arg.ByteSize();
-  // fwrite((void *)&bs, sizeof(int), 1, fp_);
-  // fwrite((void *)&arg, 1, arg.ByteSize(), fp_);
   gate_idx_t gate = arg.gate();
 
   if (!is_valid_gate(gate)) {
@@ -421,33 +401,6 @@ CommandResponse Qos::CommandAdd(const bess::pb::QosCommandAddArg &arg) {
             ret,
             "Insert Failed - rte_meter_trtcm_profile_config map insert failed");
       }
-      /*
-       * Insert to the e-switch QoS table
-       */
-      uint8_t *ptr = (uint8_t *)&key;
-      uint8_t src_iface = *ptr;
-      uint32_t qer_id = *(uint32_t *)(ptr + sizeof(src_iface));
-      uint64_t fseid = *(uint64_t *)(ptr + sizeof(src_iface) + sizeof(qer_id));
-      /* App QoS key: src_iface (1B), qer_id (4B), fseid (8B) */
-      printf("[App QoS key] src_iface: %d, qer_id: 0x%08x, fseid: 0x%16lx\n", src_iface, qer_id, fseid);
-      /* Session QoS key: src_iface (1B), fseid (8B) */
-      fseid = *(uint64_t *)(ptr + sizeof(src_iface));
-      printf("[Ses QoS key] src_iface: %d, fseid: 0x%16lx\n", src_iface, fseid);
-      /* Slice QoS key: action (1B), tunnel_out_type (1B) */
-      /* we removed slice metering temporarily */
-      uint8_t tunnel_out_type = *(ptr + sizeof(src_iface));
-      printf("[Sli QoS key] action: %d, tunnel_out_type: %d\n", src_iface, tunnel_out_type);
-      // if (qer_id > 100)
-      //   printf("qer_id is too big. Is it host byte order?\n");
-      // else {
-      //   /*
-      //    * Since we do not know which packets come into which ports,
-      //    * we need to make QoS profiles for every port.
-      //    */
-      //   for (int port_id = 0; port_id < RTE_MAX_ETHPORTS; port_id++) {
-      //     offload_qos_profile_create(port_id, qer_id, &app_trtcm_params);
-      //   }
-      // }
     }
 
     v.p = &result->second;

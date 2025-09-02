@@ -73,7 +73,8 @@ static uint32_t nb_mbuf = NB_MBUF;
 static struct px_arp_entry g_arp_entries[] = {
     {"10.1.90.2", "58:a2:e1:a7:a9:ee"}, // stream1
     {"10.2.90.2", "a0:88:c2:d6:9e:32"}, // stream3
-    {"10.3.90.2", "58:a2:e1:a7:a9:fe"}, // stream5
+    // {"10.3.90.2", "58:a2:e1:a7:a9:fe"}, // stream5
+    {"10.3.90.2", "a0:88:c2:d2:df:f2"}, // stream10
     {"10.4.90.2", "58:a2:e1:a7:a9:7e"}, // stream7
 
     {"10.1.95.2", "a0:88:c2:d6:9d:d2"}, // stream2
@@ -139,7 +140,7 @@ static struct px_arp_entry g_arp_entries_two_hops_dpvs[] = {
     {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
 };
 /*----------------------------------------------------------------------------*/
-#if USE_CGRO
+#if USE_PX
 /* static routing table configuration */
 static int
 is_uplink(struct rte_mbuf *pkt)
@@ -297,7 +298,7 @@ port_init(uint16_t port_id, uint16_t num_queue)
 #else
                             0,
 #endif
-#if USE_CGRO || USE_DGRO
+#if USE_PX || USE_GRO
                             1,
 #else
                             0,
@@ -317,21 +318,18 @@ port_init(uint16_t port_id, uint16_t num_queue)
     /* init port */
     printf("[port %u] Initializing port... \n", (unsigned)port_id);
     fflush(stdout);
-#if (USE_CGRO || NICMEM || NUM_HAIRPIN_Q)
+#if (USE_PX || NICMEM || NUM_HAIRPIN_Q)
     ret = px_eth_dev_configure(port_id,
                                num_queue,
                                num_queue,
-#if USE_CGRO
-                               NUM_LATENT_RXQ,
-#else
-                               1,
-#endif
+                               9000,
+                               RTE_ETHER_MTU,
 #if NICMEM
                                nb_rxd,
 #else
                                0,
 #endif
-#if USE_CGRO
+#if USE_PX
                                CUTOFF_NS,
 #else
                                0,
@@ -375,11 +373,11 @@ port_init(uint16_t port_id, uint16_t num_queue)
 
     for (queue_id = 0; queue_id < num_queue; queue_id++)
     {
-        // sid = rte_lcore_to_socket_id(queue_id);
-        sid = rte_eth_dev_socket_id(port_id);
+        sid = rte_lcore_to_socket_id(queue_id);
+        // sid = rte_eth_dev_socket_id(port_id);
 
         /* init RX queue on each port per CPU */
-#if (USE_CGRO || NICMEM || NUM_HAIRPIN_Q)
+#if (USE_PX || NICMEM || NUM_HAIRPIN_Q)
         ret = px_eth_rx_queue_setup(port_id, queue_id, nb_rxd, sid,
                                     &g_dev_info[port_id].default_rxconf,
                                     g_pktmbuf_pool[sid]);
@@ -396,7 +394,7 @@ port_init(uint16_t port_id, uint16_t num_queue)
         }
 
         /* init TX queue on each port per CPU */
-#if (USE_CGRO || NICMEM || NUM_HAIRPIN_Q)
+#if (USE_PX || NICMEM || NUM_HAIRPIN_Q)
         ret = px_eth_tx_queue_setup(port_id, queue_id, nb_txd, sid,
                                     &g_dev_info[port_id].default_txconf);
 #else
@@ -411,18 +409,6 @@ port_init(uint16_t port_id, uint16_t num_queue)
         }
     }
 
-#if USE_CGRO
-    /* Start PX */
-    ret = px_init(port_id, MAX_PKT_BURST,
-                  !JUMBO_FRAME ? 4096 : 0,
-                  CUTOFF_NS ? 4096 : 0,
-                  is_uplink, is_downlink, USE_LINK, SEMANTIC_TEST);
-    if (ret < 0)
-    {
-        rte_exit(EXIT_FAILURE, "px_init failed\n");
-    }
-#endif
-
     /* Start device */
     ret = rte_eth_dev_start(port_id);
     if (ret < 0)
@@ -433,6 +419,22 @@ port_init(uint16_t port_id, uint16_t num_queue)
                  (unsigned)port_id);
     }
     rte_eth_promiscuous_enable(port_id);
+
+#if USE_PX
+    /* Start PX */
+    ret = px_init(port_id,
+                  MAX_PKT_BURST,
+                  !JUMBO_FRAME ? 8192 : 0,
+                  CUTOFF_NS ? 8192 : 0,
+                  is_uplink,
+                  is_downlink,
+                  USE_LINK,
+                  SEMANTIC_TEST);
+    if (ret < 0)
+    {
+        rte_exit(EXIT_FAILURE, "px_init failed\n");
+    }
+#endif
     printf("done: \n");
 
     /* retrieve current flow control settings per port */
@@ -440,7 +442,9 @@ port_init(uint16_t port_id, uint16_t num_queue)
     ret = rte_eth_dev_flow_ctrl_get(port_id, &fc_conf);
     if (ret != 0)
     {
-        rte_exit(EXIT_FAILURE, "Failed to get flow control info!\n");
+        rte_exit(EXIT_FAILURE,
+                 "Failed to get flow control info, errno: %d\n",
+                 -ret);
     }
 
     /* and just disable the rx/tx flow control */
@@ -453,8 +457,8 @@ port_init(uint16_t port_id, uint16_t num_queue)
     if (ret != 0)
     {
         rte_exit(EXIT_FAILURE,
-                 "Failed to set flow control info!: errno: %d\n",
-                 ret);
+                 "Failed to set flow control info, errno: %d\n",
+                 -ret);
     }
 
     return 0;
@@ -473,7 +477,7 @@ int lcore_main(void *args)
     uint16_t nb_rx[RTE_MAX_ETHPORTS] = {0};
     uint16_t nb_tx[RTE_MAX_ETHPORTS] = {0};
     int ret, i;
-#if USE_DGRO
+#if USE_GRO
     struct rte_gro_param gro_param = {
         .gro_types = RTE_GRO_TCP_IPV4,
         .max_flow_num = MAX_PKT_BURST,
@@ -486,7 +490,7 @@ int lcore_main(void *args)
         assert(qid == rte_lcore_id());
         for (port_id = 0; port_id < g_num_ports; port_id++)
         {
-#if USE_CGRO
+#if USE_PX
             nb_rx[port_id] = px_eth_rx_burst(port_id,
                                              qid,
                                              rmbufs[port_id],
@@ -496,7 +500,7 @@ int lcore_main(void *args)
                                               qid,
                                               rmbufs[port_id],
                                               MAX_PKT_BURST);
-#if (USE_LRO || USE_DGRO)
+#if (USE_LRO || USE_GRO)
             px_parse_batch(port_id, qid,
                            rmbufs[port_id],
                            nb_rx[port_id],
@@ -504,16 +508,16 @@ int lcore_main(void *args)
                            1,
                            SEMANTIC_TEST);
 #endif
-#if USE_DGRO
+#if USE_GRO
             nb_rx[port_id] =
                 rte_gro_reassemble_burst(rmbufs[port_id],
                                          nb_rx[port_id],
                                          &gro_param);
 #endif
-            px_update_rx_stats(port_id,
-                               qid,
-                               rmbufs[port_id],
-                               nb_rx[port_id]);
+            px_stat_update_rx(port_id,
+                              qid,
+                              rmbufs[port_id],
+                              nb_rx[port_id]);
 #endif
             for (i = 0; i < nb_rx[port_id]; i++)
             {
@@ -529,7 +533,7 @@ int lcore_main(void *args)
                 }
 
                 /* modify DST MAC */
-                dst_mac = px_search_arp(*get_dst_ip(m));
+                dst_mac = px_arp_search(*get_dst_ip(m));
                 if (!dst_mac)
                 {
                     /* ignore unknown dst IP */
@@ -546,13 +550,13 @@ int lcore_main(void *args)
             }
 
             /* Forward to same port (L2 forward) */
-#if USE_CGRO
+#if USE_PX
             ret = px_eth_tx_burst(port_id,
                                   qid,
                                   wmbufs[port_id],
                                   nb_tx[port_id]);
 #else
-#if (USE_LRO || USE_DGRO)
+#if (USE_LRO || USE_GRO)
             px_setup_tso_burst(port_id,
                                qid,
                                wmbufs[port_id],
@@ -565,10 +569,10 @@ int lcore_main(void *args)
                                  wmbufs[port_id],
                                  nb_tx[port_id]);
 #endif
-            px_update_tx_stats(port_id,
-                               qid,
-                               wmbufs[port_id],
-                               nb_tx[port_id]);
+            px_stat_update_tx(port_id,
+                              qid,
+                              wmbufs[port_id],
+                              nb_tx[port_id]);
             ret = rte_eth_tx_burst(port_id,
                                    qid,
                                    wmbufs[port_id],
@@ -720,9 +724,9 @@ int main(int argc, char **argv)
     g_num_sockets = rte_socket_count();
     g_num_ports = rte_eth_dev_count_avail();
 
-    // printf("socket_count: %u\n", g_num_sockets);
-    // printf("lcore_count: %u\n", rte_lcore_count());
-    // printf("device_count: %u\n", g_num_ports);
+    printf("socket_count: %u\n", g_num_sockets);
+    printf("lcore_count: %u\n", rte_lcore_count());
+    printf("device_count: %u\n", g_num_ports);
 
     /* mbuf pool creation */
     for (sid = 0; sid < g_num_sockets; sid++)
@@ -771,8 +775,13 @@ int main(int argc, char **argv)
     sigemptyset(&sa.sa_mask);
     sigaction(SIGINT, &sa, NULL);
 
-#if !USE_CGRO
-    px_start_print_thread(1, g_num_ports, g_num_cores, g_num_cores);
+#if !USE_PX
+    px_stat_start_monitor(1,
+                          g_num_ports,
+                          g_num_cores,
+                          g_num_cores,
+                          9000,
+                          RTE_ETHER_MTU);
 #endif
 
     /* launch lcore main on each worker core */
@@ -800,6 +809,25 @@ int main(int argc, char **argv)
         if (core_id < g_num_cores)
         {
             rte_eal_wait_lcore(core_id);
+        }
+    }
+
+    /* cleanup */
+#if USE_PX
+    for (port_id = 0; port_id < g_num_ports; port_id++)
+    {
+        px_deinit(port_id);
+    }
+#else
+    px_stat_stop_monitor();
+#endif
+
+    for (port_id = 0; port_id < g_num_ports; port_id++)
+    {
+        ret = rte_eth_dev_stop(port_id);
+        if (ret < 0)
+        {
+            rte_exit(EXIT_FAILURE, "rte_eth_dev_stop failed\n");
         }
     }
 

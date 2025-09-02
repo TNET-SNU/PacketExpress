@@ -29,6 +29,7 @@ extern "C"
 #include <rte_version.h>
 #include <rte_ethdev.h>
 #include <rte_mbuf_core.h>
+#include <rte_cycles.h>
 #include <rte_ether.h>
 #include <rte_ip.h>
 #include <rte_tcp.h>
@@ -49,17 +50,16 @@ extern "C"
 #define PX_RX_BURST 64
 #define PX_TX_BURST 64
 /*----------------------------------------------------------------------------*/
-/* External MTU (eMTU) is 1500 by default */
+/**
+ * External MTU (eMTU) is 1500 by default.
+ * Set up iMTU using px_eth_dev_configure.
+ */
 #define DEFAULT_eMTU RTE_ETHER_MTU
 
 /**
- * Internal MTU (iMTU) is 3000 ~ 9000 for now.
- * Choose one of below for testing.
+ * Internal MTU (iMTU) is 9000 by default.
+ * Set up iMTU using px_eth_dev_configure.
  */
-// #define DEFAULT_iMTU 3000
-// #define DEFAULT_iMTU 4500
-// #define DEFAULT_iMTU 6000
-// #define DEFAULT_iMTU 7500
 #define DEFAULT_iMTU 9000
 
 /**
@@ -75,14 +75,7 @@ extern "C"
 #define PX_MEASURE_STATS 1
 #define PX_MEASURE_PER_QUEUE_STAT 0
 #define PX_MEASURE_DIST 0
-/*----------------------------------------------------------------------------*/
-/**
- * Below are for configuring multi-core and multi-port.
- * PX allows up to 32 cores and 16 latent queues per queue.
- */
-#define MAX_CORE_NUM 32
-#define PX_MAX_QUEUE_INCREASE 16
-#define PX_MAX_QUEUES_PER_PORT (RTE_MAX_QUEUES_PER_PORT / PX_MAX_QUEUE_INCREASE)
+#define MEASURE_DELAY 1
 /*----------------------------------------------------------------------------*/
 /* Custom timestamp flags */
 #define CLOCK_CPU_TIMESTAMP 100
@@ -94,9 +87,9 @@ extern "C"
 #define TIME_FLAG (CLOCK_CPU_TIMESTAMP)
 // #define TIME_FLAG (CLOCK_NIC_TIMESTAMP)
 /*----------------------------------------------------------------------------*/
-#define E9 ((long)1e9)
-#define E6 ((long)1e6)
-#define E3 ((long)1e3)
+#define E9 (NS_PER_S)
+#define E6 (US_PER_S)
+#define E3 (MS_PER_S)
 
 #define PX_MARK_ON_TOS 0x01
 
@@ -126,17 +119,29 @@ extern "C"
 struct px_dev
 {
     uint16_t num_rxq;
+    uint16_t max_rxq;
+    uint16_t max_rxq_incr;
+    uint16_t gear_val;
     uint16_t num_rxq_incr;
     uint16_t num_txq;
+    uint16_t num_txq_incr;
+    uint16_t imtu_size;
+    uint16_t emtu_size;
+    uint16_t reta_size;
 
     /* for packet stalling */
     uint32_t cutoff_ns;
 
+    struct rte_eth_dev_info dev_info;
+
     /* source MAC from this port */
     struct rte_ether_addr mac;
 
+    uint16_t nb_rx_desc[RTE_MAX_QUEUES_PER_PORT];
+    uint16_t nb_tx_desc[RTE_MAX_QUEUES_PER_PORT];
+
     /* whether ReTa entry initialized */
-    uint8_t initialized_reta : 1;
+    uint8_t initialized_latent : 1;
 
     /* whether ARP table context initialized */
     uint8_t initialized_arp : 1;
@@ -151,20 +156,15 @@ struct px_dev
     uint8_t initialized_hairpin : 1;
 
     uint8_t unused : 3;
-
-    uint16_t nb_rx_desc[PX_MAX_QUEUES_PER_PORT];
-    uint16_t nb_tx_desc[PX_MAX_QUEUES_PER_PORT];
-
-    struct rte_eth_dev_info dev_info;
 };
 /*----------------------------------------------------------------------------*/
 static inline uint64_t
 px_gettime(clockid_t clk_id)
 {
-    struct timespec *ts;
+    struct timespec ts;
     if (clk_id == CLOCK_CPU_TIMESTAMP)
     {
-        return (uint64_t)((double)rte_rdtsc() * E9 / rte_get_tsc_hz());
+        return (uint64_t)((double)rte_rdtsc() * NS_PER_S / rte_get_tsc_hz());
     }
     if (clk_id == CLOCK_NIC_TIMESTAMP)
     {
@@ -172,12 +172,12 @@ px_gettime(clockid_t clk_id)
         return 0;
     }
 
-    clock_gettime(clk_id, ts);
+    clock_gettime(clk_id, &ts);
 
-    return (uint64_t)ts->tv_sec * E9 + ts->tv_nsec;
+    return (uint64_t)ts.tv_sec * NS_PER_S + ts.tv_nsec;
 }
 /*----------------------------------------------------------------------------*/
-#ifdef RTE_FLOW_MEASURE_DELAY
+#ifdef MEASURE_DELAY
 #define MEASURE(name, cmd)                                                    \
     do                                                                        \
     {                                                                         \
@@ -190,10 +190,8 @@ px_gettime(clockid_t clk_id)
         _end2 = px_gettime(CLOCK_THREAD_CPUTIME_ID);                          \
         _time1 = (_end1 - _start1);                                           \
         _time2 = (_end2 - _start2);                                           \
-        fprintf(stdout, "[%s] Wallclock time: %lf us, Thread time: %lf us\n", \
-                name,                                                         \
-                (double)_time1 / E9 * E6,                                     \
-                (double)_time2 / E9 * E6);                                    \
+        fprintf(stdout, "[%s] Wallclock time: %lf ns, Thread time: %lf ns\n", \
+                name, (double)_time1, (double)_time2);                        \
     } while (/*CONSTCOND*/ 0);
 #else
 #define MEASURE(name, cmd) \
@@ -202,6 +200,18 @@ px_gettime(clockid_t clk_id)
         cmd;               \
     } while (/*CONSTCOND*/ 0);
 #endif
+/*----------------------------------------------------------------------------*/
+static inline unsigned int
+CEIL_DIV(unsigned int a, unsigned int b)
+{
+    return (a + b - 1) / b;
+}
+/*----------------------------------------------------------------------------*/
+static inline unsigned int
+FLOOR_DIV(unsigned int a, unsigned int b)
+{
+    return (a / b);
+}
 /*----------------------------------------------------------------------------*/
 static inline bool
 SEQ_LT(uint32_t a, uint32_t b)
@@ -329,7 +339,7 @@ get_firstseg_clone(struct rte_mbuf *pkt)
     /* check the clone */
     if (!clone)
     {
-        printf("rte_pktmbuf_clone failed!\n");
+        fprintf(stdout, "rte_pktmbuf_clone failed!\n");
         return NULL;
     }
 
@@ -564,9 +574,9 @@ get_tcp_timestamp(struct rte_mbuf *pkt)
 {
     uint8_t *tcpopt = get_tcp_option(pkt);
     int total_optlen = get_tcp_optlen(pkt);
-    int opt, optlen;
+    int opt, optlen, i;
 
-    for (int i = 0; i < total_optlen;)
+    for (i = 0; i < total_optlen;)
     {
         opt = *(tcpopt + i++);
 
@@ -607,9 +617,9 @@ get_tcp_mss(struct rte_mbuf *pkt)
 {
     uint8_t *tcpopt = get_tcp_option(pkt);
     int total_optlen = get_tcp_optlen(pkt);
-    int opt, optlen;
+    int opt, optlen, i;
 
-    for (int i = 0; i < total_optlen;)
+    for (i = 0; i < total_optlen;)
     {
         opt = *(tcpopt + i++);
         if (opt == TCPOPT_EOL)
@@ -829,17 +839,16 @@ update_udplen(struct rte_mbuf *pkt)
 }
 /*----------------------------------------------------------------------------*/
 static inline void
-px_tuple_dump(struct four_tuple *ft)
+px_dump_tuple(struct four_tuple *ft)
 {
-    // printf("pkt_len: %d, l2_len: %d, l3_len: %d, l4_len: %d\n",
-    //        pkt->pkt_len, pkt->l2_len, pkt->l3_len, pkt->l4_len);
-    printf("%d.%d.%d.%d:%d -> %d.%d.%d.%d:%d\n",
-           *(uint8_t *)&ft->src_ip, *((uint8_t *)&ft->src_ip + 1),
-           *((uint8_t *)&ft->src_ip + 2), *((uint8_t *)&ft->src_ip + 3),
-           rte_be_to_cpu_16(ft->src_port),
-           *((uint8_t *)&ft->dst_ip), *((uint8_t *)&ft->dst_ip + 1),
-           *((uint8_t *)&ft->dst_ip + 2), *((uint8_t *)&ft->dst_ip + 3),
-           rte_be_to_cpu_16(ft->dst_port));
+    fprintf(stdout,
+            "%d.%d.%d.%d:%d -> %d.%d.%d.%d:%d\n",
+            *(uint8_t *)&ft->src_ip, *((uint8_t *)&ft->src_ip + 1),
+            *((uint8_t *)&ft->src_ip + 2), *((uint8_t *)&ft->src_ip + 3),
+            rte_be_to_cpu_16(ft->src_port),
+            *((uint8_t *)&ft->dst_ip), *((uint8_t *)&ft->dst_ip + 1),
+            *((uint8_t *)&ft->dst_ip + 2), *((uint8_t *)&ft->dst_ip + 3),
+            rte_be_to_cpu_16(ft->dst_port));
 }
 /*----------------------------------------------------------------------------*/
 static inline struct four_tuple *
@@ -874,10 +883,14 @@ put_orig_four_tuple(struct rte_mbuf *pkt)
     }
 
     /* backup the tuple in the headroom */
-    memcpy(pkt->buf_addr, get_orig_four_tuple(pkt), sizeof(struct four_tuple));
+    memcpy(pkt->buf_addr, get_four_tuple(pkt), sizeof(struct four_tuple));
 
     /* mark that the headroom is used for 4-tuple */
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
     pkt->ol_flags |= (PKT_FIRST_FREE << 1);
+#else
+    pkt->ol_flags |= (RTE_MBUF_F_FIRST_FREE << 1);
+#endif
 
     return 0;
 }

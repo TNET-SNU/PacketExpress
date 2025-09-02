@@ -28,6 +28,8 @@ struct px_arp_ctx
     int table_size;
 };
 /*----------------------------------------------------------------------------*/
+void px_arp_cleanup(void);
+/*----------------------------------------------------------------------------*/
 /**
  * A single global ARP context is shared by all threads.
  * Please initialize it before using, and do not modify it after initialization.
@@ -40,7 +42,7 @@ int px_arp_configure(struct px_arp_entry *arp_string_table,
                      int arp_string_table_size);
 /*----------------------------------------------------------------------------*/
 struct rte_ether_addr *
-px_search_arp(uint32_t ip_dst);
+px_arp_search(uint32_t ip_dst);
 /*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 }

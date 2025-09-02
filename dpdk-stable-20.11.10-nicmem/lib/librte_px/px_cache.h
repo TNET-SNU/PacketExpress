@@ -8,7 +8,6 @@ extern "C"
 /*----------------------------------------------------------------------------*/
 #include "px_common.h"
 #include "px_flow.h"
-#include "px_iat.h"
 /*----------------------------------------------------------------------------*/
 struct cache_manager
 {
@@ -36,44 +35,49 @@ struct cache_manager
     int optout;
 };
 /*----------------------------------------------------------------------------*/
-int get_nic_cached_size(int port_id);
+int get_nic_cached_size(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
-void incr_temp_cached_size(int port_id);
+void incr_temp_cached_size(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
-void incr_temp_evicted_size(int port_id);
+void incr_temp_evicted_size(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
-void lru_queue_print_all(int port_id);
+void lru_queue_print_all(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
-void lru_queue_init(int port_id, size_t num, int optout);
+void lru_queue_init(uint16_t port_id,
+                    size_t num,
+                    int optout);
 /*----------------------------------------------------------------------------*/
-int lru_queue_insert_and_destroy_evicted(int port_id,
+int lru_queue_insert_and_destroy_evicted(uint16_t port_id,
                                          struct ri_node *node);
 /*----------------------------------------------------------------------------*/
 // returns least frequent entry by querying
 struct ri_node *
-lru_queue_find_smallest(int port_id);
+lru_queue_find_smallest(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 // called when rule is already in LRU queue
-void lru_queue_move_to_front(int port_id, struct ri_node *node);
+void lru_queue_move_to_front(uint16_t port_id,
+                             struct ri_node *node);
 /*----------------------------------------------------------------------------*/
 // returns evicted entry's key pattern
-void lru_queue_evict(int port_id, struct ri_node *node);
+void lru_queue_evict(uint16_t port_id,
+                     struct ri_node *node);
 /*----------------------------------------------------------------------------*/
 // returns evicted entry
 struct ri_node *
-lru_queue_insert(int port_id, struct ri_node *node);
+lru_queue_insert(uint16_t port_id,
+                 struct ri_node *node);
 /*----------------------------------------------------------------------------*/
 // returns most recent flow rule
 struct ri_node *
-lru_queue_get_most_recent(int port_id);
+lru_queue_get_most_recent(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 // returns least recent flow rule
 struct ri_node *
-lru_queue_get_least_recent(int port_id);
+lru_queue_get_least_recent(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
-int check_stat_reset(int port_id);
+int check_stat_reset(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
-void reset_stat(int port_id);
+void reset_stat(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 void print_cache_stats(void);
 /*----------------------------------------------------------------------------*/

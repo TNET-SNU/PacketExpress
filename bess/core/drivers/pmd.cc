@@ -366,7 +366,6 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
   }
 
   if (err.error().code() != 0) {
-    printf("error!\n");
     return err;
   }
 
@@ -384,7 +383,7 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
 #else
                          0,
 #endif
-#if USE_CGRO || USE_DGRO
+#if USE_PX || USE_GRO
                          1,
 #else
                          0,
@@ -403,21 +402,18 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
   if (arg.loopback()) {
     eth_conf.lpbk_mode = 1;
   }
-#if (USE_CGRO || NICMEM || NUM_HAIRPIN_Q)
+#if (USE_PX || NICMEM || NUM_HAIRPIN_Q)
   ret = px_eth_dev_configure(ret_port_id,
                              num_rxq,
                              num_txq,
-#if USE_CGRO
-                             NUM_LATENT_RXQ,
-#else
-                             1,
-#endif
+                             0,
+                             0,
 #if NICMEM
                              queue_size[PACKET_DIR_INC],
 #else
                              0,
 #endif
-#if USE_CGRO
+#if USE_PX
                              CUTOFF_NS,
 #else
                              0,
@@ -475,7 +471,7 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
   }
 
   for (int i = 0; i < num_rxq; i++) {
-#if (USE_CGRO || NICMEM || NUM_HAIRPIN_Q)
+#if (USE_PX || NICMEM || NUM_HAIRPIN_Q)
     ret = px_eth_rx_queue_setup(ret_port_id, i,
                                 queue_size[PACKET_DIR_INC],
                                 sid, &eth_rxconf,
@@ -510,7 +506,7 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
   }
 
   for (int i = 0; i < num_txq; i++) {
-#if USE_CGRO
+#if (USE_PX || NICMEM || NUM_HAIRPIN_Q)
     ret = px_eth_tx_queue_setup(ret_port_id, i,
                                 queue_size[PACKET_DIR_OUT],
                                 sid, &eth_txconf);
@@ -548,20 +544,24 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
     }
   }
 
-#if USE_CGRO
-  if (px_init(dpdk_port_id_,
-              bess::PacketBatch::kMaxBurst,
-              !JUMBO_FRAME ? 4096 : 0,
-              CUTOFF_NS ? 4096 : 0, NULL, NULL, USE_LINK, SEMANTIC_TEST) < 0) {
-    return CommandFailure(ENOMEM, "px_init failed");
-  }
-#endif
-
   ret = rte_eth_dev_start(ret_port_id);
   if (ret != 0) {
     return CommandFailure(-ret, "rte_eth_dev_start() failed");
   }
   dpdk_port_id_ = ret_port_id;
+
+#if USE_PX
+  if (px_init(dpdk_port_id_,
+              bess::PacketBatch::kMaxBurst,
+              !JUMBO_FRAME ? 8192 : 0,
+              CUTOFF_NS ? 8192 : 0,
+              NULL,
+              NULL,
+              USE_LINK,
+              SEMANTIC_TEST) < 0) {
+    return CommandFailure(ENOMEM, "px_init failed");
+  }
+#endif
 
   int numa_node = arg.socket_case() == bess::pb::PMDPortArg::kSocketId ?
               sid : rte_eth_dev_socket_id(ret_port_id);
@@ -576,14 +576,14 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
 
   driver_ = dev_info.driver_name ?: "unknown";
 
-  // if (arg.flow_profiles_size() > 0) {
-  //   for (int i = 0; i < arg.flow_profiles_size(); ++i) {
-  //     err = flow_create(ret_port_id, arg.flow_profiles(i));
-  //     if (err.error().code() != 0) {
-  //       return err;
-  //     }
-  //   }
-  // }
+  if (arg.flow_profiles_size() > 0) {
+    for (int i = 0; i < arg.flow_profiles_size(); ++i) {
+      err = flow_create(ret_port_id, arg.flow_profiles(i));
+      if (err.error().code() != 0) {
+        return err;
+      }
+    }
+  }
 
   return CommandSuccess();
 }
@@ -636,7 +636,7 @@ restart:
 }
 
 void PMDPort::DeInit() {
-#if USE_CGRO
+#if USE_PX
   px_deinit(dpdk_port_id_);
 #endif
   rte_eth_dev_stop(dpdk_port_id_);
@@ -687,7 +687,7 @@ void PMDPort::CollectStats(bool reset) {
   }
 
   rte_eth_stats stats;
-#if USE_CGRO
+#if USE_PX
   int ret = px_eth_stats_get(dpdk_port_id_, &stats);
   if (ret < 0) {
     LOG(ERROR) << "px_eth_stats_get(" << static_cast<int>(dpdk_port_id_)
@@ -742,18 +742,18 @@ void PMDPort::CollectStats(bool reset) {
 }
 
 int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
-#if USE_CGRO
+#if USE_PX
   uint16_t recv = px_eth_rx_burst(dpdk_port_id_, qid,
                                   reinterpret_cast<rte_mbuf **>(pkts), cnt);
 #else
   uint16_t recv = rte_eth_rx_burst(dpdk_port_id_, qid,
                                    reinterpret_cast<rte_mbuf **>(pkts), cnt);
-#if (USE_LRO || USE_DGRO || NUM_HAIRPIN_Q)
+#if (USE_LRO || USE_GRO || NUM_HAIRPIN_Q)
   px_parse_batch(dpdk_port_id_, qid,
                  reinterpret_cast<rte_mbuf **>(pkts),
                  recv, !JUMBO_FRAME, 1, SEMANTIC_TEST);
 #endif
-#if USE_DGRO
+#if USE_GRO
   struct rte_gro_param gro_param = {
     .gro_types = RTE_GRO_TCP_IPV4,
     .max_flow_num = (uint16_t)cnt,
@@ -762,18 +762,18 @@ int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   };
   recv = rte_gro_reassemble_burst(reinterpret_cast<rte_mbuf **>(pkts), recv, &gro_param);
 #endif
-  px_update_rx_stats(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), recv);
+  px_stat_update_rx(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), recv);
 #endif
 
   return recv;
 }
 
 int PMDPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
-#if USE_CGRO
+#if USE_PX
   int sent = px_eth_tx_burst(dpdk_port_id_, qid,
                              reinterpret_cast<rte_mbuf **>(pkts), cnt);
 #else
-#if (USE_LRO || USE_DGRO)
+#if (USE_LRO || USE_GRO)
   px_setup_tso_burst(dpdk_port_id_, qid,
                      reinterpret_cast<rte_mbuf **>(pkts), cnt,
                      SEMANTIC_TEST);

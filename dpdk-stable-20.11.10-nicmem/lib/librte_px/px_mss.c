@@ -1,13 +1,14 @@
 #include "px_mss.h"
 /*----------------------------------------------------------------------------*/
-static struct px_mss_ctx g_mss_ctx[RTE_MAX_ETHPORTS][PX_MAX_QUEUES_PER_PORT] = {0};
+static struct px_mss_ctx g_mss_ctx[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
+static uint16_t g_num_cores = 0;
 static pthread_t g_mss_tid = 0;
 static volatile int g_mss_shutdown = 0;
 extern int g_is_semantic_test;
 /*----------------------------------------------------------------------------*/
 void update_mss(uint16_t *mss_ptr, uint16_t new_mss, int direction)
 {
-    printf("%d -> ", rte_be_to_cpu_16(*mss_ptr));
+    fprintf(stdout, "%d -> ", rte_be_to_cpu_16(*mss_ptr));
     if (g_is_semantic_test)
     {
         if (new_mss)
@@ -36,7 +37,7 @@ void update_mss(uint16_t *mss_ptr, uint16_t new_mss, int direction)
             *mss_ptr = rte_cpu_to_be_16(DEFAULT_eMSS);
         }
     }
-    printf("%d\n", rte_be_to_cpu_16(*mss_ptr));
+    fprintf(stdout, "%d\n", rte_be_to_cpu_16(*mss_ptr));
 }
 /*----------------------------------------------------------------------------*/
 uint8_t *
@@ -208,12 +209,13 @@ mss_periodic_cleanup(void *arg)
 {
     uint16_t port_nb = rte_eth_dev_count_avail();
     int i, j;
-    (void)arg;
+    g_num_cores = *(uint16_t *)arg;
+    free(arg);
     while (!g_mss_shutdown)
     {
         for (i = 0; i < port_nb; i++)
         {
-            for (j = 0; j < PX_MAX_QUEUES_PER_PORT; j++)
+            for (j = 0; j < g_num_cores; j++)
             {
                 if (g_mss_ctx[i][j].initialized)
                 {
@@ -300,7 +302,9 @@ int mss_init_ctx(uint16_t port_id,
     }
 
     /* Create a new thread for periodic cleanup */
-    // if (pthread_create(&g_mss_tid, NULL, mss_periodic_cleanup, NULL) != 0)
+    // uint16_t *num_cores = calloc(1, sizeof(uint16_t));
+    // *num_cores = rte_lcore_count();
+    // if (pthread_create(&g_mss_tid, NULL, mss_periodic_cleanup, num_cores) != 0)
     // {
     //     fprintf(stderr, "Failed to create cleanup thread\n");
     //     mss_bloom_destroy(ctx->bf);
@@ -517,9 +521,9 @@ void mss_flush_timeout(uint16_t port_id,
     {
         entry = (struct flow_mss_entry *)next_data;
 
-        if ((now - entry->last_update) > MSS_TIMEOUT * E9)
+        if ((now - entry->last_update) > (uint64_t)MSS_TIMEOUT * NS_PER_S)
         {
-            printf("Removing flow due to timeout\n");
+            fprintf(stdout, "Removing flow due to timeout\n");
             rte_hash_del_key(ctx->tbl, next_key);
             rte_mempool_put(ctx->pool, entry);
         }

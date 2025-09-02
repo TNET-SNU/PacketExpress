@@ -303,24 +303,12 @@ class Port {
   Conf conf_;
 
  private:
-  // static const size_t kDefaultIncQueueSize = 65536;
-  // static const size_t kDefaultOutQueueSize = 65536;
-  // static const size_t kDefaultIncQueueSize = 32768;
-  // static const size_t kDefaultOutQueueSize = 32768;
-  // static const size_t kDefaultIncQueueSize = 16384;
-  // static const size_t kDefaultOutQueueSize = 16384;
-  // static const size_t kDefaultIncQueueSize = 8192;
-  // static const size_t kDefaultOutQueueSize = 8192;
-  // static const size_t kDefaultIncQueueSize = 4096;
-  // static const size_t kDefaultOutQueueSize = 4096;
+  static const size_t kDefaultIncQueueSize = 4096;
+  static const size_t kDefaultOutQueueSize = 4096;
   // static const size_t kDefaultIncQueueSize = 2048;
   // static const size_t kDefaultOutQueueSize = 2048;
-  static const size_t kDefaultIncQueueSize = 1024;
-  static const size_t kDefaultOutQueueSize = 1024;
-  // static const size_t kDefaultIncQueueSize = 512;
-  // static const size_t kDefaultOutQueueSize = 512;
-  // static const size_t kDefaultIncQueueSize = 256;
-  // static const size_t kDefaultOutQueueSize = 256;
+  // static const size_t kDefaultIncQueueSize = 1024;
+  // static const size_t kDefaultOutQueueSize = 1024;
 
   static const uint32_t kDefaultMtu = 1500;
 

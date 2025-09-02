@@ -7,68 +7,18 @@ extern "C"
 #endif
 /*----------------------------------------------------------------------------*/
 #include "px_common.h"
-#include "px_latent.h"
 #include "px_arp.h"
+#include "px_latent.h"
 /*----------------------------------------------------------------------------*/
-#define MAX_PATTERNS_NUM 8
-#define MAX_ACTIONS_NUM 8
 #define MAX_TEMPLATE_TABLE_NUM 16
 #define VALIDATE_FLOW_RULE 1
-/*----------------------------------------------------------------------------*/
-enum cache_cmd
-{
-    NOOP,
-
-    CREATE,
-    REPORT,
-    UPDATE,
-    DELETE,
-
-    STATIC_CREATE,
-    STATIC_REPORT,
-    STATIC_UPDATE,
-    STATIC_DELETE,
-};
-
-struct count
-{
-    uint64_t pkts;
-    uint64_t bytes;
-};
-
-struct static_rule
-{
-    struct rte_flow_item patterns[MAX_PATTERNS_NUM];
-    struct rte_flow_action actions[MAX_ACTIONS_NUM];
-    int num_patterns;
-    int num_actions;
-    uint16_t port_id;
-    uint16_t index;
-};
-
-/* structure rule info */
-struct ri_node
-{
-    struct four_tuple key;
-    struct rte_mbuf *pkt;
-
-    /* for query */
-    struct count cnt;
-
-    /* handle for NIC cache mgmt */
-    struct rte_flow *flow;
-
-    /* for LRU queue chaining */
-    struct ri_node *prev;
-    struct ri_node *next;
-};
 /*----------------------------------------------------------------------------*/
 struct px_hairpin_ctx
 {
     /* below are for hairpin management */
     uint16_t num_rxq;
+    uint16_t max_rxq;
     uint16_t num_txq;
-    uint16_t num_rxq_incr;
     struct rte_flow_action_count ctr;
     struct rte_flow_action_rss rss;
     uint16_t rss_queues[RTE_MAX_QUEUES_PER_PORT];
@@ -100,8 +50,7 @@ struct rte_flow *
 px_flow_create_static(uint16_t port_id,
                       const struct rte_flow_attr *attr,
                       const struct rte_flow_item pattern[],
-                      const struct rte_flow_action actions[],
-                      struct rte_flow_error *error);
+                      const struct rte_flow_action actions[]);
 /*----------------------------------------------------------------------------*/
 struct rte_flow *
 px_flow_create_offload_auto(uint16_t port_id,
@@ -113,9 +62,9 @@ px_flow_create_onload_auto(uint16_t port_id,
                            struct four_tuple *key,
                            struct rte_mbuf *pkt);
 /*----------------------------------------------------------------------------*/
-int px_destroy_flow(uint16_t port_id, struct rte_flow *flow);
+int px_flow_destroy(uint16_t port_id, struct rte_flow *flow);
 /*----------------------------------------------------------------------------*/
-int px_query_flow(uint16_t port_id,
+int px_flow_query(uint16_t port_id,
                   struct rte_flow *flow,
                   struct rte_flow_query_count *query_result);
 /*----------------------------------------------------------------------------*/

@@ -65,7 +65,8 @@ static uint8_t g_key[] = {
 static struct px_arp_entry g_arp_entries[] = {
     {"10.1.90.2", "58:a2:e1:a7:a9:ee"}, // stream1
     {"10.2.90.2", "a0:88:c2:d6:9e:32"}, // stream3
-    {"10.3.90.2", "58:a2:e1:a7:a9:fe"}, // stream5
+    // {"10.3.90.2", "58:a2:e1:a7:a9:fe"}, // stream5
+    {"10.3.90.2", "a0:88:c2:d2:df:f2"}, // stream10
     {"10.4.90.2", "58:a2:e1:a7:a9:7e"}, // stream7
 
     {"10.1.95.2", "a0:88:c2:d6:9d:d2"}, // stream2
@@ -85,14 +86,14 @@ static struct px_arp_entry g_arp_entries[] = {
 };
 /*----------------------------------------------------------------------------*/
 /* static routing table configuration */
-static int
+static inline int
 is_uplink(struct rte_mbuf *pkt)
 {
     uint8_t *s = (uint8_t *)get_four_tuple(pkt);
     return *(s + 2) == 90;
 }
 /*----------------------------------------------------------------------------*/
-static int
+static inline int
 is_downlink(struct rte_mbuf *pkt)
 {
     uint8_t *s = (uint8_t *)get_four_tuple(pkt);
@@ -117,7 +118,7 @@ check_all_ports_link_status(uint8_t port_num, uint32_t port_mask)
     uint8_t portid, count, all_ports_up, print_flag = 0;
     struct rte_eth_link link;
 
-    printf("\nChecking link status\n");
+    fprintf(stdout, "\nChecking link status\n");
     fflush(stdout);
     for (count = 0; count <= MAX_CHECK_TIME; count++)
     {
@@ -136,17 +137,19 @@ check_all_ports_link_status(uint8_t port_num, uint32_t port_mask)
                 if (link.link_status)
                 {
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
-                    printf("Port %d Link Up - speed %u "
-                           "Mbps - %s\n",
-                           (uint8_t)portid,
-                           (unsigned)link.link_speed,
-                           (link.link_duplex == ETH_LINK_FULL_DUPLEX) ? ("full-duplex") : ("half-duplex\n"));
+                    fprintf(stdout,
+                            "Port %d Link Up - speed %u "
+                            "Mbps - %s\n",
+                            (uint8_t)portid,
+                            (unsigned)link.link_speed,
+                            (link.link_duplex == ETH_LINK_FULL_DUPLEX) ? ("full-duplex") : ("half-duplex\n"));
 #else
-                    printf("Port %d Link Up - speed %u "
-                           "Mbps - %s\n",
-                           (uint8_t)portid,
-                           (unsigned)link.link_speed,
-                           (link.link_duplex == RTE_ETH_LINK_FULL_DUPLEX) ? ("full-duplex") : ("half-duplex\n"));
+                    fprintf(stdout,
+                            "Port %d Link Up - speed %u "
+                            "Mbps - %s\n",
+                            (uint8_t)portid,
+                            (unsigned)link.link_speed,
+                            (link.link_duplex == RTE_ETH_LINK_FULL_DUPLEX) ? ("full-duplex") : ("half-duplex\n"));
 #endif
                 }
             }
@@ -165,7 +168,7 @@ check_all_ports_link_status(uint8_t port_num, uint32_t port_mask)
 
         if (all_ports_up == 0)
         {
-            printf(".");
+            fprintf(stdout, ".");
             fflush(stdout);
             rte_delay_ms(CHECK_INTERVAL);
         }
@@ -174,7 +177,7 @@ check_all_ports_link_status(uint8_t port_num, uint32_t port_mask)
         if (all_ports_up == 1 || count == (MAX_CHECK_TIME - 1))
         {
             print_flag = 1;
-            printf("done\n\n");
+            fprintf(stdout, "done\n\n");
         }
     }
 }
@@ -208,7 +211,7 @@ port_init(uint16_t portid, uint16_t num_queue)
     port_conf.rx_adv_conf.rss_conf.rss_hf = (ETH_RSS_IP | ETH_RSS_UDP | ETH_RSS_TCP);
 
     /* init port */
-    printf("[port %u] Initializing port... \n", (unsigned)portid);
+    fprintf(stdout, "[port %u] Initializing port... \n", (unsigned)portid);
     fflush(stdout);
     ret = rte_eth_dev_configure(portid,
                                 num_queue,
@@ -268,7 +271,7 @@ port_init(uint16_t portid, uint16_t num_queue)
                  ret,
                  (unsigned)portid);
     }
-    printf("done: \n");
+    fprintf(stdout, "done: \n");
 
     /* retrieve current flow control settings per port */
     memset(&fc_conf, 0, sizeof(fc_conf));
@@ -333,10 +336,10 @@ int lcore_main(void *args)
                                          &gro_param);
 
             /* Update RX statistics */
-            px_update_rx_stats(port_id,
-                               qid,
-                               rmbufs[port_id],
-                               nb_rx[port_id]);
+            px_stat_update_rx(port_id,
+                              qid,
+                              rmbufs[port_id],
+                              nb_rx[port_id]);
 
             for (i = 0; i < nb_rx[port_id]; i++)
             {
@@ -355,15 +358,16 @@ int lcore_main(void *args)
                 ret = rte_pktmbuf_linearize(m);
                 if (ret < 0)
                 {
-                    printf("Port %d: Failed to linearize mbuf %d, ret: %d\n",
-                           port_id, i, ret);
+                    fprintf(stdout,
+                            "Port %d: Failed to linearize mbuf %d, ret: %d\n",
+                            port_id, i, ret);
                     rte_pktmbuf_free(m);
                     continue;
                 }
 #endif
 
                 /* modify DST MAC */
-                dst_mac = px_search_arp(*get_dst_ip(m));
+                dst_mac = px_arp_search(*get_dst_ip(m));
                 if (!dst_mac)
                 {
                     /* ignore unknown dst IP */
@@ -378,8 +382,9 @@ int lcore_main(void *args)
                 /* fill checksum */
                 if (px_fill_ipv4_l4_cksum(m, HW_CSUM) < 0)
                 {
-                    printf("Port %d: Failed to fill checksum for mbuf %d\n",
-                           port_id, i);
+                    fprintf(stdout,
+                            "Port %d: Failed to fill checksum for mbuf %d\n",
+                            port_id, i);
                     rte_pktmbuf_free(m);
                     continue;
                 }
@@ -389,10 +394,10 @@ int lcore_main(void *args)
             }
 
             /* Update TX statistics */
-            px_update_tx_stats(port_id,
-                               qid,
-                               wmbufs[port_id],
-                               nb_tx[port_id]);
+            px_stat_update_tx(port_id,
+                              qid,
+                              wmbufs[port_id],
+                              nb_tx[port_id]);
 
             /* Forward to same port (L2 forward) */
             ret = rte_eth_tx_burst(port_id,
@@ -401,9 +406,10 @@ int lcore_main(void *args)
                                    nb_tx[port_id]);
             if (ret < nb_tx[port_id])
             {
-                printf("Port %d: Sent %d packets, "
-                       "but only %d were sent successfully.\n",
-                       port_id, nb_tx[port_id], ret);
+                fprintf(stdout,
+                        "Port %d: Sent %d packets, "
+                        "but only %d were sent successfully.\n",
+                        port_id, nb_tx[port_id], ret);
                 /* Free the mbufs that were not sent */
                 rte_pktmbuf_free_bulk(wmbufs[port_id] + ret,
                                       nb_tx[port_id] - ret);
@@ -420,7 +426,7 @@ void handle_sigint(int sig)
 {
     (void)sig; // unused
     g_shutdown = 1;
-    printf("\nSIGINT received, shutting down...\n");
+    fprintf(stdout, "\nSIGINT received, shutting down...\n");
 }
 /*----------------------------------------------------------------------------*/
 int main(int argc, char **argv)
@@ -434,7 +440,7 @@ int main(int argc, char **argv)
         if (opt == 'c')
         {
             g_num_cores = atoi(optarg);
-            printf("g_num_cores: %d\n", g_num_cores);
+            fprintf(stdout, "g_num_cores: %d\n", g_num_cores);
             if (g_num_cores > RTE_MAX_LCORE)
             {
                 fprintf(stderr, "Error: g_num_cores (%d) > RTE_MAX_LCORE (%d)\n",
@@ -491,18 +497,18 @@ int main(int argc, char **argv)
     {
         rte_exit(EXIT_FAILURE, "Invalid EAL args\n");
     }
-    printf("EAL arguments:\n");
+    fprintf(stdout, "EAL arguments:\n");
     for (i = 0; i < eal_argc; i++)
     {
-        printf("  eal_args[%d] = %s\n", i, eal_args[i]);
+        fprintf(stdout, "  eal_args[%d] = %s\n", i, eal_args[i]);
     }
 
     g_num_sockets = rte_socket_count();
     g_num_ports = rte_eth_dev_count_avail();
 
-    // printf("socket_count: %u\n", g_num_sockets);
-    // printf("lcore_count: %u\n", rte_lcore_count());
-    // printf("device_count: %u\n", g_num_ports);
+    // fprintf(stdout, "socket_count: %u\n", g_num_sockets);
+    // fprintf(stdout, "lcore_count: %u\n", rte_lcore_count());
+    // fprintf(stdout, "device_count: %u\n", g_num_ports);
 
     /* mbuf pool creation */
     for (sid = 0; sid < g_num_sockets; sid++)
@@ -545,7 +551,12 @@ int main(int argc, char **argv)
     sigemptyset(&sa.sa_mask);
     sigaction(SIGINT, &sa, NULL);
 
-    px_start_print_thread(1, g_num_ports, g_num_cores, g_num_cores);
+    px_stat_start_monitor(1,
+                          g_num_ports,
+                          g_num_cores,
+                          g_num_cores,
+                          9000,
+                          RTE_ETHER_MTU);
 
     /* launch lcore main on each worker core */
     g_shutdown = 0;
@@ -556,9 +567,10 @@ int main(int argc, char **argv)
             rc = rte_eal_remote_launch(lcore_main, NULL, core_id);
             if (rc != 0)
             {
-                printf("Failed to launch lcore %u, "
-                       "return code: %d\n",
-                       core_id, rc);
+                fprintf(stdout,
+                        "Failed to launch lcore %u, "
+                        "return code: %d\n",
+                        core_id, rc);
             }
         }
     }
@@ -572,6 +584,18 @@ int main(int argc, char **argv)
         if (core_id < g_num_cores)
         {
             rte_eal_wait_lcore(core_id);
+        }
+    }
+
+    px_stat_stop_monitor();
+
+    /* cleanup */
+    for (port_id = 0; port_id < g_num_ports; port_id++)
+    {
+        ret = rte_eth_dev_stop(port_id);
+        if (ret < 0)
+        {
+            rte_exit(EXIT_FAILURE, "rte_eth_dev_stop failed\n");
         }
     }
 

@@ -7,8 +7,11 @@ extern "C"
 #endif
 /*----------------------------------------------------------------------------*/
 #include "px_common.h"
+#include "px_latent.h"
 #include "px_cache.h"
 #include "px_iat.h"
+/*----------------------------------------------------------------------------*/
+#define STAT_INTERVAL 1
 /*----------------------------------------------------------------------------*/
 /*
  * Ethernet frame overhead
@@ -21,6 +24,13 @@ extern "C"
 #define ETHER_OVR (ETHER_CRC_LEN + ETHER_PREAMBLE + ETHER_IFG)
 
 #define DIST_UNIT (3 * RTE_ETHER_MTU)
+/*----------------------------------------------------------------------------*/
+struct px_tcp_stat
+{
+    /* only SYN packets */
+    uint64_t syn_cnt;
+    uint64_t synack_cnt;
+};
 /*----------------------------------------------------------------------------*/
 struct px_rx_stat
 {
@@ -62,28 +72,36 @@ struct px_tx_stat
     uint64_t _5_seg_cnt;
     uint64_t under_iMTU_cnt;
     uint64_t iMTU_cnt;
+
+    struct px_dev *dev;
 };
 /*----------------------------------------------------------------------------*/
-void px_update_rx_stats(uint16_t port_id,
-                        uint16_t queue_id,
-                        struct rte_mbuf **pkts,
-                        const uint16_t nb_pkts);
+void px_stat_count_syn(uint16_t port_id,
+                       uint16_t queue_id);
 /*----------------------------------------------------------------------------*/
-void px_update_tx_stats(uint16_t port_id,
-                        uint16_t queue_id,
-                        struct rte_mbuf **pkts,
-                        const uint16_t nb_pkts);
+void px_stat_count_synack(uint16_t port_id,
+                          uint16_t queue_id);
 /*----------------------------------------------------------------------------*/
-void px_print_stats(int args);
+void px_stat_update_rx(uint16_t port_id,
+                       uint16_t queue_id,
+                       struct rte_mbuf **pkts,
+                       const uint16_t nb_pkts);
 /*----------------------------------------------------------------------------*/
-void *px_stat_cb(void *args);
+void px_stat_update_tx(uint16_t port_id,
+                       uint16_t queue_id,
+                       struct rte_mbuf **pkts,
+                       const uint16_t nb_pkts);
 /*----------------------------------------------------------------------------*/
-int px_start_print_thread(unsigned int stat_interval,
-                          int num_ports,
-                          int num_rxqs,
-                          int num_txqs);
+void px_stat_monitor(int args);
 /*----------------------------------------------------------------------------*/
-int px_stop_print_thread(void);
+int px_stat_start_monitor(unsigned int stat_interval,
+                          uint16_t num_ports,
+                          uint16_t num_rxqs,
+                          uint16_t num_txqs,
+                          uint16_t imtu_size,
+                          uint16_t emtu_size);
+/*----------------------------------------------------------------------------*/
+void px_stat_stop_monitor(void);
 /*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 }

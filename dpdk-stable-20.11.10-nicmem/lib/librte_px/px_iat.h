@@ -12,7 +12,7 @@ extern "C"
 #define IAT_TIMEOUT 300
 #define EWMA_ALPHA 0.125 // α = 1/8
 #define NMAX 45
-#define OUTLIER_CNT 1
+#define OUTLIER_CNT 3
 #define OUTLIER_FACTOR 10
 /*----------------------------------------------------------------------------*/
 enum iat_state
@@ -30,6 +30,8 @@ struct px_iat_ctx
     uint16_t core_id;
     uint16_t queue_id;
     uint16_t lq_id;
+    uint16_t imtu_size;
+    uint16_t emtu_size;
     uint32_t cutoff_ns;
     float ewma_alpha;
     struct rte_hash *tbl;
@@ -102,8 +104,9 @@ init_rx_hw_timestamp(void)
                  "rte_mbuf_dyn_rx_timestamp_register failed: %d\n", ret);
         return ret;
     }
-    // printf("rx timestamp field offset: %d, flag: 0x%lx\n",
-    //        rx_hw_timestamp_field_offset, rx_hw_timestamp_flag);
+    fprintf(stdout,
+            "rx timestamp field offset: %d, flag: 0x%lx\n",
+            rx_hw_timestamp_field_offset, rx_hw_timestamp_flag);
     done = 1;
 
     return 0;
@@ -123,7 +126,7 @@ get_rx_hw_timestamp(struct rte_mbuf *mbuf)
             rte_mbuf_dynflag_lookup(RTE_MBUF_DYNFLAG_RX_TIMESTAMP_NAME, NULL);
         if (timestamp_dynflag_offset < 0)
         {
-            printf("rx_hw_timestamp not initialized!\n");
+            fprintf(stdout, "rx_hw_timestamp not initialized!\n");
             return 0;
         }
         timestamp_dynflag = RTE_BIT64(timestamp_dynflag_offset);
@@ -143,7 +146,7 @@ get_rx_hw_timestamp(struct rte_mbuf *mbuf)
     /* check if timestamp is enabled */
     if (!(mbuf->ol_flags & timestamp_dynflag))
     {
-        printf("rx_hw_timestamp not enabled in mbuf!\n");
+        fprintf(stdout, "rx_hw_timestamp not enabled in mbuf!\n");
         return 0;
     }
 
@@ -175,7 +178,7 @@ int iat_search_entry(uint16_t port_id,
 /*----------------------------------------------------------------------------*/
 int iat_evict_entry(uint16_t port_id,
                     uint16_t queue_id,
-                    struct four_tuple *key);
+                    struct rte_mbuf *pkt);
 /*----------------------------------------------------------------------------*/
 void iat_flush_timeout(uint16_t port_id,
                        uint16_t queue_id);

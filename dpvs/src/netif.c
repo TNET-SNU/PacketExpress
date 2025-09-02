@@ -1796,15 +1796,15 @@ static inline uint16_t netif_rx_burst(portid_t pid, struct netif_queue_conf *qco
         /* Shoul we integrate statistics of isolated recieve lcore into packet
          * processing lcore ? No! we just leave the work to tools */
     } else {
-#if USE_CGRO
+#if USE_PX
         nrx = px_eth_rx_burst(pid, qconf->id, qconf->mbufs, NETIF_MAX_PKT_BURST);
 #else
         nrx = rte_eth_rx_burst(pid, qconf->id, qconf->mbufs, NETIF_MAX_PKT_BURST);
-#if (USE_LRO || USE_DGRO)
+#if (USE_LRO || USE_GRO)
         px_parse_batch(pid, qconf->id, qconf->mbufs, nrx,
                        !JUMBO_FRAME, 1, SEMANTIC_TEST);
 #endif
-#if USE_DGRO
+#if USE_GRO
         struct rte_gro_param gro_param = {
             .gro_types = RTE_GRO_TCP_IPV4,
             .max_flow_num = (uint16_t)NETIF_MAX_PKT_BURST,
@@ -1813,7 +1813,7 @@ static inline uint16_t netif_rx_burst(portid_t pid, struct netif_queue_conf *qco
         };
         nrx = rte_gro_reassemble_burst(qconf->mbufs, nrx, &gro_param);
 #endif
-        px_update_rx_stats(pid, qconf->id, qconf->mbufs, nrx);
+        px_stat_update_rx(pid, qconf->id, qconf->mbufs, nrx);
 #endif
     }
 
@@ -2154,7 +2154,7 @@ static inline void netif_tx_burst(lcoreid_t cid, portid_t pid, queueid_t qindex)
 #if USE_LINK
     px_unlink_and_uso(txq->mbufs, txq->len, NULL);
 #endif
-#if USE_CGRO || USE_LRO || USE_DGRO
+#if USE_PX || USE_LRO || USE_GRO
     px_setup_tso_burst(pid, txq->id, txq->mbufs, txq->len, SEMANTIC_TEST);
 #endif
     ntx = rte_eth_tx_burst(pid, txq->id, txq->mbufs, txq->len);
@@ -3134,7 +3134,7 @@ static int __netif_update_rss_reta(struct netif_port *port)
         reta_conf[reta_id].mask = UINT64_MAX;
         reta_conf[reta_id].reta[reta_pos] = (uint16_t)(rssq[i % nrssq]);
     }
-#if USE_CGRO
+#if USE_PX
     if (px_eth_dev_rss_reta_update(port->id, reta_conf, port->dev_info.reta_size))
 #else
     if (rte_eth_dev_rss_reta_update(port->id, reta_conf, port->dev_info.reta_size))
@@ -3664,7 +3664,7 @@ int netif_get_stats(struct netif_port *dev, struct rte_eth_stats *stats)
     if (dev->netif_ops->op_get_stats)
         return dev->netif_ops->op_get_stats(dev, stats);
 
-#if USE_CGRO
+#if USE_PX
     err = px_eth_stats_get((uint8_t)dev->id, stats);
 #else
     err = rte_eth_stats_get((uint8_t)dev->id, stats);
@@ -4013,7 +4013,7 @@ int netif_port_start(struct netif_port *port)
 #else
                                  0,
 #endif
-#if USE_CGRO || USE_DGRO
+#if USE_PX || USE_GRO
                                  1,
 #else
                                  0,
@@ -4029,21 +4029,18 @@ int netif_port_start(struct netif_port *port)
                                  0
 #endif
                                  );
-#if (USE_CGRO || NICMEM || NUM_HAIRPIN_Q)
+#if (USE_PX || NICMEM || NUM_HAIRPIN_Q)
     ret = px_eth_dev_configure(port->id,
                                port->nrxq,
                                port->ntxq,
-#if USE_CGRO
-                               NUM_LATENT_RXQ,
-#else
-                               1,
-#endif
+                               0,
+                               0,
 #if NICMEM
                                port->rxq_desc_nb,
 #else
                                0,
 #endif
-#if USE_CGRO
+#if USE_PX
                                CUTOFF_NS,
 #else
                                0,
@@ -4073,7 +4070,7 @@ int netif_port_start(struct netif_port *port)
     // setup rx queues
     if (port->nrxq > 0) {
         for (qid = 0; qid < port->nrxq; qid++) {
-#if USE_CGRO || NICMEM
+#if USE_PX || NICMEM
             ret = px_eth_rx_queue_setup(port->id, qid, port->rxq_desc_nb,
                                         port->socket, NULL,
                                         pktmbuf_pool[port->socket]);
@@ -4125,26 +4122,29 @@ int netif_port_start(struct netif_port *port)
     // build port-queue-lcore mapping array
     build_port_queue_lcore_map();
 
-#if USE_CGRO
-    // start PX
-    ret = px_init(port->id,
-                  NETIF_MAX_PKT_BURST,
-                  !JUMBO_FRAME ? 4096 : 0,
-                  CUTOFF_NS ? 4096: 0,
-                  NULL, NULL, USE_LINK, SEMANTIC_TEST);
-    if (ret < 0) {
-        RTE_LOG(ERR, NETIF, "%s: fail to start PX on %s\n",
-                __func__, port->name);
-        return EDPVS_DPDKAPIFAIL;
-    }
-#endif
-
     // start the device
     ret = rte_eth_dev_start(port->id);
     if (ret < 0) {
         RTE_LOG(ERR, NETIF, "%s: fail to start %s\n", __func__, port->name);
         return EDPVS_DPDKAPIFAIL;
     }
+
+#if USE_PX
+    // start PX
+    ret = px_init(port->id,
+                  NETIF_MAX_PKT_BURST,
+                  !JUMBO_FRAME ? 8192 : 0,
+                  CUTOFF_NS ? 8192 : 0,
+                  NULL,
+                  NULL,
+                  USE_LINK,
+                  SEMANTIC_TEST);
+    if (ret < 0) {
+        RTE_LOG(ERR, NETIF, "%s: fail to start PX on %s\n",
+                __func__, port->name);
+        return EDPVS_DPDKAPIFAIL;
+    }
+#endif
 
     // wait the device link up
     RTE_LOG(INFO, NETIF, "Waiting for %s link up, be patient ...\n", port->name);
@@ -4196,7 +4196,6 @@ int netif_port_start(struct netif_port *port)
     if ((ret = netif_update_rss_reta(port)) != EDPVS_OK)
         RTE_LOG(WARNING, NETIF, "%s: %s update rss reta failed (cause: %s)\n",
                 __func__, port->name, dpvs_strerror(ret));
-    (void)netif_update_rss_reta;
 
     return EDPVS_OK;
 }
@@ -4211,7 +4210,7 @@ int netif_port_stop(struct netif_port *port)
     if (kni_dev_exist(port))
         kni_del_dev(port);
 
-#if USE_CGRO
+#if USE_PX
     px_deinit(port->id);
 #endif
     rte_eth_dev_stop(port->id);

@@ -4,46 +4,51 @@
 static struct cache_manager g_cache_manager[RTE_MAX_ETHPORTS];
 extern struct px_dev g_px_dev[RTE_MAX_ETHPORTS];
 /*----------------------------------------------------------------------------*/
-int get_nic_cached_size(int port_id)
+int get_nic_cached_size(uint16_t port_id)
 {
     return g_cache_manager[port_id].current_cached_size;
 }
 /*----------------------------------------------------------------------------*/
-void incr_temp_cached_size(int port_id)
+void incr_temp_cached_size(uint16_t port_id)
 {
     g_cache_manager[port_id].temp_cached_size++;
 }
 /*----------------------------------------------------------------------------*/
-void incr_temp_evicted_size(int port_id)
+void incr_temp_evicted_size(uint16_t port_id)
 {
     g_cache_manager[port_id].temp_evicted_size++;
 }
 /*----------------------------------------------------------------------------*/
-void lru_queue_print_all(int port_id)
+void lru_queue_print_all(uint16_t port_id)
 {
     struct cache_manager *cm = &g_cache_manager[port_id];
     struct ri_node *node = cm->head.next;
-    printf("[P%2d] NIC-cached rule num: %lu, "
-           "Ever NIC-cached rule num: %lu, "
-           "Ever NIC-evicted rule num: %lu, "
-           "Current NIC-cached rule num: %ld\n",
-           port_id, cm->current_cached_size,
-           cm->total_cached_size,
-           cm->total_evicted_size,
-           cm->total_cached_size - cm->total_evicted_size);
+    fprintf(stdout,
+            "[P%2d] "
+            "NIC-cached rule num: %lu, "
+            "Ever NIC-cached rule num: %lu, "
+            "Ever NIC-evicted rule num: %lu, "
+            "Current NIC-cached rule num: %ld\n",
+            port_id,
+            cm->current_cached_size,
+            cm->total_cached_size,
+            cm->total_evicted_size,
+            cm->total_cached_size - cm->total_evicted_size);
     while (node->flow)
     {
-        px_tuple_dump(&node->key);
+        px_dump_tuple(&node->key);
         node = node->next;
         if (node->flow)
         {
-            printf(" -> ");
+            fprintf(stdout, " -> ");
         }
     }
-    printf("\n");
+    fprintf(stdout, "\n");
 }
 /*----------------------------------------------------------------------------*/
-void lru_queue_init(int port_id, size_t num, int optout)
+void lru_queue_init(uint16_t port_id,
+                    size_t num,
+                    int optout)
 {
     struct cache_manager *cm = &g_cache_manager[port_id];
     cm->cache_size = num;
@@ -60,7 +65,7 @@ void lru_queue_init(int port_id, size_t num, int optout)
     cm->init = 1;
 }
 /*----------------------------------------------------------------------------*/
-int lru_queue_insert_and_destroy_evicted(int port_id,
+int lru_queue_insert_and_destroy_evicted(uint16_t port_id,
                                          struct ri_node *node)
 {
     struct cache_manager *cm = &g_cache_manager[port_id];
@@ -72,14 +77,14 @@ int lru_queue_insert_and_destroy_evicted(int port_id,
     if (evicted)
     {
         /* if another one evicted, destroy its offload flow rule */
-        // if (destroy_flow_async(port_id, evicted->flow) < 0) {
-        if (px_destroy_flow(port_id, evicted->flow) < 0)
+        // if (px_flow_destroy_async(port_id, evicted->flow) < 0) {
+        if (px_flow_destroy(port_id, evicted->flow) < 0)
         {
             return -1;
         }
         cm->temp_evicted_size++;
         evicted->flow = NULL;
-        // printf("another flow is evicted!\n\n");
+        // fprintf(stdout, "another flow is evicted!\n\n");
     }
 
     return 0;
@@ -87,7 +92,7 @@ int lru_queue_insert_and_destroy_evicted(int port_id,
 /*----------------------------------------------------------------------------*/
 // returns least frequent entry by querying
 struct ri_node *
-lru_queue_find_smallest(int port_id)
+lru_queue_find_smallest(uint16_t port_id)
 {
     struct cache_manager *cm = &g_cache_manager[port_id];
     struct ri_node *iter, *min_node = NULL;
@@ -98,7 +103,7 @@ lru_queue_find_smallest(int port_id)
     /* find the smallest flow from tail */
     for (iter = cm->tail.prev; iter != cm->head.next; iter = iter->prev)
     {
-        if (px_query_flow(port_id, iter->flow, &result) < 0)
+        if (px_flow_query(port_id, iter->flow, &result) < 0)
         {
             return NULL;
         }
@@ -134,7 +139,8 @@ lru_queue_find_smallest(int port_id)
 }
 /*----------------------------------------------------------------------------*/
 // called when rule is already in LRU queue
-void lru_queue_move_to_front(int port_id, struct ri_node *node)
+void lru_queue_move_to_front(uint16_t port_id,
+                             struct ri_node *node)
 {
     struct cache_manager *cm = &g_cache_manager[port_id];
 
@@ -152,7 +158,8 @@ void lru_queue_move_to_front(int port_id, struct ri_node *node)
 }
 /*----------------------------------------------------------------------------*/
 // returns evicted entry's key pattern
-void lru_queue_evict(int port_id, struct ri_node *node)
+void lru_queue_evict(uint16_t port_id,
+                     struct ri_node *node)
 {
     struct cache_manager *cm = &g_cache_manager[port_id];
     // 1. remove
@@ -164,7 +171,8 @@ void lru_queue_evict(int port_id, struct ri_node *node)
 /*----------------------------------------------------------------------------*/
 // returns evicted entry
 struct ri_node *
-lru_queue_insert(int port_id, struct ri_node *node)
+lru_queue_insert(uint16_t port_id,
+                 struct ri_node *node)
 {
     struct cache_manager *cm = &g_cache_manager[port_id];
     struct ri_node *evicted;
@@ -210,7 +218,7 @@ lru_queue_insert(int port_id, struct ri_node *node)
 /*----------------------------------------------------------------------------*/
 // returns most recent flow rule
 struct ri_node *
-lru_queue_get_most_recent(int port_id)
+lru_queue_get_most_recent(uint16_t port_id)
 {
     struct cache_manager *cm = &g_cache_manager[port_id];
     return cm->head.next;
@@ -218,18 +226,18 @@ lru_queue_get_most_recent(int port_id)
 /*----------------------------------------------------------------------------*/
 // returns least recent flow rule
 struct ri_node *
-lru_queue_get_least_recent(int port_id)
+lru_queue_get_least_recent(uint16_t port_id)
 {
     struct cache_manager *cm = &g_cache_manager[port_id];
     return cm->tail.prev;
 }
 /*----------------------------------------------------------------------------*/
-int check_stat_reset(int port_id)
+int check_stat_reset(uint16_t port_id)
 {
     return g_cache_manager[port_id].reset;
 }
 /*----------------------------------------------------------------------------*/
-void reset_stat(int port_id)
+void reset_stat(uint16_t port_id)
 {
     g_cache_manager[port_id].temp_cached_size = 0;
     g_cache_manager[port_id].temp_evicted_size = 0;
@@ -239,9 +247,9 @@ void reset_stat(int port_id)
 void print_cache_stats(void)
 {
     struct cache_manager *iter, total = {0};
-    int port_id;
-    static int initialized_hairpin = 0;
+    uint16_t port_id;
     uint16_t port_num = rte_eth_dev_count_avail();
+    static int initialized_hairpin = 0;
 
     for (port_id = 0; port_id < port_num; port_id++)
     {
@@ -251,13 +259,14 @@ void print_cache_stats(void)
         }
         iter = &g_cache_manager[port_id];
 
-        printf(" |-[P%2d] %ld/sec, cur: %lu, +: %lu, -: %lu, +-: %lu\n",
-               port_id,
-               (iter->temp_cached_size + iter->temp_evicted_size),
-               iter->current_cached_size,
-               iter->total_cached_size,
-               iter->total_evicted_size,
-               (iter->total_cached_size - iter->total_evicted_size));
+        fprintf(stdout,
+                " |-[P%2d] %ld/sec, cur: %lu, +: %lu, -: %lu, +-: %lu\n",
+                port_id,
+                (iter->temp_cached_size + iter->temp_evicted_size),
+                iter->current_cached_size,
+                iter->total_cached_size,
+                iter->total_evicted_size,
+                (iter->total_cached_size - iter->total_evicted_size));
 
         total.temp_cached_size += iter->temp_cached_size;
         total.temp_evicted_size += iter->temp_evicted_size;
@@ -275,11 +284,12 @@ void print_cache_stats(void)
     {
         return;
     }
-    printf("[   TOTAL   ] %ld/sec, cur: %lu, +: %lu, -: %lu, +-: %lu\n",
-           (total.temp_cached_size + total.temp_evicted_size),
-           total.current_cached_size,
-           total.total_cached_size,
-           total.total_evicted_size,
-           (total.total_cached_size - total.total_evicted_size));
+    fprintf(stdout,
+            "[   TOTAL   ] %ld/sec, cur: %lu, +: %lu, -: %lu, +-: %lu\n",
+            (total.temp_cached_size + total.temp_evicted_size),
+            total.current_cached_size,
+            total.total_cached_size,
+            total.total_evicted_size,
+            (total.total_cached_size - total.total_evicted_size));
 }
 /*----------------------------------------------------------------------------*/

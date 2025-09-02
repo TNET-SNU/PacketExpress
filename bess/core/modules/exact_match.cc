@@ -331,20 +331,9 @@ void ExactMatch::ProcessBatch(Context *ctx, bess::PacketBatch *batch) {
   Value default_value(default_gate);
   ValueTuple *res[cnt];
 
-#ifdef LARGE_BATCH
-#define MINIBATCH RTE_HASH_LOOKUP_BULK_MAX
-  uint64_t hit_mask[bess::PacketBatch::kMaxBurst / MINIBATCH] = {0,};
-  int i;
-  for (i = 0; i < (cnt - 1) / MINIBATCH; i++)
-    hit_mask[i] = table_.Find(keys + i * MINIBATCH, res + i * MINIBATCH, MINIBATCH);
-  hit_mask[i] = table_.Find(keys + i * MINIBATCH, res + i * MINIBATCH, cnt % MINIBATCH);
-  for (int j = 0; j < cnt; j++) {
-    if ((hit_mask[j / MINIBATCH] & ((uint64_t)1ULL << (j % MINIBATCH))) == 0)
-#else
   uint64_t hit_mask = table_.Find(keys, res, cnt);
   for (int j = 0; j < cnt; j++) {
     if ((hit_mask & ((uint64_t)1ULL << j)) == 0)
-#endif
       EmitPacket(ctx, batch->pkts()[j], default_gate);
     else {
       setValues(batch->pkts()[j], res[j]->action);
@@ -397,11 +386,6 @@ void ExactMatch::RuleFieldsFromPb(
 
 CommandResponse ExactMatch::CommandAdd(
     const bess::pb::ExactMatchCommandAddArg &arg) {
-  // static int cnt = 0;
-  // printf("(exact_match) [core: %d] cnt: %d\n", sched_getcpu(), cnt++);
-  // int bs = arg.ByteSize();
-  // fwrite((void *)&bs, sizeof(int), 1, fp_);
-  // fwrite((void *)&arg, 1, arg.ByteSize(), fp_);
   Error ret = AddRule(arg);
   if (ret.first) {
     return CommandFailure(ret.first, "%s", ret.second.c_str());

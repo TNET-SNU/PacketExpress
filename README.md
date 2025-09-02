@@ -5,7 +5,7 @@ Most of the main logic is implemented as a DPDK library. Take a look.
 ## Prerequisites
 Use Ubuntu 22.04.
    ```Bash
-   sudo apt install gcc g++ make autoconf automake curl meson ninja pkgconf git unzip ca-certificates apt-transport-https \
+   sudo apt install gcc g++ make autoconf automake curl meson ninja-build pkgconf git unzip ca-certificates apt-transport-https \
                   iproute2 iptables iputils-ping tcpdump python-is-python3 python3-pip python3-pyelftools golang-go protobuf-compiler-grpc \
                   libtool libprotobuf-dev libgrpc++-dev libzmq3-dev libjsoncpp-dev libgoogle-glog0v5 libgoogle-glog-dev libzmq5 \
                   libunwind-dev liblzma-dev libpcap-dev libssl-dev libnuma-dev libgflags-dev libgraph-easy-perl libgtest-dev \

@@ -23,7 +23,6 @@ extern "C"
 #include "rte_thash.h"
 /*----------------------------------------------------------------------------*/
 #define LIMIT_64K 0
-#define LIMIT_NB_SEGS 1
 
 #define INVALID_INDEX UINT16_MAX
 #define MAX_TCP_HLEN 60
@@ -68,17 +67,17 @@ struct px_item
      */
     uint16_t next_item_idx;
 
-    /* for stall timeout */
+    /* for stash timeout */
     uint64_t timestamp;
 };
 
-struct px_stall
+struct px_stash
 {
     /* current stalled item number */
-    /* since stalling is stateful, we keep per-latent-queue stall num */
+    /* since stalling is stateful, we keep per-latent-queue stash num */
     uint16_t num;
     /* array of stalled item array */
-    /* since stalling is stateful, we keep per-latent-queue stall array */
+    /* since stalling is stateful, we keep per-latent-queue stash array */
     struct px_item *items;
 };
 
@@ -92,11 +91,26 @@ struct px_ctx
     uint16_t port_id;
     uint16_t queue_id;
 
+    uint16_t num_rxq;
+    uint16_t num_rxq_incr;
+    uint16_t prev_gear_val;
+    uint16_t gear_val;
+    uint16_t state;
+
     /*
-     * used to save current latent queue ID for stall
+     * used to save current latent queue ID for delaying in stash
      * this value is temporary and varies over context
      */
     uint16_t latent_id;
+
+    /* iMTU size */
+    uint16_t imtu_size;
+
+    /* eMTU size */
+    uint16_t emtu_size;
+
+    /* maximum number of segments for gather TX */
+    uint16_t nb_seg_max;
 
     /* bucket array */
     uint16_t *buckets;
@@ -119,14 +133,14 @@ struct px_ctx
     /* size of item, flow arrays */
     uint16_t array_size;
 
-    /* per-latent-queue stall arrays */
-    struct px_stall *stalls;
+    /* per-latent-queue stash arrays */
+    struct px_stash *stash_array;
 
-    /* for stall timeout */
+    /* for stash timeout */
     uint64_t now_ns;
 
     /*
-     * after stall time out, packets should be sent.
+     * after stash time out, packets should be sent.
      * if batch size over due to delayed packets, save them here
      */
     struct px_ring rx_ring;
@@ -592,7 +606,7 @@ px_uso_burst(struct rte_mbuf **pkts,
             /* flush */
             if (idx == nb_out)
             {
-                /* given batch is full, so enqueue to stall ring */
+                /* given batch is full, so enqueue to TX ring */
                 if (px_ring_enqueue(tx_ring, &pkt, 1) != 1)
                 {
                     /* enqueue failed, drop the packet */
@@ -612,13 +626,17 @@ px_uso_burst(struct rte_mbuf **pkts,
         seglen = rte_be_to_cpu_16(*((uint16_t *)get_payload(pkt) + 1));
 
         /* below are for debugging */
-        // if ((seglen + pkt->l3_len + pkt->l4_len > DEFAULT_eMTU) || (seglen < 512))
+        // if ((seglen + pkt->l3_len + pkt->l4_len > DEFAULT_eMTU) ||
+        //     (seglen < 512))
         // {
-        //     printf("seglen is invalid: %u\n", seglen);
-        //     printf("l2_len: %u, l3_len: %u, l4_len: %u, pkt_len: %u\n",
-        //            pkt->l2_len, pkt->l3_len, pkt->l4_len, pkt->pkt_len);
-        //     printf("data_len: %u\n",
-        //            pkt->data_len);
+        //     fprintf(stdout,
+        //             "seglen is invalid: %u\n", seglen);
+        //     fprintf(stdout,
+        //             "l2_len: %u, l3_len: %u, l4_len: %u, pkt_len: %u\n",
+        //             pkt->l2_len, pkt->l3_len, pkt->l4_len, pkt->pkt_len);
+        //     fprintf(stdout,
+        //             "data_len: %u\n",
+        //             pkt->data_len);
         //     px_hexdump("pkt dump",
         //                (uint8_t *)pkt->buf_addr + pkt->data_off,
         //                pkt->data_len);
@@ -627,7 +645,7 @@ px_uso_burst(struct rte_mbuf **pkts,
         //     continue;
         // }
 
-        segnum = ((get_data_len(pkt) - 2 * sizeof(uint16_t)) + seglen - 1) / seglen;
+        segnum = CEIL_DIV(get_data_len(pkt) - 2 * sizeof(uint16_t), seglen);
         last_seglen = (get_data_len(pkt) - 2 * sizeof(uint16_t)) % seglen;
 
         /* update header */
@@ -644,16 +662,22 @@ px_uso_burst(struct rte_mbuf **pkts,
             if (last_seglen && (j == segnum - 1))
             {
                 /* last seg may have different header */
-                hdr_clone = rte_pktmbuf_copy(pkt, clone_pool, 0, get_hdr_len(pkt));
+                hdr_clone = rte_pktmbuf_copy(pkt,
+                                             clone_pool,
+                                             0,
+                                             get_hdr_len(pkt));
                 if (!hdr_clone)
                 {
                     fprintf(stderr, "hdr clone failed\n");
                     continue;
                 }
                 iplen = get_ip_len(hdr_clone);
-                *iplen = rte_cpu_to_be_16(pkt->l3_len + pkt->l4_len + last_seglen);
+                *iplen = rte_cpu_to_be_16(pkt->l3_len +
+                                          pkt->l4_len +
+                                          last_seglen);
                 udplen = get_udp_len(hdr_clone);
-                *udplen = rte_cpu_to_be_16(pkt->l4_len + last_seglen);
+                *udplen = rte_cpu_to_be_16(pkt->l4_len +
+                                           last_seglen);
                 put_sw_timestamp(hdr_clone, get_sw_timestamp(pkt));
             }
             else
@@ -683,7 +707,7 @@ px_uso_burst(struct rte_mbuf **pkts,
             /* flush hdr_clone to out buffer */
             if (idx == nb_out)
             {
-                /* given batch is full, so enqueue to stall ring */
+                /* given batch is full, so enqueue to TX ring */
                 if (px_ring_enqueue(tx_ring, &hdr_clone, 1) != 1)
                 {
                     /* enqueue failed, drop the packet */
@@ -747,7 +771,8 @@ px_eth_conf(uint16_t port_id,
 int px_eth_dev_configure(uint16_t port_id,
                          uint16_t num_rxq,
                          uint16_t num_txq,
-                         uint16_t num_rxq_incr,
+                         uint16_t imtu_size,
+                         uint16_t emtu_size,
                          uint32_t num_nicmem,
                          uint32_t cutoff_ns,
                          uint16_t hp_num_rxq,

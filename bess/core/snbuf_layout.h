@@ -71,10 +71,8 @@
 #else
 /* default value for 9000B LRO */
 // #define SNBUF_DATA 9024
-/* default value for 9000B LRO */
-// #define SNBUF_DATA 16384
-/* 65536 - 512 // 64KB LRO */
-#define SNBUF_DATA 65024
+// #define SNBUF_DATA (uint16_t)(65536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
+#define SNBUF_DATA (uint16_t)(49152 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
 #endif
 
 #define SNBUF_MBUF_OFF 0

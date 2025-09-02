@@ -382,15 +382,7 @@ void WildcardMatch::ProcessBatch(Context *ctx, bess::PacketBatch *batch) {
     }
   }
 
-#ifdef LARGE_BATCH
-#define MINIBATCH RTE_HASH_LOOKUP_BULK_MAX
-  int i;
-  for (i = 0; i < (cnt - 1) / MINIBATCH; i++)
-    LookupBulkEntry(keys + i * MINIBATCH, default_gate, i * MINIBATCH, Outgate, MINIBATCH, batch);
-  LookupBulkEntry(keys + i * MINIBATCH, default_gate, i * MINIBATCH, Outgate, cnt % MINIBATCH, batch);
-#else
   LookupBulkEntry(keys, default_gate, 0, Outgate, cnt, batch);
-#endif
   for (int j = 0; j < cnt; j++) {
     EmitPacket(ctx, batch->pkts()[j], Outgate[j]);
   }
@@ -559,8 +551,6 @@ bool WildcardMatch::DelEntry(int idx, wm_hkey_t *key) {
 
 CommandResponse WildcardMatch::CommandAdd(
     const bess::pb::WildcardMatchCommandAddArg &arg) {
-  // static int cnt = 0;
-  // printf("(wildcard_match) [core: %d] cnt: %d\n", sched_getcpu(), cnt++);
   gate_idx_t gate = arg.gate();
   int priority = arg.priority();
   wm_hkey_t key = {{0}}, temp = {{0}};
@@ -583,17 +573,12 @@ CommandResponse WildcardMatch::CommandAdd(
   data.priority = priority;
   data.ogate = gate;
 
-  // fwrite((void *)&key, sizeof(key), 1, fp_);
-  // fwrite((void *)&mask, sizeof(mask), 1, fp_);
-  // fwrite((void *)&data, sizeof(data), 1, fp_);
-
   int idx = FindTuple(&mask);
   if (idx < 0) {
     idx = AddTuple(&mask);
     if (idx < 0) {
       return CommandFailure(-idx, "failed to add a new wildcard pattern");
     }
-    printf("(add) num of tuples: %d\n", idx);
   }
   temp = key;
   struct WmData *data_t = new WmData(data);
@@ -632,33 +617,13 @@ CommandResponse WildcardMatch::CommandModify(
     if (idx < 0) {
       return CommandFailure(-idx, "failed to add a new wildcard pattern");
     }
-    printf("(mod) num of tuples: %d\n", idx);
+    fprintf(stdout, "(mod) num of tuples: %d\n", idx);
   }
   temp = key;
   struct WmData *data_t = new WmData(data);
   int ret = tuples_[idx].ht->insert_dpdk(&key, data_t);
   if (ret < 0)
     return CommandFailure(EINVAL, "failed to add a rule");
-/*----------------------------------------------------------------------------------*/
-// !!caution!! this part is programmed roughly
-  // uint32_t *ctr_id = (uint32_t *)((uint8_t *)&data.keyv + 12); // ctr_id
-  // first evict from host cache
-  // Counter::evictFromHostCache(*ctr_id);
-  // second evict from NIC cache
-  bess::Packet *evict_cmd = current_worker.packet_pool()->Alloc(14); // eth = 14
-  if (evict_cmd == nullptr)
-    return CommandFailure(EINVAL, "failed to allocate an evict CMD");
-  uint32_t *tr_key = (uint32_t *)((uint8_t *)&temp + 5); // TEID
-  if (!(*tr_key))
-    tr_key += 2; // UE IP
-  Ethernet *eth = evict_cmd->head_data<Ethernet *>();
-  eth->ether_type = (be16_t)ETH_TYPE_EVICT;
-  *(uint32_t *)eth = *tr_key;
-  if (port_->conf().admin_up) {
-    if (port_->SendPackets(0, &evict_cmd, 1) == 0)
-      bess::Packet::Free(&evict_cmd, 1);
-  }
-/*----------------------------------------------------------------------------------*/
   return CommandSuccess();
 }
 
@@ -686,22 +651,7 @@ CommandResponse WildcardMatch::CommandDelete(
 }
 
 CommandResponse WildcardMatch::CommandClear(const bess::pb::EmptyArg &) {
-  printf("received clear CMD\n");
   WildcardMatch::Clear();
-#if 0
-/*----------------------------------------------------------------------------------*/
-// !!caution!! this part is programmed roughly
-  bess::Packet *clear_cmd = current_worker.packet_pool()->Alloc(14); // eth = 14
-  if (clear_cmd == nullptr)
-    return CommandFailure(EINVAL, "failed to allocate a clear CMD");
-  Ethernet *eth = clear_cmd->head_data<Ethernet *>();
-  eth->ether_type = (be16_t)ETH_TYPE_CLEAR;
-  if (port_->conf().admin_up) {
-    if (port_->SendPackets(0, &clear_cmd, 1) == 0)
-      bess::Packet::Free(&clear_cmd, 1);
-  }
-/*----------------------------------------------------------------------------------*/
-#endif
   return CommandSuccess();
 }
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-group1=(stream1.snu.ac.kr stream3.snu.ac.kr stream5.snu.ac.kr stream7.snu.ac.kr)
+group1=(stream1.snu.ac.kr stream3.snu.ac.kr stream10.snu.ac.kr stream7.snu.ac.kr)
 group2=(stream2.snu.ac.kr stream4.snu.ac.kr stream6.snu.ac.kr stream8.snu.ac.kr)
 
 # password without echo

@@ -82,25 +82,10 @@ int main(int argc, char *argv[]) {
     PLOG(WARNING) << "LoadPlugins() failed to load from directory: "
                   << FLAGS_modules;
   }
-  
-  printf("\nDPDK_VERSION: %d.%d.%d.%d\n", RTE_VER_YEAR, RTE_VER_MONTH, RTE_VER_MINOR, RTE_VER_RELEASE);
-#if NUM_HAIRPIN_Q
-#if RTE_FLOW_ASYNC_API
-  printf("Asynchronous hairpin offload is enabled\n");
-#else
-  printf("Synchronous hairpin offload is enabled\n");
-#endif
-#else
-  printf("Hairpin offload is disabled\n");
-#endif
-  printf("number of mbufs in a pool: %d\n", FLAGS_buffers);
-  printf("\n");
 
   bess::PacketPool::CreateDefaultPools(FLAGS_buffers);
-  
-  LOG(INFO) << "Start InitDrivers";
+
   PortBuilder::InitDrivers();
-  LOG(INFO) << "End InitDrivers";
 
   {
     ApiServer server;

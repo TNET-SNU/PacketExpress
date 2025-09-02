@@ -126,10 +126,10 @@ CXXFLAGS += -D JUMBO_FRAME=0
 # Choose one of below
 
 # 1. Semantic test on
-CXXFLAGS += -D SEMANTIC_TEST=1
+# CXXFLAGS += -D SEMANTIC_TEST=1
 
 # 2. Semantic test off
-# CXXFLAGS += -D SEMANTIC_TEST=0
+CXXFLAGS += -D SEMANTIC_TEST=0
 
 ################################################################################
 
@@ -146,29 +146,19 @@ CXXFLAGS += -D USE_LRO=1
 # Choose one of below
 
 # 1. DPDK GRO on
-# CXXFLAGS += -D USE_DGRO=1
+# CXXFLAGS += -D USE_GRO=1
 
-# 2. CUSTOM GRO on, no latent RXQ, no stall
-# CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=1 -D CUTOFF_NS=0 -D USE_LINK=0
+# 2. CUSTOM GRO on, no stall
+CXXFLAGS += -D USE_PX=1 -D CUTOFF_NS=0 -D USE_LINK=0
 
-# 3. CUSTOM GRO on, no stall
-# CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D CUTOFF_NS=0 -D USE_LINK=0
+# 3. CUSTOM GRO on, stall
+# CXXFLAGS += -D USE_PX=1 -D CUTOFF_NS=120000 -D USE_LINK=0
 
-# 4. CUSTOM GRO on, stall 72us
-CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D CUTOFF_NS=108000 -D USE_LINK=0
+# 4. CUSTOM GRO + LINKING
+# CXXFLAGS += -D USE_PX=1 -D CUTOFF_NS=0 -D USE_LINK=1
 
-# 6. CUSTOM GRO + LINKING
-# CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D CUTOFF_NS=0 -D USE_LINK=1
-
-# 7. CUSTOM GRO + LINKING, stall 72us
-# CXXFLAGS += -D USE_CGRO=1 -D NUM_LATENT_RXQ=4 -D CUTOFF_NS=72000 -D USE_LINK=1
-
-################################################################################
-
-# Choose one of below
-
-# 1. Allowing batch size larger than 64
-# CXXFLAGS += -D LARGE_BATCH=1
+# 5. CUSTOM GRO + LINKING, stall
+# CXXFLAGS += -D USE_PX=1 -D CUTOFF_NS=120000 -D USE_LINK=1
 
 ################################################################################
 
@@ -188,13 +178,6 @@ CXXFLAGS += -D NUM_HAIRPIN_Q=0
 
 # 3. Hairpin on (1 queue, opt-out mode)
 # CXXFLAGS += -D NUM_HAIRPIN_Q=1 -D USE_OPTOUT=1
-
-# (not supported yet) if want to use rte_flow_async API, use below
-# To use rte_flow_async API, make sure to use DPDK version 22.11
-
-# CXXFLAGS += -D RTE_FLOW_ASYNC_API=1
-
-# CXXFLAGS += -D RTE_FLOW_MEASURE_DELAY=1
 
 ################################################################################
 

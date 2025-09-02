@@ -1,6 +1,7 @@
 #include "px_iat.h"
 /*----------------------------------------------------------------------------*/
-struct px_iat_ctx g_iat_ctx[RTE_MAX_ETHPORTS][PX_MAX_QUEUES_PER_PORT] = {0};
+struct px_iat_ctx g_iat_ctx[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
+static uint16_t g_num_cores = 0;
 static pthread_t g_iat_tid = 0;
 static volatile int g_iat_shutdown = 0;
 struct rpow_tbl_t g_rpow_tbl = {.alpha_cached = NAN};
@@ -11,12 +12,13 @@ iat_periodic_cleanup(void *arg)
 {
     uint16_t port_nb = rte_eth_dev_count_avail();
     int i, j;
-    (void)arg;
+    g_num_cores = *(uint16_t *)arg;
+    free(arg);
     while (!g_iat_shutdown)
     {
         for (i = 0; i < port_nb; i++)
         {
-            for (j = 0; j < PX_MAX_QUEUES_PER_PORT; j++)
+            for (j = 0; j < g_num_cores; j++)
             {
                 if (g_iat_ctx[i][j].initialized)
                 {
@@ -94,7 +96,9 @@ int iat_init_ctx(uint16_t port_id,
     }
 
     /* Create a new thread for periodic cleanup */
-    // if (pthread_create(&g_iat_tid, NULL, iat_periodic_cleanup, NULL) != 0)
+    // uint16_t *num_cores = calloc(1, sizeof(uint16_t));
+    // *num_cores = rte_lcore_count();
+    // if (pthread_create(&g_iat_tid, NULL, iat_periodic_cleanup, num_cores) != 0)
     // {
     //     fprintf(stderr, "Failed to create cleanup thread\n");
     //     rte_hash_free(ctx->tbl);
@@ -164,7 +168,7 @@ int iat_update_entry(uint16_t port_id,
     uint32_t nb_segs, burst_iat = 0, data_len = get_data_len(pkt);
     int i;
 
-    nb_segs = data_len / (DEFAULT_eMTU - pkt->l3_len - pkt->l4_len);
+    nb_segs = data_len / (ctx->emtu_size - pkt->l3_len - pkt->l4_len);
     if (nb_segs == 0)
     {
         nb_segs = 1; // Avoid division by zero
@@ -280,10 +284,11 @@ int iat_update_entry(uint16_t port_id,
                 // {
                 //     if (entry->avg_burst_iat > ctx->cutoff_ns)
                 //     {
-                //         printf("data_len: %6lu, burst_iat: %9lu ns, "
-                //                "nb_segs: %6lu, iat: %9u ns, data_len: %6u\n",
-                //                data_len, burst_iat,
-                //                nb_segs, entry->avg_burst_iat, entry->avg_data_len);
+                //         fprintf(stdout,
+                //                 "data_len: %6lu, burst_iat: %9lu ns, "
+                //                 "nb_segs: %6lu, iat: %9u ns, data_len: %6u\n",
+                //                 data_len, burst_iat,
+                //                 nb_segs, entry->avg_burst_iat, entry->avg_data_len);
                 //     }
                 // }
             }
@@ -340,15 +345,15 @@ int iat_search_entry(uint16_t port_id,
     {
         entry->last_update = now;
 #if WEIGHT_ON_LRO
-        *avg_data_len = DEFAULT_eMTU - pkt->l3_len - pkt->l4_len;
+        *avg_data_len = ctx->emtu_size - pkt->l3_len - pkt->l4_len;
 #else
         *avg_data_len = entry->avg_data_len;
 #endif
-        if (entry->avg_burst_iat > ctx->cutoff_ns)
-        {
-            *avg_burst_iat = ctx->cutoff_ns;
-            return 0;
-        }
+        // if (entry->avg_burst_iat > ctx->cutoff_ns)
+        // {
+        //     *avg_burst_iat = ctx->cutoff_ns;
+        //     return 0;
+        // }
         *avg_burst_iat = entry->avg_burst_iat;
 
         return 0;
@@ -360,10 +365,11 @@ int iat_search_entry(uint16_t port_id,
 /*----------------------------------------------------------------------------*/
 int iat_evict_entry(uint16_t port_id,
                     uint16_t queue_id,
-                    struct four_tuple *key)
+                    struct rte_mbuf *pkt)
 {
     struct px_iat_ctx *ctx = &g_iat_ctx[port_id][queue_id];
     struct flow_iat_entry *entry;
+    struct four_tuple *key = get_four_tuple(pkt);
 
     if (rte_hash_lookup_data(ctx->tbl, key, (void **)&entry) >= 0)
     {
@@ -407,9 +413,9 @@ void iat_flush_timeout(uint16_t port_id,
     {
         entry = (struct flow_iat_entry *)next_data;
 
-        if ((now - entry->last_update) > IAT_TIMEOUT * E9)
+        if ((now - entry->last_update) > (uint64_t)IAT_TIMEOUT * NS_PER_S)
         {
-            printf("Removing flow due to timeout\n");
+            fprintf(stdout, "Removing flow due to timeout\n");
             rte_hash_del_key(ctx->tbl, next_key);
             rte_mempool_put(ctx->pool, entry);
         }
@@ -447,8 +453,9 @@ void iat_local_stat(uint16_t port_id,
             temp_data_len += entry->avg_data_len;
             temp_count++;
 
-            // printf("  IAT stats: burst_iat: %u, data_len: %u\n",
-            //        entry->avg_burst_iat, entry->avg_data_len);
+            // fprintf(stdout,
+            //         "  IAT stats: burst_iat: %u, data_len: %u\n",
+            //         entry->avg_burst_iat, entry->avg_data_len);
         }
     }
 
@@ -460,8 +467,9 @@ void iat_local_stat(uint16_t port_id,
         return;
     }
 
-    // printf("IAT stats: burst_iat: %lu, data_len: %lu, count: %lu\n",
-    //        temp_burst_iat / temp_count, temp_data_len / temp_count, temp_count);
+    // fprintf(stdout,
+    //         "IAT stats: burst_iat: %lu, data_len: %lu, count: %lu\n",
+    //         temp_burst_iat / temp_count, temp_data_len / temp_count, temp_count);
 
     *total_burst_iat = temp_burst_iat;
     *total_data_len = temp_data_len;

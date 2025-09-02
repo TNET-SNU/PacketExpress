@@ -1,5 +1,6 @@
 #include "px_rule.h"
-struct px_rule_set g_rule_set[RTE_MAX_ETHPORTS][PX_MAX_QUEUES_PER_PORT] = {0};
+/*----------------------------------------------------------------------------*/
+struct px_rule_set g_rule_set[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
 /*----------------------------------------------------------------------------*/
 void rule_init(uint16_t port_id,
                uint16_t queue_id)
@@ -576,13 +577,13 @@ int decode_action_rule(struct decoded_action *rule,
             continue;
         }
     }
-    // printf("DECAP: %d, CONCAT: %d\n",
-    //        rule->decap_size, rule->do_concat);
+    // fprintf(stdout, "DECAP: %d, CONCAT: %d\n",
+    //         rule->decap_size, rule->do_concat);
 
     return 0;
 }
 /*----------------------------------------------------------------------------*/
-int px_add_rule(uint16_t port_id,
+int px_rule_add(uint16_t port_id,
                 uint16_t queue_id,
                 struct px_pattern *patterns,
                 int nb_patterns,
@@ -640,7 +641,7 @@ int px_add_rule(uint16_t port_id,
     return id;
 }
 /*----------------------------------------------------------------------------*/
-void px_del_rule(uint16_t port_id,
+void px_rule_del(uint16_t port_id,
                  uint16_t queue_id,
                  int px_id)
 {

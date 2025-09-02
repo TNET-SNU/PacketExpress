@@ -26,7 +26,7 @@
 #include "timer.h"
 #include "tc/tc.h"
 #include "conf/netif.h"
-#ifdef USE_CGRO
+#ifdef USE_PX
 #include "px_flow.h"
 #endif
 

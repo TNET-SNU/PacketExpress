@@ -1,4 +1,5 @@
 #include "px_link.h"
+/*----------------------------------------------------------------------------*/
 extern struct px_dev g_px_dev[RTE_MAX_ETHPORTS];
 /*----------------------------------------------------------------------------*/
 void reflect_four_tuple(struct rte_mbuf *pkt,
@@ -145,11 +146,11 @@ px_unlink_and_uso(struct rte_mbuf **pkts,
                 /* below are for debugging */
                 // if ((seglen + pkt->l3_len + pkt->l4_len > DEFAULT_eMTU) || (seglen < 512))
                 // {
-                //     printf("seglen is invalid: %u\n", seglen);
-                //     printf("l2_len: %u, l3_len: %u, l4_len: %u, pkt_len: %u\n",
-                //            pkt->l2_len, pkt->l3_len, pkt->l4_len, pkt->pkt_len);
-                //     printf("data_len: %u\n",
-                //            pkt->data_len);
+                //     fprintf(stdout, "seglen is invalid: %u\n", seglen);
+                //     fprintf(stdout, "l2_len: %u, l3_len: %u, l4_len: %u, pkt_len: %u\n",
+                //             pkt->l2_len, pkt->l3_len, pkt->l4_len, pkt->pkt_len);
+                //     fprintf(stdout, "data_len: %u\n",
+                //             pkt->data_len);
                 //     px_hexdump("pkt dump",
                 //                (uint8_t *)pkt->buf_addr + pkt->data_off,
                 //                pkt->data_len);
@@ -158,7 +159,7 @@ px_unlink_and_uso(struct rte_mbuf **pkts,
                 //     continue;
                 // }
 
-                segnum = ((get_data_len(pkt) - 2 * sizeof(uint16_t)) + seglen - 1) / seglen;
+                segnum = CEIL_DIV(get_data_len(pkt) - 2 * sizeof(uint16_t), seglen);
                 last_seglen = (get_data_len(pkt) - 2 * sizeof(uint16_t)) % seglen;
 
                 /* update header */

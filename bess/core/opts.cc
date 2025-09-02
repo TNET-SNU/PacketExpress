@@ -109,8 +109,8 @@ static bool ValidateMegabytesPerSocket(const char *, int32_t value) {
 
   return true;
 }
-DEFINE_int32(m, 32768,
-// DEFINE_int32(m, 65536,
+// DEFINE_int32(m, 32768,
+DEFINE_int32(m, 65536,
              "Specifies per-socket hugepages to allocate (in MBs). "
              "If set to 0, no hugepage is used");
 static const bool _m_dummy [[maybe_unused]] =
@@ -127,7 +127,7 @@ static bool ValidateBuffersPerSocket(const char *, int32_t value) {
   }
   return true;
 }
-DEFINE_int32(buffers, 262144,
+DEFINE_int32(buffers, 1024 * 1024,
              "Specifies how many packet buffers to allocate per socket,"
              " must be a power of 2.");
 static const bool _buffers_dummy [[maybe_unused]] =

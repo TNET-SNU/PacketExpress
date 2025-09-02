@@ -13,7 +13,6 @@ extern "C"
 struct px_nicmem_ctx
 {
     uint16_t socket_id;
-    uint16_t port_id;
 	uint16_t pkt_size;
 	uint32_t num_nicmem;
 	struct rte_eth_dev_info dev_info;
