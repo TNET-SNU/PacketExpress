@@ -3,8 +3,8 @@
 struct px_hairpin_ctx g_hp_ctx[RTE_MAX_ETHPORTS] = {0};
 /*----------------------------------------------------------------------------*/
 /* below are handles for offload thread */
-static pthread_t g_offload_worker_thread_tid[RTE_MAX_ETHPORTS];
-static int g_thread_core_id = -1;
+static pthread_t g_hairpin_manager_thread_id[RTE_MAX_ETHPORTS];
+static int g_haripin_manager_core_id = -1;
 static uint16_t g_num_ports = 0;
 static uint16_t g_num_cores = 0;
 static volatile int g_shutdown = 0;
@@ -248,9 +248,12 @@ px_flow_slave_main(void *arg)
     uint16_t core_id, port_id = *(uint16_t *)arg;
     int ret;
 
-    /* slave core id and ring queue id are given as arg */
+    /**
+     * responsible port id for this thread and
+     * ring queue id are given as arg
+     */
     CPU_ZERO(&set);
-    CPU_SET(g_thread_core_id, &set);
+    CPU_SET(g_haripin_manager_core_id, &set);
 
     if (pthread_setaffinity_np(pthread_self(), sizeof(set), &set) == -1)
     {
@@ -275,17 +278,17 @@ px_flow_slave_main(void *arg)
                 gear = req->node;
 
                 /* below is for debugging */
-                fprintf(stdout,
-                        "[%s] [port %d] [core %d] "
-                        "req: %p, "
-                        "cmd: %d, "
-                        "node: %p\n",
-                        __func__,
-                        port_id,
-                        core_id,
-                        req,
-                        req->cmd,
-                        req->node);
+                // fprintf(stdout,
+                //         "[%s] [port %d] [core %d] "
+                //         "req: %p, "
+                //         "cmd: %d, "
+                //         "node: %p\n",
+                //         __func__,
+                //         port_id,
+                //         core_id,
+                //         req,
+                //         req->cmd,
+                //         req->node);
 
                 /* new request is on ring */
                 // if (req->cmd == NOOP ||
@@ -537,6 +540,7 @@ px_flow_slave_main(void *arg)
                                 "for gear %d (val %d)\n",
                                 gear->index, gear->gear_val);
                     }
+                    px_latent_gear_reset_confirm(port_id);
 #if USE_CQ
                     /* send response */
                     resp.cmd = GEAR_DOWN_DONE;
@@ -747,21 +751,23 @@ int px_async_start(uint16_t thread_core_id,
     // fprintf(stdout,
     //         "g_num_ports: %d, g_num_cores: %d\n", g_num_ports, g_num_cores);
 
-    if (g_thread_core_id != -1)
+    if (g_haripin_manager_core_id != -1)
     {
         /* already initialized */
         return 0;
     }
 
-    g_thread_core_id = thread_core_id;
+    g_haripin_manager_core_id = thread_core_id;
 
     /* create px_flow threads per port */
     g_shutdown = 0;
     for (port_id = 0; port_id < g_num_ports; port_id++)
     {
         arg[port_id] = port_id;
-        ret = pthread_create(&g_offload_worker_thread_tid[port_id], NULL,
-                             px_flow_slave_main, &arg[port_id]);
+        ret = pthread_create(&g_hairpin_manager_thread_id[port_id],
+                             NULL,
+                             px_flow_slave_main,
+                             &arg[port_id]);
         if (ret < 0)
         {
             perror("pthread_create() failed for worker thread!");
@@ -776,28 +782,44 @@ int px_async_start(uint16_t thread_core_id,
 
     for (core_id = 0; core_id < g_num_cores; core_id++)
     {
-        /* initialize node pool for each core */
-        ret = node_pool_create(core_id, per_core_host_cache_size);
+        /* initialize node pool for each worker core */
+        ret = node_pool_create(core_id,
+                               per_core_host_cache_size);
         if (ret < 0)
         {
             return -1;
         }
 
-        /* initialize hash table for each core */
-        ret = ht_create(core_id, per_core_host_cache_size);
+        /* initialize hash table for each worker core */
+        ret = ht_create(core_id,
+                        per_core_host_cache_size);
         if (ret < 0)
         {
             return -1;
         }
 
-        /* initialize request ring for each core */
+        /* initialize request ring for each worker core */
         for (port_id = 0; port_id < g_num_ports; port_id++)
         {
-            ret = async_qp_create(core_id, port_id, per_core_host_cache_size);
+            ret = async_qp_create(core_id,
+                                  port_id,
+                                  per_core_host_cache_size);
             if (ret < 0)
             {
                 return -1;
             }
+        }
+    }
+
+    /* initialize request ring for monitor thread */
+    for (port_id = 0; port_id < g_num_ports; port_id++)
+    {
+        ret = async_qp_create(g_haripin_manager_core_id,
+                              port_id,
+                              per_core_host_cache_size);
+        if (ret < 0)
+        {
+            return -1;
         }
     }
 
@@ -810,7 +832,7 @@ void px_async_stop(void)
     uint16_t port_id, core_id;
     int ret;
 
-    if (g_thread_core_id == -1)
+    if (g_haripin_manager_core_id == -1)
     {
         return;
     }
@@ -819,7 +841,8 @@ void px_async_stop(void)
     g_shutdown = 1;
     for (port_id = 0; port_id < g_num_ports; port_id++)
     {
-        ret = pthread_join(g_offload_worker_thread_tid[port_id], NULL);
+        ret = pthread_join(g_hairpin_manager_thread_id[port_id],
+                           NULL);
         if (ret < 0)
         {
             perror("pthread_join() failed!");
@@ -838,6 +861,13 @@ void px_async_stop(void)
         }
     }
 
-    g_thread_core_id = -1;
+    /* destroy request ring for monitor thread */
+    for (port_id = 0; port_id < g_num_ports; port_id++)
+    {
+        async_qp_destroy(g_haripin_manager_core_id,
+                         port_id);
+    }
+
+    g_haripin_manager_core_id = -1;
 }
 /*----------------------------------------------------------------------------*/

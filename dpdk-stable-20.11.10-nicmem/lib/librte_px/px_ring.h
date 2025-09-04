@@ -155,8 +155,6 @@ px_ring_dequeue(struct px_ring *ring,
         ring->head -= size;
     }
 
-    // rte_eth_tx_buffer(port_id, queue_id, 0, m_table, n);
-
     return n;
 }
 /*----------------------------------------------------------------------------*/

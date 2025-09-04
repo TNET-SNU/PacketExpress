@@ -89,7 +89,7 @@ struct resp_ring
     int tail;
 };
 
-struct rule_manager
+struct async_manager
 {
     struct rte_mempool *node_pool;
     struct rte_mempool *hte_pool;

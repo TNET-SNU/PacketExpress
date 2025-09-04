@@ -1,44 +1,84 @@
 #include "px_latent.h"
 /*----------------------------------------------------------------------------*/
 static struct px_latent_ctx g_latent_ctx[RTE_MAX_ETHPORTS] = {0};
-extern struct px_dev g_px_dev[RTE_MAX_ETHPORTS];
+static uint16_t g_num_ports = 0;
 /*----------------------------------------------------------------------------*/
 void px_latent_configure(uint16_t port_id,
                          uint16_t num_rxq,
                          uint16_t max_rxq,
                          uint16_t num_txq,
+                         uint16_t reta_size,
                          struct rte_eth_conf *eth_conf)
 {
     struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
     struct px_latent_gear *gear;
-    uint16_t i, j;
+    uint16_t max_gear_per_rxq, gear_per_rxq;
+    uint16_t gear_idx, i, j;
+
+    /* set maximum port number */
+    if (!g_num_ports)
+    {
+        g_num_ports = rte_eth_dev_count_avail();
+    }
 
     latent_ctx->num_rxq = num_rxq;
     latent_ctx->num_txq = num_txq;
     latent_ctx->max_rxq = max_rxq;
-    latent_ctx->num_gears = 2;
-    latent_ctx->reta_size = g_px_dev[port_id].dev_info.reta_size;
+    latent_ctx->num_gears = 4;
+    latent_ctx->reta_size = reta_size;
+    max_gear_per_rxq = max_rxq / num_rxq;
 
-    for (i = 0; i < latent_ctx->num_gears; i++)
+    /* prepare available gears */
+    for (gear_idx = 0; gear_idx < latent_ctx->num_gears; gear_idx++)
     {
-        gear = &latent_ctx->gears[i];
+        gear = &latent_ctx->gears[gear_idx];
 
         /* set gear */
-        gear->index = i;
-        gear->gear_val = 1 << (3 * i + 3); // 8, 64
+        gear->index = gear_idx;
+        gear->gear_val = 1 << (2 * gear_idx + 1); // 2, 8, 32, 128
 
+        /* first of all, check if gear is valid for the given max_rxq */
         if (gear->gear_val > latent_ctx->max_rxq)
         {
             /* invalid gear */
-            break;
+            gear->valid = 0;
+            fprintf(stdout,
+                    "  gear %d invalid, gear_val: %d\n",
+                    gear_idx, gear->gear_val);
+            continue;
         }
+
+        /* then, check if gear is valid for the given num_rxq */
+        gear_per_rxq = gear->gear_val / latent_ctx->num_rxq;
+        if (!gear_per_rxq)
+        {
+            gear->valid = 0;
+            fprintf(stdout,
+                    "  gear %d invalid, gear_val: %d\n",
+                    gear_idx, gear->gear_val);
+            continue;
+        }
+        gear->valid = 1;
+
+        /* initialize DMA RSS queues to use 1 latent RXQ */
+        for (i = 0; i < latent_ctx->num_rxq; i++)
+        {
+            for (j = 0; j < max_gear_per_rxq; j++)
+            {
+                gear->rss_queues[i * max_gear_per_rxq + j] =
+                    i * max_gear_per_rxq + j % gear_per_rxq;
+            }
+        }
+
+        /* below is for debugging */
+        // px_dump_rss_queue(gear->rss_queues, max_rxq);
 
         /* make default flow attributes. */
         gear->attr = (struct rte_flow_attr){
             /* set the rule on the main group. */
             .group = 0,
             /* give the offload rule higher priority */
-            .priority = i,
+            .priority = gear_idx,
             /* Rx flow. */
             .ingress = 1,
             .egress = 0,
@@ -75,188 +115,207 @@ void px_latent_configure(uint16_t port_id,
             .queue_num = latent_ctx->max_rxq,
             .key = eth_conf->rx_adv_conf.rss_conf.rss_key,
             .queue = gear->rss_queues};
-
-        /* initialize DMA RSS queues to use 1 latent RXQ */
-        for (j = 0; j < latent_ctx->max_rxq; j++)
-        {
-            gear->rss_queues[j] = j % gear->gear_val;
-        }
     }
+
+    latent_ctx->flow_initialized = 1;
 }
 /*----------------------------------------------------------------------------*/
-int px_latent_gear_down(uint16_t core_id,
-                        uint16_t port_id)
+int px_latent_gear_to_min(uint16_t port_id)
 {
     struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
     struct px_latent_gear *gear;
-    struct request req;
-    uint16_t gear_val = px_latent_gear_val(port_id);
-    // fprintf(stdout,
-    //         "[%s:%s:%d] [port %d] [core %d] "
-    //         "current gear_val: %d\n",
-    //         __FILE__, __func__, __LINE__,
-    //         port_id, core_id, gear_val);
+    struct rte_flow_error error;
+    int i;
 
-    if (!gear_val)
+    if (!latent_ctx->flow_initialized || !latent_ctx->num_gears)
     {
-        /* not initialized yet */
-        return 0;
+        fprintf(stdout,
+                "flow not initialized");
+        return -1;
     }
 
-    /* check maximum gear is larger than latent_ctx->gears[1].gear_val */
-    if (latent_ctx->max_rxq / latent_ctx->num_rxq >
-        latent_ctx->gears[1].gear_val)
+    /* create rule from the highest gear */
+    for (i = latent_ctx->num_gears - 1; i >= 0; i--)
     {
-        /**
-         * if larger than latent_ctx->gears[1].gear_val,
-         * we can use latent_ctx->gears[1].gear_val for intermediate gear
-         */
-        if (gear_val == latent_ctx->max_rxq / latent_ctx->num_rxq)
+        gear = &latent_ctx->gears[i];
+        if (gear->gear_val < latent_ctx->num_rxq)
         {
-            gear = &latent_ctx->gears[1];
+            if (i < latent_ctx->num_gears - 1)
+            {
+                latent_ctx->min_gear_idx = i + 1;
+            }
+            break;
         }
-        else if (gear_val == latent_ctx->gears[1].gear_val)
-        {
-            gear = &latent_ctx->gears[0];
-        }
-        else if (gear_val == latent_ctx->gears[0].gear_val)
-        {
-            /* already in lowest gear */
-            return 0;
-        }
-        else
-        {
-            /* it should not happen */
-            fprintf(stderr,
-                    "Invalid gear: %d, "
-                    "candidate: %d, %d\n",
-                    gear_val,
-                    latent_ctx->gears[0].gear_val,
-                    latent_ctx->gears[1].gear_val);
-            assert(0);
-        }
-    }
-    else
-    {
-        /**
-         * if less than or equal to latent_ctx->gears[1].gear_val,
-         * we skip latent_ctx->gears[1].gear_val gear
-         */
-        if (gear_val == latent_ctx->max_rxq / latent_ctx->num_rxq)
-        {
-            gear = &latent_ctx->gears[0];
-        }
-        else if (gear_val == latent_ctx->gears[0].gear_val)
-        {
-            /* already in lowest gear */
-            return 0;
-        }
-        else
-        {
-            /* it should not happen */
-            fprintf(stderr,
-                    "Invalid gear: %d, "
-                    "candidate: %d, %d\n",
-                    gear_val,
-                    latent_ctx->gears[0].gear_val,
-                    latent_ctx->gears[1].gear_val);
-            assert(0);
-        }
-    }
-
-    req = (struct request){
-        .cmd = GEAR_DOWN,
-        .node = gear,
-    };
-
-    return async_request_put(core_id, port_id, &req);
-}
-/*----------------------------------------------------------------------------*/
-int px_latent_gear_up(uint16_t core_id,
-                      uint16_t port_id)
-{
-    struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
-    struct px_latent_gear *gear;
-    struct request req;
-    uint16_t gear_val = px_latent_gear_val(port_id);
-    // fprintf(stdout,
-    //         "[%s:%s:%d] [port %d] [core %d] "
-    //         "current gear_val: %d\n",
-    //         __FILE__, __func__, __LINE__,
-    //         port_id, core_id, gear_val);
-
-    if (!gear_val)
-    {
-        /* not initialized yet */
-        return 0;
-    }
-
-    /* check maximum gear is larger than latent_ctx->gears[1].gear_val */
-    if (latent_ctx->max_rxq / latent_ctx->num_rxq > 
-        latent_ctx->gears[1].gear_val)
-    {
-        /**
-         * if larger than latent_ctx->gears[1].gear_val,
-         * we can use latent_ctx->gears[1].gear_val for intermediate gear
-         */
-        if (gear_val == latent_ctx->gears[0].gear_val)
-        {
-            gear = &latent_ctx->gears[0];
-        }
-        else if (gear_val == latent_ctx->gears[1].gear_val)
-        {
-            gear = &latent_ctx->gears[1];
-        }
-        else if (gear_val == latent_ctx->max_rxq / latent_ctx->num_rxq)
-        {
-            /* already in highest gear */
-            return 0;
-        }
-        else
-        {
-            /* it should not happen */
-            fprintf(stderr,
-                    "Invalid gear: %d, "
-                    "candidate: %d, %d\n",
-                    gear_val,
-                    latent_ctx->gears[0].gear_val,
-                    latent_ctx->gears[1].gear_val);
-            assert(0);
-        }
-    }
-    else
-    {
-        /**
-         * if less than or equal to latent_ctx->gears[1].gear_val,
-         * we skip latent_ctx->gears[1].gear_val gear
-         */
-        if (gear_val == latent_ctx->gears[0].gear_val)
-        {
-            gear = &latent_ctx->gears[0];
-        }
-        else if (gear_val == latent_ctx->max_rxq / latent_ctx->num_rxq)
-        {
-            /* already in highest gear */
-            return 0;
-        }
-        else
+        gear->flow =
+            rte_flow_create(port_id,
+                            &gear->attr,
+                            gear->patterns,
+                            gear->actions,
+                            &error);
+        if (!gear->flow)
         {
             fprintf(stderr,
-                    "Invalid gear: %d, "
-                    "candidate: %d, %d\n",
-                    gear_val,
-                    latent_ctx->gears[0].gear_val,
-                    latent_ctx->gears[1].gear_val);
+                    "rte_flow_create failed "
+                    "for gear %d (val %d), "
+                    "error: %s",
+                    gear->index, gear->gear_val,
+                    error.message);
             return -1;
         }
     }
 
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
+int px_latent_gear_shift_down(uint16_t core_id,
+                              uint16_t port_id)
+{
+    struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
+    struct px_latent_gear *gear, *target = NULL;
+    struct request req;
+    uint16_t cur_gear_val = px_latent_gear_val(port_id);
+    uint16_t num_gears = latent_ctx->num_gears;
+    uint16_t i;
+    int ret;
+    // fprintf(stdout,
+    //         "[%s:%s:%d] [port %d] [core %d] "
+    //         "current gear_val: %d\n",
+    //         __FILE__, __func__, __LINE__,
+    //         port_id, core_id, cur_gear_val);
+
+    /* check if initialized */
+    if (!latent_ctx->flow_initialized)
+    {
+        /* not initialized yet */
+        return -1;
+    }
+
+    /* check if current gear is highest gear */
+    if (cur_gear_val == latent_ctx->max_rxq)
+    {
+        gear = &latent_ctx->gears[num_gears - 1];
+        if (gear->gear_val < latent_ctx->num_rxq)
+        {
+            /* no valid gear found */
+            return -1;
+        }
+        target = gear;
+        goto Found_target;
+    }
+
+    /* check if already lowest gear */
+    if (cur_gear_val == latent_ctx->gears[0].gear_val)
+    {
+        /* already in lowest gear */
+        return -1;
+    }
+
+    /**
+     * if larger than latent_ctx->gears[num_gears - 1].gear_val,
+     * we can use latent_ctx->gears[num_gears - 1].gear_val
+     * for intermediate gear
+     */
+    for (i = 1; i < num_gears; i++)
+    {
+        /**
+         * skip if latent_ctx->gears[i].gear_val is
+         * smaller than latent_ctx->num_rxq
+         */
+        gear = &latent_ctx->gears[i];
+        if (gear->gear_val <= latent_ctx->num_rxq)
+        {
+            continue;
+        }
+        if (gear->gear_val == cur_gear_val)
+        {
+            target = gear - 1;
+            break;
+        }
+    }
+    if (!target)
+    {
+        /* no valid target gear found */
+        return -1;
+    }
+
+Found_target:
+
     req = (struct request){
-        .cmd = GEAR_UP,
-        .node = gear,
+        .cmd = GEAR_DOWN,
+        .node = target,
     };
 
-    return async_request_put(core_id, port_id, &req);
+    ret = async_request_put(core_id, port_id, &req);
+    if (ret < 0)
+    {
+        return -2;
+    }
+
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
+int px_latent_gear_shift_up(uint16_t core_id,
+                            uint16_t port_id)
+{
+    struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
+    struct px_latent_gear *gear, *target = NULL;
+    struct request req;
+    uint16_t cur_gear_val = px_latent_gear_val(port_id);
+    uint16_t num_gears = latent_ctx->num_gears;
+    uint16_t i;
+    int ret;
+    // fprintf(stdout,
+    //         "[%s:%s:%d] [port %d] [core %d] "
+    //         "current gear_val: %d\n",
+    //         __FILE__, __func__, __LINE__,
+    //         port_id, core_id, cur_gear_val);
+
+    /* check if initialized */
+    if (!latent_ctx->flow_initialized)
+    {
+        /* not initialized yet */
+        return -1;
+    }
+
+    /* check if current gear is highest gear */
+    if (cur_gear_val == latent_ctx->max_rxq)
+    {
+        /* already in highest gear */
+        return -1;
+    }
+
+    /**
+     * if larger than latent_ctx->gears[num_gears - 1].gear_val,
+     * we can use latent_ctx->gears[num_gears - 1].gear_val
+     * for intermediate gear
+     */
+    for (i = 0; i < num_gears; i++)
+    {
+        gear = &latent_ctx->gears[i];
+        if (gear->gear_val == cur_gear_val)
+        {
+            target = gear;
+            break;
+        }
+    }
+    if (!target)
+    {
+        /* no valid target gear found */
+        return -1;
+    }
+
+    req = (struct request){
+        .cmd = GEAR_UP,
+        .node = target,
+    };
+
+    ret = async_request_put(core_id, port_id, &req);
+    if (ret < 0)
+    {
+        return -2;
+    }
+
+    return 0;
 }
 /*----------------------------------------------------------------------------*/
 void px_dump_all_gears(uint16_t port_id)
@@ -320,7 +379,8 @@ void px_dump_all_gears(uint16_t port_id)
     }
 }
 /*----------------------------------------------------------------------------*/
-void px_dump_one_gear(uint16_t port_id, uint16_t gear_id)
+void px_dump_one_gear(uint16_t port_id,
+                      uint16_t gear_id)
 {
     struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
     struct px_latent_gear *gear;
@@ -377,6 +437,49 @@ void px_dump_one_gear(uint16_t port_id, uint16_t gear_id)
     }
 }
 /*----------------------------------------------------------------------------*/
+void px_latent_gear_reset_confirm(uint16_t port_id)
+{
+    struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
+    if (!latent_ctx->flow_initialized)
+    {
+        return;
+    }
+
+    atomic_store_explicit(
+        &latent_ctx->confirmed,
+        0,
+        memory_order_release);
+}
+/*----------------------------------------------------------------------------*/
+void px_latent_gear_set_confirm(uint16_t port_id)
+{
+    struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
+    if (!latent_ctx->flow_initialized)
+    {
+        return;
+    }
+
+    atomic_store_explicit(
+        &latent_ctx->confirmed,
+        1,
+        memory_order_release);
+}
+/*----------------------------------------------------------------------------*/
+uint32_t px_latent_gear_check_confirm(uint16_t port_id)
+{
+    struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
+    if (!latent_ctx->flow_initialized)
+    {
+        return false;
+    }
+
+    // Use memory_order_acquire to synchronize with the release store
+    // in set/reset functions.
+    return atomic_load_explicit(
+        &latent_ctx->confirmed,
+        memory_order_acquire);
+}
+/*----------------------------------------------------------------------------*/
 uint16_t px_latent_gear_val(uint16_t port_id)
 {
     struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
@@ -402,13 +505,7 @@ uint16_t px_latent_gear_val(uint16_t port_id)
         }
     }
 
-    /* no gear rule inserted */
-    if (!latent_ctx->num_rxq)
-    {
-        return 0;
-    }
-
-    return latent_ctx->max_rxq / latent_ctx->num_rxq;
+    return latent_ctx->max_rxq;
 }
 /*----------------------------------------------------------------------------*/
 uint16_t px_latent_gear(uint16_t port_id)
@@ -423,7 +520,7 @@ uint16_t px_latent_gear(uint16_t port_id)
     }
 
     /**
-     * discover gear value
+     * discover gear idx
      * from high priority gear (low gear)
      * to low priority gear (high gear)
      */
@@ -432,12 +529,647 @@ uint16_t px_latent_gear(uint16_t port_id)
         gear = &latent_ctx->gears[i];
         if (gear->flow)
         {
-            return gear->index;
+            break;
         }
     }
 
-    /* no gear rule inserted */
+    return i;
+}
+/*----------------------------------------------------------------------------*/
+uint16_t px_latent_max_gear_idx(uint16_t port_id)
+{
+    struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
+    if (!latent_ctx->flow_initialized)
+    {
+        return 0;
+    }
+
     return latent_ctx->num_gears;
+}
+/*----------------------------------------------------------------------------*/
+uint16_t px_latent_min_gear_idx(uint16_t port_id)
+{
+    struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
+    if (!latent_ctx->flow_initialized)
+    {
+        return 0;
+    }
+
+    return latent_ctx->min_gear_idx;
+}
+/*----------------------------------------------------------------------------*/
+int px_latent_gear_shift_auto(float tput,
+                              float yield,
+                              float delay)
+{
+    static float prev_tput = 0;
+    static float steady_tput = 0;
+    static float prev_steady_tput = 0;
+
+    static float prev_delay = 0;
+    static float steady_delay = 0;
+    static float prev_steady_delay = 0;
+
+    static float prev_yield = 0;
+    static float steady_yield = 0;
+    static float prev_steady_yield = 0;
+
+    static enum gear_state state = INITIAL, prev_state = INITIAL;
+    static int cruise_period = 0;
+    static int is_steady = 0;
+
+    uint16_t core_id = rte_lcore_id();
+    uint16_t port_id;
+    int ret;
+
+    /* log first */
+    fprintf(stdout,
+            "state: %s ",
+            state == INITIAL
+                ? "INITIAL"
+            : state == SHIFTING_DOWN
+                ? "SHIFTING_DOWN"
+            : state == SHIFTING_UP
+                ? "SHIFTING_UP"
+            : state == CRUISING
+                ? "CRUISING"
+                : "PROBING");
+    for (port_id = 0; port_id < g_num_ports; port_id++)
+    {
+        fprintf(stdout,
+                "%sP%d:%4hu%s",
+                (port_id == 0) ? "[Gear] " : " ",
+                port_id,
+                px_latent_gear_val(port_id),
+                (port_id == g_num_ports - 1) ? "\n" : "");
+    }
+
+    /* skip zero turn */
+    if (!tput || !delay || !yield)
+    {
+        state = INITIAL;
+        is_steady = 0;
+        goto Finish;
+    }
+
+    /* skip first turn */
+    if (!prev_tput || !prev_delay || !prev_yield)
+    {
+        goto Finish;
+    }
+
+    /* check confirmed for each port */
+    for (port_id = 0; port_id < g_num_ports; port_id++)
+    {
+        if (!px_latent_gear_check_confirm(port_id))
+        {
+            /* previous gear shifting is not confirmed by worker thread */
+            return -1;
+        }
+    }
+
+    /* if initial state */
+    if (state == INITIAL)
+    {
+        if (!is_steady)
+        {
+            /* wait until steady state */
+            if (!px_latent_is_steady(tput,
+                                     prev_tput,
+                                     delay,
+                                     prev_delay,
+                                     yield,
+                                     prev_yield))
+            {
+                goto Finish;
+            }
+            steady_tput = prev_tput;
+            steady_delay = prev_delay;
+            steady_yield = prev_yield;
+            is_steady = 1;
+        }
+
+        /**
+         * check minimum and maximum gear indices and
+         * try shift down first
+         * if failed, try shift up
+         */
+        for (port_id = 0; port_id < g_num_ports; port_id++)
+        {
+            ret = px_latent_gear_shift_down(core_id, port_id);
+            if (ret < 0)
+            {
+                if (ret == -1)
+                {
+                    /* if cannot shift down, try shift up */
+                    ret = px_latent_gear_shift_up(core_id, port_id);
+                    if (ret < 0)
+                    {
+                        if (ret == -1)
+                        {
+                            /* it should not happen */
+                            rte_exit(EXIT_FAILURE,
+                                     "[P%d] px_latent_gear_shift_up failed: %d\n",
+                                     port_id, ret);
+                        }
+                        /* it is due to QP overflow, try again */
+                        fprintf(stderr,
+                                "[P%d] px_latent_gear_shift_up failed: %d\n",
+                                port_id, ret);
+                        goto Finish;
+                    }
+                    prev_steady_tput = steady_tput;
+                    prev_steady_delay = steady_delay;
+                    prev_steady_yield = steady_yield;
+                    prev_state = state;
+                    state = SHIFTING_UP;
+                    is_steady = 0;
+                    goto Finish;
+                }
+                /* it is due to QP overflow, try again */
+                fprintf(stderr,
+                        "[P%d] px_latent_gear_shift_down failed: %d\n",
+                        port_id, ret);
+                goto Finish;
+            }
+        }
+        prev_steady_tput = steady_tput;
+        prev_steady_delay = steady_delay;
+        prev_steady_yield = steady_yield;
+        prev_state = state;
+        state = SHIFTING_DOWN;
+        is_steady = 0;
+        goto Finish;
+    }
+    /* if gear down state */
+    else if (state == SHIFTING_DOWN)
+    {
+        if (!is_steady)
+        {
+            /* wait until steady state */
+            if (!px_latent_is_steady(tput,
+                                     prev_tput,
+                                     delay,
+                                     prev_delay,
+                                     yield,
+                                     prev_yield))
+            {
+                goto Finish;
+            }
+            steady_tput = prev_tput;
+            steady_delay = prev_delay;
+            steady_yield = prev_yield;
+            is_steady = 1;
+        }
+
+        /* check if it is better after gear down */
+        if (px_latent_is_better(steady_tput,
+                                prev_steady_tput,
+                                steady_delay,
+                                prev_steady_delay,
+                                steady_yield,
+                                prev_steady_yield) > 0)
+        {
+            /* try gear down again */
+            for (port_id = 0; port_id < g_num_ports; port_id++)
+            {
+                ret = px_latent_gear_shift_down(core_id, port_id);
+                if (ret < 0)
+                {
+                    if (ret == -1)
+                    {
+                        /* if cannot shift down, go to cruise */
+                        prev_steady_tput = steady_tput;
+                        prev_steady_delay = steady_delay;
+                        prev_steady_yield = steady_yield;
+                        prev_state = state;
+                        state = CRUISING;
+                        is_steady = 0;
+                        goto Finish;
+                    }
+                    /* it is due to QP overflow, try again */
+                    fprintf(stderr,
+                            "[P%d] px_latent_gear_shift_down failed: %d\n",
+                            port_id, ret);
+                    goto Finish;
+                }
+            }
+            prev_steady_tput = steady_tput;
+            prev_steady_delay = steady_delay;
+            prev_steady_yield = steady_yield;
+            prev_state = state;
+            is_steady = 0;
+            goto Finish;
+        }
+        else
+        {
+            if (prev_state == INITIAL || prev_state == SHIFTING_DOWN)
+            {
+                /* try gear up and stop */
+                for (port_id = 0; port_id < g_num_ports; port_id++)
+                {
+                    ret = px_latent_gear_shift_up(core_id, port_id);
+                    if (ret < 0)
+                    {
+                        if (ret == -1)
+                        {
+                            /* it should not happen */
+                            rte_exit(EXIT_FAILURE,
+                                     "[P%d] px_latent_gear_shift_up failed: %d\n",
+                                     port_id, ret);
+                        }
+                        /* it is due to QP overflow, try again */
+                        fprintf(stderr,
+                                "[P%d] px_latent_gear_shift_up failed: %d\n",
+                                port_id, ret);
+                        goto Finish;
+                    }
+                }
+                prev_steady_tput = steady_tput;
+                prev_steady_delay = steady_delay;
+                prev_steady_yield = steady_yield;
+                prev_state = state;
+                state = CRUISING;
+                is_steady = 0;
+                goto Finish;
+            }
+            if (prev_state == SHIFTING_UP)
+            {
+                /* try gear down again */
+                for (port_id = 0; port_id < g_num_ports; port_id++)
+                {
+                    ret = px_latent_gear_shift_down(core_id, port_id);
+                    if (ret < 0)
+                    {
+                        if (ret == -1)
+                        {
+                            /* if cannot shift down, go to cruise */
+                            prev_steady_tput = steady_tput;
+                            prev_steady_delay = steady_delay;
+                            prev_steady_yield = steady_yield;
+                            prev_state = state;
+                            state = CRUISING;
+                            is_steady = 0;
+                            goto Finish;
+                        }
+                        /* it is due to QP overflow, try again */
+                        fprintf(stderr,
+                                "[P%d] px_latent_gear_shift_down failed: %d\n",
+                                port_id, ret);
+                        goto Finish;
+                    }
+                }
+                prev_steady_tput = steady_tput;
+                prev_steady_delay = steady_delay;
+                prev_steady_yield = steady_yield;
+                prev_state = state;
+                is_steady = 0;
+                goto Finish;
+            }
+            if (prev_state == PROBING)
+            {
+                /* try gear up and go to SHIFTING_UP */
+                for (port_id = 0; port_id < g_num_ports; port_id++)
+                {
+                    ret = px_latent_gear_shift_up(core_id, port_id);
+                    if (ret < 0)
+                    {
+                        if (ret == -1)
+                        {
+                            /* it should not happen */
+                            rte_exit(EXIT_FAILURE,
+                                     "[P%d] px_latent_gear_shift_up failed: %d\n",
+                                     port_id, ret);
+                        }
+                        /* it is due to QP overflow, try again */
+                        fprintf(stderr,
+                                "[P%d] px_latent_gear_shift_up failed: %d\n",
+                                port_id, ret);
+                        goto Finish;
+                    }
+                }
+                prev_steady_tput = steady_tput;
+                prev_steady_delay = steady_delay;
+                prev_steady_yield = steady_yield;
+                prev_state = state;
+                state = SHIFTING_UP;
+                is_steady = 0;
+                goto Finish;
+            }
+        }
+    }
+    /* if gear up state */
+    else if (state == SHIFTING_UP)
+    {
+        if (!is_steady)
+        {
+            /* wait until steady state */
+            if (!px_latent_is_steady(tput,
+                                     prev_tput,
+                                     delay,
+                                     prev_delay,
+                                     yield,
+                                     prev_yield))
+            {
+                goto Finish;
+            }
+            steady_tput = prev_tput;
+            steady_delay = prev_delay;
+            steady_yield = prev_yield;
+            is_steady = 1;
+        }
+
+        /* check if it is better after gear down */
+        if (px_latent_is_better(steady_tput,
+                                prev_steady_tput,
+                                steady_delay,
+                                prev_steady_delay,
+                                steady_yield,
+                                prev_steady_yield) > 0)
+        {
+            /* try gear up again */
+            for (port_id = 0; port_id < g_num_ports; port_id++)
+            {
+                ret = px_latent_gear_shift_up(core_id, port_id);
+                if (ret < 0)
+                {
+                    if (ret == -1)
+                    {
+                        /* if cannot shift down, go to cruise */
+                        prev_steady_tput = steady_tput;
+                        prev_steady_delay = steady_delay;
+                        prev_steady_yield = steady_yield;
+                        prev_state = state;
+                        state = CRUISING;
+                        is_steady = 0;
+                        goto Finish;
+                    }
+                    /* it is due to QP overflow, try again */
+                    fprintf(stderr,
+                            "[P%d] px_latent_gear_shift_up failed: %d\n",
+                            port_id, ret);
+                    goto Finish;
+                }
+            }
+            prev_steady_tput = steady_tput;
+            prev_steady_delay = steady_delay;
+            prev_steady_yield = steady_yield;
+            prev_state = state;
+            is_steady = 0;
+            goto Finish;
+        }
+        else
+        {
+            if (prev_state == INITIAL || prev_state == SHIFTING_UP)
+            {
+                /* try gear down and stop */
+                for (port_id = 0; port_id < g_num_ports; port_id++)
+                {
+                    ret = px_latent_gear_shift_down(core_id, port_id);
+                    if (ret < 0)
+                    {
+                        if (ret == -1)
+                        {
+                            /* it should not happen */
+                            rte_exit(EXIT_FAILURE,
+                                     "[P%d] px_latent_gear_shift_down failed: %d\n",
+                                     port_id, ret);
+                        }
+                        /* it is due to QP overflow, try again */
+                        fprintf(stderr,
+                                "[P%d] px_latent_gear_shift_down failed: %d\n",
+                                port_id, ret);
+                        goto Finish;
+                    }
+                }
+                prev_steady_tput = steady_tput;
+                prev_steady_delay = steady_delay;
+                prev_steady_yield = steady_yield;
+                prev_state = state;
+                state = CRUISING;
+                is_steady = 0;
+                goto Finish;
+            }
+            if (prev_state == SHIFTING_DOWN)
+            {
+                /* try gear up again */
+                for (port_id = 0; port_id < g_num_ports; port_id++)
+                {
+                    ret = px_latent_gear_shift_up(core_id, port_id);
+                    if (ret < 0)
+                    {
+                        if (ret == -1)
+                        {
+                            /* if cannot shift up, go to cruise */
+                            prev_steady_tput = steady_tput;
+                            prev_steady_delay = steady_delay;
+                            prev_steady_yield = steady_yield;
+                            prev_state = state;
+                            state = CRUISING;
+                            is_steady = 0;
+                            goto Finish;
+                        }
+                        /* it is due to QP overflow, try again */
+                        fprintf(stderr,
+                                "[P%d] px_latent_gear_shift_up failed: %d\n",
+                                port_id, ret);
+                        goto Finish;
+                    }
+                }
+                prev_steady_tput = steady_tput;
+                prev_steady_delay = steady_delay;
+                prev_steady_yield = steady_yield;
+                prev_state = state;
+                is_steady = 0;
+                goto Finish;
+            }
+            if (prev_state == PROBING)
+            {
+                /* try gear down and go to SHIFTING_DOWN */
+                for (port_id = 0; port_id < g_num_ports; port_id++)
+                {
+                    ret = px_latent_gear_shift_down(core_id, port_id);
+                    if (ret < 0)
+                    {
+                        if (ret == -1)
+                        {
+                            /* it should not happen */
+                            rte_exit(EXIT_FAILURE,
+                                     "[P%d] px_latent_gear_shift_down failed: %d\n",
+                                     port_id, ret);
+                        }
+                        /* it is due to QP overflow, try again */
+                        fprintf(stderr,
+                                "[P%d] px_latent_gear_shift_down failed: %d\n",
+                                port_id, ret);
+                        goto Finish;
+                    }
+                }
+                prev_steady_tput = steady_tput;
+                prev_steady_delay = steady_delay;
+                prev_steady_yield = steady_yield;
+                prev_state = state;
+                state = SHIFTING_DOWN;
+                is_steady = 0;
+                goto Finish;
+            }
+        }
+    }
+    /* if cruise state */
+    else if (state == CRUISING)
+    {
+        if (!is_steady)
+        {
+            /* wait until steady state */
+            if (!px_latent_is_steady(tput,
+                                     prev_tput,
+                                     delay,
+                                     prev_delay,
+                                     yield,
+                                     prev_yield))
+            {
+                goto Finish;
+            }
+            steady_tput = prev_tput;
+            steady_delay = prev_delay;
+            steady_yield = prev_yield;
+            is_steady = 1;
+        }
+
+        /**
+         * keep cruise state for at least 5 seconds
+         * after reaching steady state
+         */
+        if (cruise_period < CRUISE_PERIOD)
+        {
+            cruise_period++;
+            goto Finish;
+        }
+        cruise_period = 0;
+
+        /* detect if current stats are changed a lot */
+        if (px_latent_is_fluctuating(tput,
+                                     steady_tput,
+                                     delay,
+                                     steady_delay,
+                                     yield,
+                                     steady_yield))
+        {
+            /* if so, go to probe state */
+            prev_steady_tput = steady_tput;
+            prev_steady_delay = steady_delay;
+            prev_steady_yield = steady_yield;
+            prev_state = state;
+            state = PROBING;
+            is_steady = 0;
+            goto Finish;
+        }
+    }
+    else if (state == PROBING)
+    {
+        if (!is_steady)
+        {
+            /* wait until steady state */
+            if (!px_latent_is_steady(tput,
+                                     prev_tput,
+                                     delay,
+                                     prev_delay,
+                                     yield,
+                                     prev_yield))
+            {
+                goto Finish;
+            }
+            steady_tput = prev_tput;
+            steady_delay = prev_delay;
+            steady_yield = prev_yield;
+            is_steady = 1;
+        }
+
+        /* check if it is getting better */
+        ret = px_latent_is_better(steady_tput,
+                                  prev_steady_tput,
+                                  steady_delay,
+                                  prev_steady_delay,
+                                  steady_yield,
+                                  prev_steady_yield);
+        if (ret > 0)
+        {
+            /* if so, try gear down */
+            for (port_id = 0; port_id < g_num_ports; port_id++)
+            {
+                ret = px_latent_gear_shift_down(core_id, port_id);
+                if (ret < 0)
+                {
+                    if (ret == -1)
+                    {
+                        /* if cannot shift down, try shift up */
+                        prev_steady_tput = steady_tput;
+                        prev_steady_delay = steady_delay;
+                        prev_steady_yield = steady_yield;
+                        prev_state = state;
+                        state = SHIFTING_UP;
+                        is_steady = 0;
+                        goto Finish;
+                    }
+                    /* it is due to QP overflow, try again */
+                    fprintf(stderr,
+                            "[P%d] px_latent_gear_shift_down failed: %d\n",
+                            port_id, ret);
+                    goto Finish;
+                }
+            }
+            prev_steady_tput = steady_tput;
+            prev_steady_delay = steady_delay;
+            prev_steady_yield = steady_yield;
+            prev_state = state;
+            state = SHIFTING_DOWN;
+            is_steady = 0;
+            goto Finish;
+        }
+
+        /* check if it is getting worse */
+        if (ret < 0)
+        {
+            /* if so, try gear up */
+            for (port_id = 0; port_id < g_num_ports; port_id++)
+            {
+                ret = px_latent_gear_shift_up(core_id, port_id);
+                if (ret < 0)
+                {
+                    if (ret == -1)
+                    {
+                        /* if cannot shift up, try shift down */
+                        prev_steady_tput = steady_tput;
+                        prev_steady_delay = steady_delay;
+                        prev_steady_yield = steady_yield;
+                        prev_state = state;
+                        state = SHIFTING_DOWN;
+                        is_steady = 0;
+                        goto Finish;
+                    }
+                    /* it is due to QP overflow, try again */
+                    fprintf(stderr,
+                            "[P%d] px_latent_gear_shift_up failed: %d\n",
+                            port_id, ret);
+                    goto Finish;
+                }
+            }
+            prev_steady_tput = steady_tput;
+            prev_steady_delay = steady_delay;
+            prev_steady_yield = steady_yield;
+            prev_state = state;
+            state = SHIFTING_UP;
+            is_steady = 0;
+            goto Finish;
+        }
+    }
+
+Finish:
+    prev_tput = tput;
+    prev_delay = delay;
+    prev_yield = yield;
+
+    return 0;
 }
 /*----------------------------------------------------------------------------*/
 void px_reta_init(uint16_t port_id)
@@ -445,9 +1177,9 @@ void px_reta_init(uint16_t port_id)
     struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
     int ret, i;
 
-    if (latent_ctx->initialized)
+    if (latent_ctx->reta_initialized)
     {
-        /* already initialized */
+        /* already reta_initialized */
         return;
     }
 
@@ -474,7 +1206,7 @@ void px_reta_init(uint16_t port_id)
     // fprintf(stdout, "[port %d] dump after query\n", port_id);
     // px_dump_reta(latent_ctx->reta_entry, latent_ctx->reta_size);
 
-    latent_ctx->initialized = 1;
+    latent_ctx->reta_initialized = 1;
     fprintf(stdout, "initialized ReTa for port %d\n", port_id);
 }
 /*----------------------------------------------------------------------------*/
@@ -483,9 +1215,9 @@ void px_reta_update(uint16_t port_id, uint16_t rss_len)
     struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
     int ret, i;
 
-    if (!latent_ctx->initialized)
+    if (!latent_ctx->reta_initialized)
     {
-        /* not initialized yet */
+        /* not reta_initialized yet */
         return;
     }
 
@@ -672,9 +1404,9 @@ int px_eth_dev_rss_reta_update(uint16_t port_id,
     struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
     struct rte_eth_rss_reta_entry64 *reta_entry;
     int ret, i, j, group_num, inner_len;
-    uint16_t num_rxq_incr;
+    uint16_t num_rxq_per_rxq;
 
-    if (!g_px_dev[port_id].initialized_latent)
+    if (!latent_ctx->flow_initialized)
     {
         fprintf(stderr, "ReTa context is not initialized\n");
         return -1;
@@ -690,7 +1422,7 @@ int px_eth_dev_rss_reta_update(uint16_t port_id,
     memcpy(latent_ctx->requested_reta_entry, reta_conf, reta_size);
     latent_ctx->requested_reta_size = reta_size;
 
-    num_rxq_incr = latent_ctx->gear_val / latent_ctx->num_rxq;
+    num_rxq_per_rxq = latent_ctx->gear_val / latent_ctx->num_rxq;
     group_num = CEIL_DIV(reta_size, RTE_RETA_GROUP_SIZE);
     inner_len = RTE_RETA_GROUP_SIZE;
     reta_entry = latent_ctx->reta_entry;
@@ -706,8 +1438,8 @@ int px_eth_dev_rss_reta_update(uint16_t port_id,
         {
             reta_entry[i].reta[j] +=
                 ((i * RTE_RETA_GROUP_SIZE + j) /
-                 num_rxq_incr *
-                 num_rxq_incr) %
+                 num_rxq_per_rxq *
+                 num_rxq_per_rxq) %
                 (latent_ctx->max_rxq);
         }
     }
@@ -737,15 +1469,15 @@ int reta_runtime_update(uint16_t port_id)
     struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
     struct rte_eth_rss_reta_entry64 *reta_entry;
     int i, j, group_num, inner_len;
-    uint16_t num_rxq_incr;
+    uint16_t num_rxq_per_rxq;
 
-    if (!g_px_dev[port_id].initialized_latent)
+    if (!latent_ctx->flow_initialized)
     {
         fprintf(stderr, "ReTa context is not initialized\n");
         return -1;
     }
 
-    num_rxq_incr = latent_ctx->gear_val / latent_ctx->num_rxq;
+    num_rxq_per_rxq = latent_ctx->gear_val / latent_ctx->num_rxq;
     group_num = CEIL_DIV(latent_ctx->requested_reta_size, RTE_RETA_GROUP_SIZE);
     inner_len = RTE_RETA_GROUP_SIZE;
     reta_entry = latent_ctx->reta_entry;
@@ -761,8 +1493,8 @@ int reta_runtime_update(uint16_t port_id)
         {
             reta_entry[i].reta[j] +=
                 ((i * RTE_RETA_GROUP_SIZE + j) /
-                 num_rxq_incr *
-                 num_rxq_incr) %
+                 num_rxq_per_rxq *
+                 num_rxq_per_rxq) %
                 (latent_ctx->max_rxq);
         }
     }
@@ -779,11 +1511,12 @@ int reta_runtime_update(uint16_t port_id)
 /*----------------------------------------------------------------------------*/
 int px_eth_dump_reta(uint16_t port_id)
 {
+    struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
     struct rte_eth_rss_reta_entry64 px_reta[RETA_CONF_SIZE];
-    uint16_t reta_size = g_px_dev[port_id].dev_info.reta_size;
+    uint16_t reta_size = latent_ctx->reta_size;
     int ret, i;
 
-    if (!g_px_dev[port_id].initialized_latent)
+    if (!latent_ctx->flow_initialized)
     {
         fprintf(stderr, "ReTa context is not initialized\n");
         return -1;

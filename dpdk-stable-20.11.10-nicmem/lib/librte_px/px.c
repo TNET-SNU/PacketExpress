@@ -5,8 +5,6 @@ struct px_dev g_px_dev[RTE_MAX_ETHPORTS] = {0};
 static struct px_ctx g_pctx[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
 static struct rte_mempool *g_clone_pool[RTE_MAX_NUMA_NODES] = {NULL};
 int g_is_semantic_test = 0;
-uint64_t g_throughput = 0;
-uint64_t g_prev_throughput = 0;
 /*----------------------------------------------------------------------------*/
 /* Below are for default RSS hash */
 static uint8_t *g_rss_key = NULL;
@@ -1029,6 +1027,7 @@ is_delay_needed(struct px_ctx *pctx,
                 uint32_t orig_segsz,
                 uint32_t target_segsz)
 {
+    struct px_dev *px_dev = &g_px_dev[pctx->port_id];
     float factor;
     int64_t diff_ns;
     uint32_t max_seg_nb, missing_segs_nb;
@@ -1077,9 +1076,9 @@ is_delay_needed(struct px_ctx *pctx,
         fprintf(stderr, "skew detected: %lu < %lu\n", pctx->now_ns, timestamp);
         return 1;
     }
-    if (timeout_ns > g_px_dev[pctx->port_id].cutoff_ns)
+    if (timeout_ns > px_dev->cutoff_ns)
     {
-        timeout_ns = g_px_dev[pctx->port_id].cutoff_ns;
+        timeout_ns = px_dev->cutoff_ns;
     }
     if (timeout_ns < 2000)
     {
@@ -1101,6 +1100,7 @@ handle_incomplete(struct px_ctx *pctx,
                   uint32_t target_segsz,
                   int force)
 {
+    struct px_dev *px_dev = &g_px_dev[pctx->port_id];
     if (pctx->do_link)
     {
         clear_link(firstseg);
@@ -1152,12 +1152,12 @@ Enqueue:
     if (is_udp(firstseg))
     {
         /* if nicmem enabled, nb_segs is 2 by default */
-        if (g_px_dev[pctx->port_id].initialized_nicmem && (firstseg->nb_segs > 2))
+        if (px_dev->initialized_nicmem && (firstseg->nb_segs > 2))
         {
             update_udp(firstseg);
         }
         /* if nicmem disabled, nb_segs is 1 by default */
-        if (!g_px_dev[pctx->port_id].initialized_nicmem && (firstseg->nb_segs > 1))
+        if (!px_dev->initialized_nicmem && (firstseg->nb_segs > 1))
         {
             update_udp(firstseg);
         }
@@ -1573,6 +1573,7 @@ int px_parse_packet(struct px_ctx *pctx,
                     uint8_t *tcp_flags,
                     int hwcsum)
 {
+    struct px_dev *px_dev = &g_px_dev[pctx->port_id];
     struct rte_ipv4_hdr *ipv4_hdr;
     struct four_tuple *key, reverse_key, reverse_key_le;
     uint32_t real_pkt_len, reverse_rss;
@@ -1688,7 +1689,7 @@ Skip_log_rx_hw_timestamp:
         }
 
         /* target for offloading */
-        if (g_px_dev[pctx->port_id].initialized_hairpin)
+        if (px_dev->initialized_hairpin)
         {
             put_orig_four_tuple(pkt);
         }
@@ -1764,7 +1765,7 @@ Skip_log_rx_hw_timestamp:
         }
 
         /* target for offloading */
-        if (g_px_dev[pctx->port_id].initialized_hairpin)
+        if (px_dev->initialized_hairpin)
         {
             put_orig_four_tuple(pkt);
         }
@@ -1874,9 +1875,9 @@ Skip_log_rx_hw_timestamp:
                                       sizeof(struct four_tuple) >> 2,
                                       g_rss_key);
             inner_qid = reverse_rss %
-                        (pctx->num_rxq *
-                         pctx->num_rxq_incr);
-            outer_qid = inner_qid / pctx->num_rxq_incr;
+                        (px_dev->num_rxq *
+                         px_dev->num_rxq_per_rxq);
+            outer_qid = inner_qid / px_dev->num_rxq_per_rxq;
 
             /* ToDo: we should consider ReTa */
 
@@ -1913,7 +1914,7 @@ Skip_log_rx_hw_timestamp:
      * despite 1B payload, it should be handled by TCP-GRO to avoid OoO.
      */
     /* if nicmem is on, try GRO for packets larger than nicmem DMA size (128B) */
-    if (g_px_dev[pctx->port_id].initialized_nicmem)
+    if (px_dev->initialized_nicmem)
     {
         if (pkt->nb_segs < 2)
         {
@@ -2235,7 +2236,6 @@ link_and_flush(struct px_ctx *pctx,
                     /* if incoming packet */
                     else
                     {
-                        // if (g_px_dev[pctx->port_id].nm_ctx.num_nicmem > 0)
                         if (!cur_pkt->next || !is_nicmem(cur_pkt->next))
                         {
                             // fprintf(stdout, "is not nicmem\n");
@@ -2497,6 +2497,7 @@ px_core(struct px_ctx *pctx,
         struct rte_mbuf **pkts,
         uint16_t nb_pkts)
 {
+    struct px_dev *px_dev = &g_px_dev[pctx->port_id];
     struct four_tuple *key, reverse_key, reverse_key_le;
     struct rte_mbuf *pkt;
     struct px_stash *stash;
@@ -2598,11 +2599,11 @@ px_core(struct px_ctx *pctx,
 
                         inner_qid =
                             reverse_rss %
-                            (pctx->num_rxq *
-                             pctx->num_rxq_incr);
+                            (px_dev->num_rxq *
+                             px_dev->num_rxq_per_rxq);
                         outer_qid =
                             inner_qid /
-                            pctx->num_rxq_incr;
+                            px_dev->num_rxq_per_rxq;
 
                         /* insert MSS to hashtable */
                         mss_insert_entry(pkt->port,
@@ -2649,11 +2650,11 @@ px_core(struct px_ctx *pctx,
 
                         inner_qid =
                             reverse_rss %
-                            (pctx->num_rxq *
-                             pctx->num_rxq_incr);
+                            (px_dev->num_rxq *
+                             px_dev->num_rxq_per_rxq);
                         outer_qid =
                             inner_qid /
-                            pctx->num_rxq_incr;
+                            px_dev->num_rxq_per_rxq;
 
                         /* evict MSSes from hashtable */
                         mss_evict_entry(pkt->port,
@@ -2764,11 +2765,11 @@ px_core(struct px_ctx *pctx,
 
                         inner_qid =
                             reverse_rss %
-                            (pctx->num_rxq *
-                             pctx->num_rxq_incr);
+                            (px_dev->num_rxq *
+                             px_dev->num_rxq_per_rxq);
                         outer_qid =
                             inner_qid /
-                            pctx->num_rxq_incr;
+                            px_dev->num_rxq_per_rxq;
 
                         /* evict MSSes from hashtable */
                         mss_evict_entry(pkt->port,
@@ -2901,7 +2902,7 @@ void px_deinit(uint16_t port_id)
         if (pctx->stash_array)
         {
             /* free stash arrays */
-            for (i = 0; i < px_dev->max_rxq_incr; i++)
+            for (i = 0; i < px_dev->max_rxq_per_rxq; i++)
             {
                 if (pctx->stash_array[i].items)
                 {
@@ -2911,11 +2912,11 @@ void px_deinit(uint16_t port_id)
             }
             free(pctx->stash_array);
             pctx->stash_array = NULL;
-
-            /* free RX/TX rings */
-            px_ring_deinit(&pctx->rx_ring);
-            px_ring_deinit(&pctx->tx_ring);
         }
+
+        /* free RX/TX rings */
+        px_ring_deinit(&pctx->rx_ring);
+        px_ring_deinit(&pctx->tx_ring);
 
         /* reset pctx */
         memset(pctx, 0, sizeof(*pctx));
@@ -2934,7 +2935,7 @@ int px_init(uint16_t port_id,
     struct px_dev *px_dev = &g_px_dev[port_id];
     struct px_ctx *pctx;
     struct px_stash *stash;
-    uint16_t table_size, max_rxq_incr = px_dev->max_rxq_incr;
+    uint16_t table_size, max_rxq_per_rxq = px_dev->max_rxq_per_rxq;
     int ret, i, rule_id;
     struct px_pattern patterns[2];
     struct rte_flow_item_ipv4 ipv4_mask;
@@ -2942,7 +2943,7 @@ int px_init(uint16_t port_id,
     struct px_action actions[2];
     uint16_t queue_id;
 
-    if (!max_rxq_incr)
+    if (!max_rxq_per_rxq)
     {
         rte_exit(EXIT_FAILURE,
                  "please set up the number of latent queues before init PX\n");
@@ -2956,9 +2957,7 @@ int px_init(uint16_t port_id,
         pctx->socket_id = rte_eth_dev_socket_id(port_id);
         pctx->port_id = port_id;
         pctx->queue_id = queue_id;
-        pctx->num_rxq_incr = px_dev->num_rxq_incr;
         pctx->latent_id = 0;
-        pctx->num_rxq = px_dev->num_rxq;
         pctx->imtu_size = px_dev->imtu_size;
         pctx->emtu_size = px_dev->emtu_size;
         pctx->nb_seg_max = px_dev->dev_info.tx_desc_lim.nb_seg_max;
@@ -3066,7 +3065,7 @@ int px_init(uint16_t port_id,
         {
             /* make stash queue descriptors */
             pctx->stash_array =
-                (struct px_stash *)calloc(max_rxq_incr,
+                (struct px_stash *)calloc(max_rxq_per_rxq,
                                           sizeof(struct px_stash));
             if (!pctx->stash_array)
             {
@@ -3074,7 +3073,7 @@ int px_init(uint16_t port_id,
             }
 
             /* make stash items array for each latent queue */
-            for (i = 0; i < max_rxq_incr; i++)
+            for (i = 0; i < max_rxq_per_rxq; i++)
             {
                 stash = &pctx->stash_array[i];
                 stash->items =
@@ -3086,20 +3085,20 @@ int px_init(uint16_t port_id,
                 }
                 stash->num = 0;
             }
+        }
 
-            /* create PX RX ring as same size as original RX ring */
-            ret = px_ring_init(&pctx->rx_ring, px_dev->nb_rx_desc[queue_id]);
-            if (ret < 0)
-            {
-                rte_exit(EXIT_FAILURE, "px_ring_init failed\n");
-            }
+        /* create PX RX ring as same size as original RX ring */
+        ret = px_ring_init(&pctx->rx_ring, px_dev->nb_rx_desc[queue_id]);
+        if (ret < 0)
+        {
+            rte_exit(EXIT_FAILURE, "px_ring_init failed\n");
+        }
 
-            /* create PX TX ring as same size as original TX ring */
-            ret = px_ring_init(&pctx->tx_ring, px_dev->nb_tx_desc[queue_id]);
-            if (ret < 0)
-            {
-                rte_exit(EXIT_FAILURE, "px_ring_init failed\n");
-            }
+        /* create PX TX ring as same size as original TX ring */
+        ret = px_ring_init(&pctx->tx_ring, px_dev->nb_tx_desc[queue_id]);
+        if (ret < 0)
+        {
+            rte_exit(EXIT_FAILURE, "px_ring_init failed\n");
         }
 
         /* make rule queue */
@@ -3148,6 +3147,16 @@ int px_init(uint16_t port_id,
             fprintf(stderr, "px_async_start() failed\n");
             return -1;
         }
+
+        /* start from the lowest gear by default */
+        // ret = px_latent_gear_to_min(port_id);
+        // if (ret < 0)
+        // {
+        //     fprintf(stderr,
+        //             "[port %d] px_latent_gear_to_min failed\n",
+        //             port_id);
+        //     return 0;
+        // }
     }
 
     /* thread for stat printing */
@@ -3310,7 +3319,7 @@ int px_eth_dev_configure(uint16_t port_id,
                          int optout)
 {
     struct px_dev *px_dev = &g_px_dev[port_id];
-    uint16_t socket_id, queue_id, max_rxq, max_rxq_incr;
+    uint16_t socket_id, queue_id, max_rxq, max_rxq_per_rxq;
     int ret;
 
     /* cleanup */
@@ -3334,16 +3343,16 @@ int px_eth_dev_configure(uint16_t port_id,
 
     // max_rxq = px_dev->dev_info.max_rx_queues / num_rxq;
     max_rxq = 512;
-    max_rxq_incr = max_rxq / num_rxq;
-    if (!max_rxq_incr)
+    max_rxq_per_rxq = max_rxq / num_rxq;
+    if (!max_rxq_per_rxq)
     {
-        max_rxq_incr = 1;
+        max_rxq_per_rxq = 1;
     }
 
     /* setup PX port parameters */
     px_dev->num_rxq = num_rxq;
     px_dev->max_rxq = max_rxq;
-    px_dev->max_rxq_incr = max_rxq_incr;
+    px_dev->max_rxq_per_rxq = max_rxq_per_rxq;
     px_dev->num_txq = num_txq;
     px_dev->cutoff_ns = cutoff_ns;
     px_dev->reta_size = px_dev->dev_info.reta_size;
@@ -3384,16 +3393,17 @@ int px_eth_dev_configure(uint16_t port_id,
     }
 
     /* initialize ReTa entry */
-    if (!g_px_dev[port_id].initialized_latent)
+    if (!px_dev->initialized_latent)
     {
         px_latent_configure(port_id,
                             num_rxq,
                             max_rxq,
                             num_txq,
+                            px_dev->reta_size,
                             eth_conf);
 
         /* mark ReTa as initialized */
-        g_px_dev[port_id].initialized_latent = 1;
+        px_dev->initialized_latent = 1;
     }
 
     /* configure port */
@@ -3525,10 +3535,11 @@ int px_eth_rx_queue_setup(uint16_t port_id,
                           struct rte_eth_rxconf *rx_conf,
                           struct rte_mempool *mp)
 {
+    struct px_dev *px_dev = &g_px_dev[port_id];
     struct rte_eth_dev_info dev_info;
-    uint16_t num_rxq = g_px_dev[port_id].num_rxq;
-    uint16_t num_txq = g_px_dev[port_id].num_txq;
-    uint16_t max_rxq_incr = g_px_dev[port_id].max_rxq_incr;
+    uint16_t num_rxq = px_dev->num_rxq;
+    uint16_t num_txq = px_dev->num_txq;
+    uint16_t max_rxq_per_rxq = px_dev->max_rxq_per_rxq;
     uint16_t inner_qid;
     uint16_t inner_nb_rx_desc;
     uint16_t i;
@@ -3545,7 +3556,7 @@ int px_eth_rx_queue_setup(uint16_t port_id,
     }
 
     /* setup nicmem */
-    if (g_px_dev[port_id].initialized_nicmem)
+    if (px_dev->initialized_nicmem)
     {
         ret = px_nicmem_setup(port_id, rx_conf, mp);
         if (ret)
@@ -3556,15 +3567,15 @@ int px_eth_rx_queue_setup(uint16_t port_id,
         mp = NULL;
     }
 
-    g_px_dev[port_id].nb_rx_desc[rx_queue_id] = nb_rx_desc;
+    px_dev->nb_rx_desc[rx_queue_id] = nb_rx_desc;
 
-    inner_nb_rx_desc = nb_rx_desc / max_rxq_incr;
+    inner_nb_rx_desc = nb_rx_desc / max_rxq_per_rxq;
     inner_nb_rx_desc = (inner_nb_rx_desc < 256) ? 256 : (inner_nb_rx_desc);
     // inner_nb_rx_desc = nb_rx_desc;
 
-    for (i = 0; i < max_rxq_incr; i++)
+    for (i = 0; i < max_rxq_per_rxq; i++)
     {
-        inner_qid = rx_queue_id * max_rxq_incr + i;
+        inner_qid = rx_queue_id * max_rxq_per_rxq + i;
 #define SHARE_QUEUE 0
 #if SHARE_QUEUE
         fprintf(stdout,
@@ -3586,7 +3597,7 @@ int px_eth_rx_queue_setup(uint16_t port_id,
     }
 
     /* setup hairpin */
-    if (g_px_dev[port_id].initialized_hairpin)
+    if (px_dev->initialized_hairpin)
     {
         ret = px_hairpin_setup(port_id,
                                num_rxq,
@@ -3610,6 +3621,7 @@ int px_eth_tx_queue_setup(uint16_t port_id,
                           uint16_t socket_id,
                           struct rte_eth_txconf *tx_conf)
 {
+    struct px_dev *px_dev = &g_px_dev[port_id];
     int ret;
     ret = rte_eth_tx_queue_setup(port_id,
                                  tx_queue_id,
@@ -3621,7 +3633,7 @@ int px_eth_tx_queue_setup(uint16_t port_id,
         return ret;
     }
 
-    g_px_dev[port_id].nb_tx_desc[tx_queue_id] = nb_tx_desc;
+    px_dev->nb_tx_desc[tx_queue_id] = nb_tx_desc;
 
     return 0;
 }
@@ -3632,65 +3644,41 @@ rx_and_px(uint16_t port_id,
           struct rte_mbuf **rx_pkts,
           uint16_t nb_pkts)
 {
+    struct px_dev *px_dev = &g_px_dev[port_id];
     struct px_ctx *pctx = &g_pctx[port_id][queue_id];
     uint16_t recv = 0, total = 0;
     uint16_t inner_qid;
-    int i, no_steady = 0;
-
-    /* check whether it's on steady state or transient state */
-    if (pctx->state == 0)
-    {
-        /* if on steady state, check only current RXQs */
-        pctx->prev_gear_val = pctx->gear_val;
-        /* get number of latent RXQs */
-        pctx->gear_val = px_latent_gear_val(port_id);
-        /* check whether gear value decreased */
-        if (pctx->prev_gear_val > pctx->gear_val)
-        {
-            /* goto transient state */
-            fprintf(stdout,
-                    "[port %d] [queue %d] "
-                    "Became transient state\n",
-                    port_id, queue_id);
-            pctx->state = 1;
-        }
-    }
+    int i, is_transient = 0;
 
     /* transient state */
-    if (pctx->state == 1)
+    if (px_dev->is_transient)
     {
-        /* if on transient state, check previous RXQs as well */
-        pctx->num_rxq_incr = pctx->prev_gear_val / pctx->num_rxq;
-        /* RX and PX for every latent queue */
-        for (i = 0; i < pctx->num_rxq_incr; i++)
+        /* RX and PX for every latent queue (check previous RXQs as well ) */
+        for (i = 0; i < px_dev->prev_num_rxq_per_rxq; i++)
         {
-            if (pctx->latent_id >= pctx->num_rxq_incr)
-            {
-                pctx->latent_id = 0;
-            }
-            inner_qid = queue_id * pctx->num_rxq_incr + pctx->latent_id;
+            inner_qid = queue_id * px_dev->max_rxq_per_rxq + pctx->latent_id;
             recv = rte_eth_rx_burst(port_id,
                                     inner_qid,
                                     rx_pkts + total,
                                     nb_pkts - total);
-            if (inner_qid >= pctx->gear_val / pctx->num_rxq)
+            if (inner_qid >= px_dev->num_rxq_per_rxq)
             {
                 /**
                  * for previous inner RXQs,
                  * check whether recv is under batch size
                  */
-                if (recv == nb_pkts - total)
+                if (recv == (nb_pkts - total))
                 {
                     /**
                      * if one inner RXQ returns packets as batch size,
                      * we need to poll RXQs longer
                      */
-                    no_steady = 1;
+                    is_transient = 1;
                 }
             }
             total += px_core(pctx, rx_pkts + total, recv);
 
-            if (++pctx->latent_id >= pctx->num_rxq_incr)
+            if (++pctx->latent_id >= px_dev->num_rxq_per_rxq)
             {
                 pctx->latent_id = 0;
             }
@@ -3703,31 +3691,30 @@ rx_and_px(uint16_t port_id,
          * if all inner queues gives packets less than batch size,
          * go to steady state
          */
-        if (!no_steady)
+        if (!is_transient)
         {
-            pctx->state = 0;
+            px_dev->is_transient = 0;
         }
-        no_steady = 0;
     }
     /* steady state */
     else
     {
-        pctx->num_rxq_incr = pctx->gear_val / pctx->num_rxq;
+        px_dev->num_rxq_per_rxq = px_dev->gear_val / px_dev->num_rxq;
         /* RX and PX for every latent queue */
-        for (i = 0; i < pctx->num_rxq_incr; i++)
+        for (i = 0; i < px_dev->num_rxq_per_rxq; i++)
         {
-            if (pctx->latent_id >= pctx->num_rxq_incr)
+            if (pctx->latent_id >= px_dev->num_rxq_per_rxq)
             {
                 pctx->latent_id = 0;
             }
-            inner_qid = queue_id * pctx->num_rxq_incr + pctx->latent_id;
+            inner_qid = queue_id * px_dev->max_rxq_per_rxq + pctx->latent_id;
             recv = rte_eth_rx_burst(port_id,
                                     inner_qid,
                                     rx_pkts + total,
                                     nb_pkts - total);
             total += px_core(pctx, rx_pkts + total, recv);
 
-            if (++pctx->latent_id >= pctx->num_rxq_incr)
+            if (++pctx->latent_id >= px_dev->num_rxq_per_rxq)
             {
                 pctx->latent_id = 0;
             }
@@ -3747,14 +3734,44 @@ px_eth_rx_burst(uint16_t port_id,
                 struct rte_mbuf **rx_pkts,
                 uint16_t nb_pkts)
 {
+    struct px_dev *px_dev = &g_px_dev[port_id];
     struct px_ctx *pctx = &g_pctx[port_id][queue_id];
     struct px_ring *rx_ring = &pctx->rx_ring;
     uint16_t read_px_rx_ring = 0;
     uint16_t read_hw_rx_ring = 0;
     struct rte_mbuf **orig_batch = rx_pkts;
 
+    /* check whether it's on steady state or transient state */
+    if (!px_dev->is_transient)
+    {
+        /* if on steady state, check only current RXQs */
+        px_dev->prev_gear_val = px_dev->gear_val;
+        px_dev->prev_num_rxq_per_rxq = px_dev->num_rxq_per_rxq;
+        
+        /* get number of latent RXQs and notify confirmed */
+        px_dev->gear_val = px_latent_gear_val(port_id);
+        px_latent_gear_set_confirm(port_id);
+        
+        /* check whether gear value decreased */
+        if (px_dev->gear_val != px_dev->prev_gear_val)
+        {
+            /* goto transient state */
+            fprintf(stdout,
+                    "[P%d] Became transient state, %d -> %d\n",
+                    port_id, px_dev->prev_gear_val, px_dev->gear_val);
+            px_dev->is_transient = 1;
+        }
+    }
+    else
+    {
+        /* get number of latent RXQs and notify confirmed */
+        px_dev->gear_val = px_latent_gear_val(port_id);
+        px_latent_gear_set_confirm(port_id);
+    }
+    px_dev->num_rxq_per_rxq = px_dev->gear_val / px_dev->num_rxq;
+
     /* stage 1: fetch from time out ring */
-    if (g_px_dev[port_id].cutoff_ns)
+    if (px_dev->cutoff_ns)
     {
         read_px_rx_ring = px_ring_dequeue(rx_ring, rx_pkts, nb_pkts);
 
@@ -3782,6 +3799,89 @@ px_eth_rx_burst(uint16_t port_id,
 }
 /*----------------------------------------------------------------------------*/
 uint16_t
+px_eth_tx_burst0(uint16_t port_id,
+                 uint16_t queue_id,
+                 struct rte_mbuf **tx_pkts,
+                 uint16_t nb_pkts)
+{
+    struct px_dev *px_dev = &g_px_dev[port_id];
+    struct px_ctx *pctx = &g_pctx[port_id][queue_id];
+    struct px_ring *tx_ring = &pctx->tx_ring;
+    struct rte_mbuf *out_batch[PX_TX_BURST];
+    uint16_t read_px_tx_ring = 0;
+    uint16_t sent_hw_tx_ring = 0;
+    int sent_try = 0, offset = 0;
+
+    /* stage 0: create hairpin flow */
+    if (px_dev->initialized_hairpin)
+    {
+        px_flow_create_burst(port_id, queue_id, tx_pkts, nb_pkts);
+    }
+
+    /* stage 1: enqueue packets from app to PX TX ring */
+    if (pctx->do_link)
+    {
+        /* if linking is on, do unlink and USO before TX */
+        px_unlink_and_uso0(tx_pkts,
+                           nb_pkts,
+                           tx_ring,
+                           g_clone_pool[pctx->socket_id],
+                           NULL);
+    }
+    else
+    {
+        /* if linking is off, just do USO before TX */
+        px_uso_burst0(tx_pkts,
+                      nb_pkts,
+                      tx_ring,
+                      g_clone_pool[pctx->socket_id]);
+    }
+
+    while (1)
+    {
+        /* stage 2: retrieve packets from PX TX ring */
+        read_px_tx_ring = px_ring_dequeue(tx_ring, out_batch, PX_TX_BURST);
+        if (!read_px_tx_ring)
+        {
+            break;
+        }
+
+        /* stage 3: update TX stats for conversion yield and delay */
+        px_stat_update_tx(port_id,
+                          queue_id,
+                          out_batch,
+                          read_px_tx_ring);
+
+        while (offset < read_px_tx_ring)
+        {
+            offset += rte_eth_tx_burst(port_id,
+                                       queue_id,
+                                       out_batch + offset,
+                                       read_px_tx_ring - offset);
+            if (++sent_try > 3)
+            {
+                fprintf(stderr,
+                        "[P%d][Q%d] "
+                        "rte_eth_tx_burst: %d/%d sent\n",
+                        port_id, queue_id,
+                        offset, read_px_tx_ring);
+                /* if too many tries, give up sending and reset offset */
+                break;
+            }
+        }
+        sent_hw_tx_ring += offset;
+        for (; offset < read_px_tx_ring; offset++)
+        {
+            px_pktmbuf_free(out_batch[offset]);
+        }
+        offset = 0;
+        sent_try = 0;
+    }
+
+    return sent_hw_tx_ring;
+}
+/*----------------------------------------------------------------------------*/
+uint16_t
 px_eth_tx_burst(uint16_t port_id,
                 uint16_t queue_id,
                 struct rte_mbuf **tx_pkts,
@@ -3794,7 +3894,7 @@ px_eth_tx_burst(uint16_t port_id,
     uint16_t read_px_tx_ring = 0;
     uint16_t sent_hw_tx_ring = 0;
     uint16_t nb_pkts_after_uso = 0;
-    int sent_try = 0, offset = 0;
+    int sent_try = 0, offset = 0, i;
 
     /* stage 0: create hairpin flow */
     if (px_dev->initialized_hairpin)
@@ -3841,43 +3941,62 @@ px_eth_tx_burst(uint16_t port_id,
         if (++sent_try > 1)
         {
             fprintf(stderr,
-                    "rte_eth_tx_burst: sent_try: %d, "
-                    "offset: %d, nb_pkts_after_uso: %d\n",
-                    sent_try, offset, nb_pkts_after_uso);
+                    "[P%d][Q%d] "
+                    "rte_eth_tx_burst (1): %d/%d sent\n",
+                    port_id, queue_id,
+                    offset, nb_pkts_after_uso);
             /* if too many tries, give up sending and reset offset */
             break;
         }
     }
+    for (i = offset; i < nb_pkts_after_uso; i++)
+    {
+        px_pktmbuf_free(temp_batch[i]);
+    }
     sent_hw_tx_ring += offset;
-
-    /* stage 3: retrieve packets from PX TX ring */
     offset = 0;
     sent_try = 0;
-    read_px_tx_ring = px_ring_dequeue(tx_ring, temp_batch, PX_TX_BURST);
 
-    /* stage 4: update stats for conversion yield */
-    px_stat_update_tx(port_id,
-                      queue_id,
-                      temp_batch,
-                      read_px_tx_ring);
-
-    while (offset < read_px_tx_ring)
+    while (1)
     {
-        offset += rte_eth_tx_burst(port_id,
-                                   queue_id,
-                                   temp_batch + offset,
-                                   read_px_tx_ring - offset);
-        if (++sent_try > 1)
+        /* stage 3: retrieve packets from PX TX ring */
+        read_px_tx_ring = px_ring_dequeue(tx_ring, temp_batch, PX_TX_BURST);
+        if (!read_px_tx_ring)
         {
-            fprintf(stderr,
-                    "rte_eth_tx_burst: sent_try: %d, "
-                    "offset: %d, read_px_tx_ring: %d\n",
-                    sent_try, offset, read_px_tx_ring);
-            /* if too many tries, give up sending and reset offset */
             break;
         }
+
+        /* stage 4: update stats for conversion yield */
+        px_stat_update_tx(port_id,
+                          queue_id,
+                          temp_batch,
+                          read_px_tx_ring);
+
+        while (offset < read_px_tx_ring)
+        {
+            offset += rte_eth_tx_burst(port_id,
+                                       queue_id,
+                                       temp_batch + offset,
+                                       read_px_tx_ring - offset);
+            if (++sent_try > 1)
+            {
+                fprintf(stderr,
+                        "[P%d][Q%d] "
+                        "rte_eth_tx_burst (2): %d/%d sent\n",
+                        port_id, queue_id,
+                        offset, read_px_tx_ring);
+                /* if too many tries, give up sending and reset offset */
+                break;
+            }
+        }
+        for (i = offset; i < read_px_tx_ring; i++)
+        {
+            px_pktmbuf_free(temp_batch[i]);
+        }
+        sent_hw_tx_ring += offset;
+        offset = 0;
+        sent_try = 0;
     }
-    sent_hw_tx_ring += offset;
 
     return sent_hw_tx_ring;
 }
@@ -3919,10 +4038,11 @@ void px_pktmbuf_free_bulk(struct rte_mbuf **pkts,
 int px_eth_stats_get(uint16_t port_id,
                      struct rte_eth_stats *stats)
 {
+    struct px_dev *px_dev = &g_px_dev[port_id];
     struct rte_eth_stats temp;
-    uint16_t num_rxq = g_px_dev[port_id].num_rxq;
-    uint16_t num_txq = g_px_dev[port_id].num_txq;
-    uint16_t max_rxq_incr = g_px_dev[port_id].max_rxq_incr;
+    uint16_t num_rxq = px_dev->num_rxq;
+    uint16_t num_txq = px_dev->num_txq;
+    uint16_t max_rxq_per_rxq = px_dev->max_rxq_per_rxq;
     int qid;
 
     /* get stats of latent queues */
@@ -3935,25 +4055,25 @@ int px_eth_stats_get(uint16_t port_id,
     memcpy(stats, &temp, sizeof(uint64_t) * 8);
 
     /* get per-queue RX stats */
-    for (qid = 0; qid < num_rxq * max_rxq_incr; qid++)
+    for (qid = 0; qid < num_rxq * max_rxq_per_rxq; qid++)
     {
         /* accumulate the stats of latent queues to stat of original queue */
-        if (!(qid % max_rxq_incr))
+        if (!(qid % max_rxq_per_rxq))
         {
-            stats->q_ipackets[qid / max_rxq_incr] =
+            stats->q_ipackets[qid / max_rxq_per_rxq] =
                 temp.q_ipackets[qid];
-            stats->q_ibytes[qid / max_rxq_incr] =
+            stats->q_ibytes[qid / max_rxq_per_rxq] =
                 temp.q_ibytes[qid];
-            stats->q_errors[qid / max_rxq_incr] =
+            stats->q_errors[qid / max_rxq_per_rxq] =
                 temp.q_errors[qid];
         }
         else
         {
-            stats->q_ipackets[qid / max_rxq_incr] +=
+            stats->q_ipackets[qid / max_rxq_per_rxq] +=
                 temp.q_ipackets[qid];
-            stats->q_ibytes[qid / max_rxq_incr] +=
+            stats->q_ibytes[qid / max_rxq_per_rxq] +=
                 temp.q_ibytes[qid];
-            stats->q_errors[qid / max_rxq_incr] +=
+            stats->q_errors[qid / max_rxq_per_rxq] +=
                 temp.q_errors[qid];
         }
     }

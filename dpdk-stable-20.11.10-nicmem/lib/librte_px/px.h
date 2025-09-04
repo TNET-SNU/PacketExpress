@@ -91,12 +91,6 @@ struct px_ctx
     uint16_t port_id;
     uint16_t queue_id;
 
-    uint16_t num_rxq;
-    uint16_t num_rxq_incr;
-    uint16_t prev_gear_val;
-    uint16_t gear_val;
-    uint16_t state;
-
     /*
      * used to save current latent queue ID for delaying in stash
      * this value is temporary and varies over context
@@ -577,6 +571,140 @@ px_fill_ipv4_l4_cksum(struct rte_mbuf *m,
     }
 
     return 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline uint16_t
+px_uso_burst0(struct rte_mbuf **pkts,
+              uint16_t nb_pkts,
+              struct px_ring *tx_ring,
+              struct rte_mempool *clone_pool)
+{
+    struct rte_mbuf *pkt, *hdr_clone, *body_clone;
+    uint16_t idx = 0;
+    uint16_t seglen, segnum, last_seglen, offset = 0;
+    uint16_t *iplen, *udplen;
+    int i, j;
+
+    for (i = 0; i < nb_pkts; i++)
+    {
+        pkt = pkts[i];
+
+        /* pass non UDP */
+        if (!is_udp(pkt) ||
+            !is_px(pkt) ||
+            !(pkt->nb_segs > 1) ||
+            (rte_be_to_cpu_16(*(uint16_t *)get_payload(pkt)) > 4))
+        {
+            /* enqueue to TX ring */
+            if (px_ring_enqueue(tx_ring, &pkt, 1) != 1)
+            {
+                /* enqueue failed, drop the packet */
+                fprintf(stderr, "ring overflow\n");
+                rte_pktmbuf_free(pkt);
+                pkt = NULL;
+            }
+            continue;
+        }
+
+        /* now this packet is PX tunneling packet */
+        seglen = rte_be_to_cpu_16(*((uint16_t *)get_payload(pkt) + 1));
+
+        /* below are for debugging */
+        // if ((seglen + pkt->l3_len + pkt->l4_len > DEFAULT_eMTU) ||
+        //     (seglen < 512))
+        // {
+        //     fprintf(stdout,
+        //             "seglen is invalid: %u\n", seglen);
+        //     fprintf(stdout,
+        //             "l2_len: %u, l3_len: %u, l4_len: %u, pkt_len: %u\n",
+        //             pkt->l2_len, pkt->l3_len, pkt->l4_len, pkt->pkt_len);
+        //     fprintf(stdout,
+        //             "data_len: %u\n",
+        //             pkt->data_len);
+        //     px_hexdump("pkt dump",
+        //                (uint8_t *)pkt->buf_addr + pkt->data_off,
+        //                pkt->data_len);
+        //     rte_pktmbuf_free(pkt);
+
+        //     continue;
+        // }
+
+        segnum = CEIL_DIV(get_data_len(pkt) - 2 * sizeof(uint16_t), seglen);
+        last_seglen = (get_data_len(pkt) - 2 * sizeof(uint16_t)) % seglen;
+
+        /* update header */
+        pkt->data_len = get_hdr_len(pkt);
+        iplen = get_ip_len(pkt);
+        unmark_px(pkt);
+        *iplen = rte_cpu_to_be_16(pkt->l3_len + pkt->l4_len + seglen);
+        udplen = get_udp_len(pkt);
+        *udplen = rte_cpu_to_be_16(pkt->l4_len + seglen);
+
+        offset = get_hdr_len(pkt) + 2 * sizeof(uint16_t);
+        for (j = 0; j < segnum; j++)
+        {
+            if (last_seglen && (j == segnum - 1))
+            {
+                /* last seg may have different header */
+                hdr_clone = rte_pktmbuf_copy(pkt,
+                                             clone_pool,
+                                             0,
+                                             get_hdr_len(pkt));
+                if (!hdr_clone)
+                {
+                    fprintf(stderr, "hdr clone failed\n");
+                    continue;
+                }
+                iplen = get_ip_len(hdr_clone);
+                *iplen = rte_cpu_to_be_16(pkt->l3_len +
+                                          pkt->l4_len +
+                                          last_seglen);
+                udplen = get_udp_len(hdr_clone);
+                *udplen = rte_cpu_to_be_16(pkt->l4_len +
+                                           last_seglen);
+                put_sw_timestamp(hdr_clone, get_sw_timestamp(pkt));
+            }
+            else
+            {
+                hdr_clone = rte_pktmbuf_clone(pkt, clone_pool);
+                if (!hdr_clone)
+                {
+                    fprintf(stderr, "hdr clone failed\n");
+                    continue;
+                }
+            }
+
+            body_clone = rte_pktmbuf_clone(pkt, clone_pool);
+            if (!body_clone)
+            {
+                fprintf(stderr, "body clone failed\n");
+                rte_pktmbuf_free(hdr_clone);
+                continue;
+            }
+            body_clone->data_off += offset;
+            body_clone->data_len = seglen;
+
+            hdr_clone->next = body_clone;
+            hdr_clone->pkt_len = get_hdr_len(pkt) + seglen;
+            hdr_clone->nb_segs = 2;
+
+            /* given batch is full, so enqueue to TX ring */
+            if (px_ring_enqueue(tx_ring, &hdr_clone, 1) != 1)
+            {
+                /* enqueue failed, drop the packet */
+                fprintf(stderr, "ring overflow\n");
+                rte_pktmbuf_free(hdr_clone);
+                hdr_clone = NULL;
+            }
+
+            offset += seglen;
+        }
+
+        rte_pktmbuf_free(pkt);
+        pkt = NULL;
+    }
+
+    return idx;
 }
 /*----------------------------------------------------------------------------*/
 static inline uint16_t

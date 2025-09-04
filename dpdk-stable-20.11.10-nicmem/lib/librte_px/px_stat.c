@@ -5,8 +5,6 @@ static struct px_rx_stat g_rx_stat[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = 
 static struct px_tx_stat g_tx_stat[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
 static volatile int g_stat_interval = 0;
 extern int g_is_semantic_test;
-extern uint64_t g_throughput;
-extern uint64_t g_prev_throughput;
 static uint16_t g_num_ports;
 static uint16_t g_num_rxqs;
 static uint16_t g_num_txqs;
@@ -189,23 +187,59 @@ void px_stat_monitor(int args)
     uint16_t port_id, queue_id;
     int ret;
 
+    /* usually main core */
     for (port_id = 0; port_id < g_num_ports; port_id++)
     {
         for (queue_id = 0; queue_id < MAX(g_num_rxqs, g_num_txqs); queue_id++)
         {
+            /* get IAT stat */
             iat_local_stat(port_id,
                            queue_id,
                            &iat_burst_iat_iter,
                            &iat_data_len_iter,
                            &iat_count_iter);
+
+            /* get TCP stat */
             tcp_iter = &g_tcp_stat[port_id][queue_id];
+
+            /* get RX stat */
             rx_iter = &g_rx_stat[port_id][queue_id];
+
+            /* get TX stat */
             tx_iter = &g_tx_stat[port_id][queue_id];
-            if (!rx_iter->data_pkt_cnt && !tx_iter->data_pkt_cnt)
-            {
-                continue;
-            }
+
 #if PX_MEASURE_PER_QUEUE_STAT
+            uint64_t gbps_iter;
+            uint64_t kpps_iter;
+            float yield1_iter;
+            float yield2_iter;
+            uint64_t delay_iter;
+
+            gbps_iter = rx_iter->bytes_cnt * 8 / E9;
+            kpps_iter = rx_iter->pkt_cnt / E3;
+
+            yield1_iter =
+                (tx_iter->iMTU_cnt + tx_iter->under_iMTU_cnt)
+                    ? (double)tx_iter->iMTU_cnt /
+                          (tx_iter->iMTU_cnt + tx_iter->under_iMTU_cnt) * 100
+                    : 0;
+
+            yield2_iter =
+                (tx_iter->_1_seg_cnt * 1 + tx_iter->_2_seg_cnt * 2 +
+                 tx_iter->_3_seg_cnt * 3 + tx_iter->_4_seg_cnt * 4 +
+                 tx_iter->_5_seg_cnt * 5 + tx_iter->iMTU_cnt * 6)
+                    ? (double)tx_iter->iMTU_cnt * 6 /
+                          (tx_iter->_1_seg_cnt * 1 + tx_iter->_2_seg_cnt * 2 +
+                           tx_iter->_3_seg_cnt * 3 + tx_iter->_4_seg_cnt * 4 +
+                           tx_iter->_5_seg_cnt * 5 + tx_iter->iMTU_cnt * 6) *
+                          100
+                    : 0;
+
+            delay_iter =
+                tx_iter->data_pkt_cnt
+                    ? tx_iter->delay_ns /
+                          tx_iter->data_pkt_cnt
+                    : 0;
             /* per queue stat */
             fprintf(stdout,
                     "  [%2hu-%2hu] "
@@ -222,25 +256,11 @@ void px_stat_monitor(int args)
                     "pkts/batch:%2.1f "
                     "pkts:%5lu\n",
                     port_id, queue_id,
-                    rx_iter->bytes_cnt * 8 / E9,
-                    rx_iter->pkt_cnt / E3,
-                    tx_iter->data_pkt_cnt
-                        ? tx_iter->delay_ns / tx_iter->data_pkt_cnt
-                        : 0,
-                    //    (tx_iter->iMTU_cnt + tx_iter->under_iMTU_cnt)
-                    //        ? (double)tx_iter->iMTU_cnt /
-                    //              (tx_iter->iMTU_cnt + tx_iter->under_iMTU_cnt) *
-                    //              100
-                    //        : 0,
-                    (tx_iter->_1_seg_cnt + tx_iter->_2_seg_cnt * 2 +
-                     tx_iter->_3_seg_cnt * 3 + tx_iter->_4_seg_cnt * 4 +
-                     tx_iter->_5_seg_cnt * 5 + tx_iter->iMTU_cnt * 6)
-                        ? (double)tx_iter->iMTU_cnt * 6 /
-                              (tx_iter->_1_seg_cnt + tx_iter->_2_seg_cnt * 2 +
-                               tx_iter->_3_seg_cnt * 3 + tx_iter->_4_seg_cnt * 4 +
-                               tx_iter->_5_seg_cnt * 5 + tx_iter->iMTU_cnt * 6) *
-                              100
-                        : 0,
+                    gbps_iter,
+                    kpps_iter,
+                    delay_iter,
+                    yield1_iter,
+                    yield2_iter,
                     rx_iter->data_pkt_cnt
                         ? rx_iter->data_bytes_cnt / rx_iter->data_pkt_cnt
                         : 0,
@@ -278,6 +298,7 @@ void px_stat_monitor(int args)
 #endif
             }
 #endif
+            /* aggregate stats */
             rx_total.pkt_cnt += rx_iter->pkt_cnt;
             rx_total.bytes_cnt += rx_iter->bytes_cnt;
             rx_total.data_bytes_cnt += rx_iter->data_bytes_cnt;
@@ -296,7 +317,7 @@ void px_stat_monitor(int args)
             tx_total.data_downlink_pkt_cnt += tx_iter->data_downlink_pkt_cnt;
             tx_total.delay_ns += tx_iter->delay_ns;
             tx_total.data_pkt_cnt += tx_iter->data_pkt_cnt;
-            
+
             iat_burst_iat_total += iat_burst_iat_iter;
             iat_data_len_total += iat_data_len_iter;
             iat_count_total += iat_count_iter;
@@ -308,72 +329,49 @@ void px_stat_monitor(int args)
             rx_iter->reset = 1;
             tx_iter->reset = 1;
         }
-        fprintf(stdout,
-                "[P%d] Gear:%4hu ",
-                port_id, px_latent_gear_val(port_id));
-
-        if (px_latent_gear(port_id) == 2)
-        {
-            ret = px_latent_gear_down(0, port_id);
-            if (ret < 0)
-            {
-                fprintf(stderr, "px_latent_gear_down failed: %d\n", ret);
-            }
-        }
-        else if (px_latent_gear(port_id) == 1)
-        {
-            ret = px_latent_gear_up(0, port_id);
-            if (ret < 0)
-            {
-                fprintf(stderr, "px_latent_gear_up failed: %d\n", ret);
-            }
-        }
-        // else if (px_latent_gear(port_id) == 0)
-        // {
-        //     ret = px_latent_gear_up(0, port_id);
-        //     if (ret < 0)
-        //     {
-        //         fprintf(stderr, "px_latent_gear_up failed: %d\n", ret);
-        //     }
-        // }
-
-        // if (px_latent_gear_val(port_id) == 512)
-        // {
-        //     ret = px_latent_gear_down(0, port_id);
-        //     if (ret < 0)
-        //     {
-        //         fprintf(stderr, "px_latent_gear_down failed: %d\n", ret);
-        //     }
-        // }
-        // else if (px_latent_gear_val(port_id) == 64)
-        // {
-        //     ret = px_latent_gear_down(0, port_id);
-        //     if (ret < 0)
-        //     {
-        //         fprintf(stderr, "px_latent_gear_down failed: %d\n", ret);
-        //     }
-        // }
-        // else if (px_latent_gear_val(port_id) == 8)
-        // {
-        //     ret = px_latent_gear_up(0, port_id);
-        //     if (ret < 0)
-        //     {
-        //         fprintf(stderr, "px_latent_gear_up failed: %d\n", ret);
-        //     }
-        // }
-
-        // px_dump_all_gears(port_id);
-        // px_dump_one_gear(port_id, 0);
     }
-    fprintf(stdout, "\n");
+
+    /* performance indicators */
+    uint64_t gbps_total;
+    uint64_t kpps_total;
+    float yield1_total;
+    float yield2_total;
+    uint64_t delay_total;
+
+    /* calculate performance indicators */
+    gbps_total = rx_total.bytes_cnt * 8 / E9;
+    kpps_total = rx_total.pkt_cnt / E3;
+
+    yield1_total =
+        (tx_total.iMTU_cnt + tx_total.under_iMTU_cnt)
+            ? (double)tx_total.iMTU_cnt /
+                  (tx_total.iMTU_cnt + tx_total.under_iMTU_cnt) * 100
+            : 0;
+
+    yield2_total =
+        (tx_total._1_seg_cnt * 1 + tx_total._2_seg_cnt * 2 +
+         tx_total._3_seg_cnt * 3 + tx_total._4_seg_cnt * 4 +
+         tx_total._5_seg_cnt * 5 + tx_total.iMTU_cnt * 6)
+            ? (double)tx_total.iMTU_cnt * 6 /
+                  (tx_total._1_seg_cnt * 1 + tx_total._2_seg_cnt * 2 +
+                   tx_total._3_seg_cnt * 3 + tx_total._4_seg_cnt * 4 +
+                   tx_total._5_seg_cnt * 5 + tx_total.iMTU_cnt * 6) *
+                  100
+            : 0;
+
+    delay_total =
+        tx_total.data_pkt_cnt
+            ? tx_total.delay_ns /
+                  tx_total.data_pkt_cnt
+            : 0;
+
+    /* print total stat */
     fprintf(stdout, "SYN/SYNACK: %lu/%lu\n",
             tcp_total.syn_cnt, tcp_total.synack_cnt);
-    g_prev_throughput = g_throughput;
-    g_throughput = rx_total.bytes_cnt * 8 / E9;
     fprintf(stdout,
             "[ TOTAL ] "
-            "Tput: %4lu"
-            "Gbps %5luKpps "
+            "Tput: %4lu Gbps "
+            "%5lu Kpps "
             "delay:%5luns "
             //    "yield:%5.1f%% "
             "yield:%5.1f%% "
@@ -384,24 +382,11 @@ void px_stat_monitor(int args)
             "segs/pkt:%2.1f "
             "pkts/batch:%2.1f "
             "pkts: %5lu\n",
-            rx_total.bytes_cnt * 8 / E9,
-            rx_total.pkt_cnt / E3,
-            tx_total.data_pkt_cnt
-                ? tx_total.delay_ns / tx_total.data_pkt_cnt
-                : 0,
-            //    (tx_total.iMTU_cnt + tx_total.under_iMTU_cnt)
-            //        ? (double)tx_total.iMTU_cnt /
-            //              (tx_total.iMTU_cnt + tx_total.under_iMTU_cnt) * 100
-            //        : 0,
-            (tx_total._1_seg_cnt * 1 + tx_total._2_seg_cnt * 2 +
-             tx_total._3_seg_cnt * 3 + tx_total._4_seg_cnt * 4 +
-             tx_total._5_seg_cnt * 5 + tx_total.iMTU_cnt * 6)
-                ? (double)tx_total.iMTU_cnt * 6 /
-                      (tx_total._1_seg_cnt + tx_total._2_seg_cnt * 2 +
-                       tx_total._3_seg_cnt * 3 + tx_total._4_seg_cnt * 4 +
-                       tx_total._5_seg_cnt * 5 + tx_total.iMTU_cnt * 6) *
-                      100
-                : 0,
+            gbps_total,
+            kpps_total,
+            delay_total,
+            // yield1_total,
+            yield2_total,
             rx_total.data_pkt_cnt
                 ? rx_total.data_bytes_cnt / rx_total.data_pkt_cnt
                 : 0,
@@ -434,6 +419,15 @@ void px_stat_monitor(int args)
     }
 #endif
     print_cache_stats();
+
+    (void)yield1_total;
+    ret = px_latent_gear_shift_auto((float)gbps_total,
+                                    yield2_total,
+                                    (float)delay_total);
+    if (ret < 0)
+    {
+        fprintf(stdout, "Failed to control gear\n");
+    }
 
     alarm(g_stat_interval);
 }

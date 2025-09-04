@@ -6,7 +6,9 @@ static pthread_t g_mss_tid = 0;
 static volatile int g_mss_shutdown = 0;
 extern int g_is_semantic_test;
 /*----------------------------------------------------------------------------*/
-void update_mss(uint16_t *mss_ptr, uint16_t new_mss, int direction)
+void update_mss(uint16_t *mss_ptr,
+                uint16_t new_mss,
+                int direction)
 {
     fprintf(stdout, "%d -> ", rte_be_to_cpu_16(*mss_ptr));
     if (g_is_semantic_test)
@@ -38,170 +40,6 @@ void update_mss(uint16_t *mss_ptr, uint16_t new_mss, int direction)
         }
     }
     fprintf(stdout, "%d\n", rte_be_to_cpu_16(*mss_ptr));
-}
-/*----------------------------------------------------------------------------*/
-uint8_t *
-mss_bloom_init(void)
-{
-    uint8_t *filter = (uint8_t *)calloc(UINT16_MAX + 1, 1);
-    if (!filter)
-    {
-        fprintf(stderr, "mss_bloom_init: rte_malloc failed\n");
-    }
-    memset(filter, 0, UINT16_MAX + 1);
-
-    return filter;
-}
-/*----------------------------------------------------------------------------*/
-void mss_bloom_destroy(uint8_t *filter)
-{
-    free(filter);
-}
-/*----------------------------------------------------------------------------*/
-int mss_bloom_search(uint8_t *filter,
-                     uint32_t rss,
-                     struct four_tuple *key)
-{
-    uint16_t hash0 = xor_hash0(rss, (uint32_t *)key);
-    if (!filter[hash0])
-    {
-        /* no data */
-        return 0;
-    }
-    uint16_t hash1 = xor_hash1(rss, (uint32_t *)key);
-    if (!filter[hash1] ||
-        !filter[hash0 ^ hash1])
-    {
-        /* no data */
-        return 0;
-    }
-
-    /* may exist */
-    return 1;
-}
-/*----------------------------------------------------------------------------*/
-void mss_bloom_insert(uint8_t *filter,
-                      uint32_t rss,
-                      struct four_tuple *key)
-{
-    /* hash0 */
-    uint16_t hash0 = xor_hash0(rss, (uint32_t *)key);
-    /* atomic fetch-add */
-    uint8_t old0 = atomic_fetch_add_explicit(
-        (atomic_uchar *)&filter[hash0], 1,
-        memory_order_relaxed);
-    if (old0 == UINT8_MAX)
-    {
-        /* already full, restore hash0 */
-        atomic_fetch_sub_explicit(
-            (atomic_uchar *)&filter[hash0], 1,
-            memory_order_relaxed);
-        fprintf(stderr, "mss_bloom_insert overflow, hash0=%u\n", hash0);
-        return;
-    }
-
-    /* hash1 */
-    uint16_t hash1 = xor_hash1(rss, (uint32_t *)key);
-    /* atomic fetch-add */
-    uint8_t old1 = atomic_fetch_add_explicit(
-        (atomic_uchar *)&filter[hash1], 1,
-        memory_order_relaxed);
-    if (old1 == UINT8_MAX)
-    {
-        /* already full, restore hash1, hash0 */
-        atomic_fetch_sub_explicit(
-            (atomic_uchar *)&filter[hash1], 1,
-            memory_order_relaxed);
-        atomic_fetch_sub_explicit(
-            (atomic_uchar *)&filter[hash0], 1,
-            memory_order_relaxed);
-        fprintf(stderr, "mss_bloom_insert overflow, hash1=%u\n", hash1);
-        return;
-    }
-
-    /* hash2 */
-    uint16_t hash2 = hash0 ^ hash1;
-    /* atomic fetch-add */
-    uint8_t old2 = atomic_fetch_add_explicit(
-        (atomic_uchar *)&filter[hash2], 1,
-        memory_order_relaxed);
-    if (old2 == UINT8_MAX)
-    {
-        /* already full, restore hash2, hash1, hash0 */
-        atomic_fetch_sub_explicit(
-            (atomic_uchar *)&filter[hash2], 1,
-            memory_order_relaxed);
-        atomic_fetch_sub_explicit(
-            (atomic_uchar *)&filter[hash1], 1,
-            memory_order_relaxed);
-        atomic_fetch_sub_explicit(
-            (atomic_uchar *)&filter[hash0], 1,
-            memory_order_relaxed);
-        fprintf(stderr, "mss_bloom_insert overflow, hash2=%u\n", hash2);
-        return;
-    }
-}
-/*----------------------------------------------------------------------------*/
-void mss_bloom_delete(uint8_t *filter,
-                      uint32_t rss,
-                      struct four_tuple *key)
-{
-    /* hash0 */
-    uint16_t hash0 = xor_hash0(rss, (uint32_t *)key);
-    /* atomic fetch-sub */
-    uint8_t old0 = atomic_fetch_sub_explicit(
-        (atomic_uchar *)&filter[hash0], 1,
-        memory_order_relaxed);
-    if (old0 == 0)
-    {
-        /* empty yet, so restore hash0 */
-        atomic_fetch_add_explicit(
-            (atomic_uchar *)&filter[hash0], 1,
-            memory_order_relaxed);
-        fprintf(stderr, "mss_bloom_delete: no data, hash0=%u\n", hash0);
-        return;
-    }
-
-    /* hash1 */
-    uint16_t hash1 = xor_hash1(rss, (uint32_t *)key);
-    /* atomic fetch-sub */
-    uint8_t old1 = atomic_fetch_sub_explicit(
-        (atomic_uchar *)&filter[hash1], 1,
-        memory_order_relaxed);
-    if (old1 == 0)
-    {
-        /* empty yet, so restore hash1, hash0 */
-        atomic_fetch_add_explicit(
-            (atomic_uchar *)&filter[hash1], 1,
-            memory_order_relaxed);
-        atomic_fetch_add_explicit(
-            (atomic_uchar *)&filter[hash0], 1,
-            memory_order_relaxed);
-        fprintf(stderr, "mss_bloom_delete: no data, hash1=%u\n", hash1);
-        return;
-    }
-
-    /* hash2 */
-    uint16_t hash2 = hash0 ^ hash1;
-    /* atomic fetch-sub */
-    uint8_t old2 = atomic_fetch_sub_explicit(
-        (atomic_uchar *)&filter[hash2], 1,
-        memory_order_relaxed);
-    if (old2 == 0)
-    {
-        /* empty yet, so restore hash2, hash1, hash0 */
-        atomic_fetch_add_explicit(
-            (atomic_uchar *)&filter[hash2], 1,
-            memory_order_relaxed);
-        atomic_fetch_add_explicit(
-            (atomic_uchar *)&filter[hash1], 1,
-            memory_order_relaxed);
-        atomic_fetch_add_explicit(
-            (atomic_uchar *)&filter[hash0], 1,
-            memory_order_relaxed);
-        fprintf(stderr, "mss_bloom_delete: no data, hash2=%u\n", hash2);
-        return;
-    }
 }
 /*----------------------------------------------------------------------------*/
 static void *
@@ -301,6 +139,8 @@ int mss_init_ctx(uint16_t port_id,
         return -1;
     }
 
+    atomic_init(&ctx->epoch, 0);
+
     /* Create a new thread for periodic cleanup */
     // uint16_t *num_cores = calloc(1, sizeof(uint16_t));
     // *num_cores = rte_lcore_count();
@@ -376,7 +216,7 @@ int mss_search_entry(uint16_t port_id,
         return -1;
     }
 
-    if (!mss_bloom_search(ctx->bf, rss, key))
+    if (!mss_bloom_search(ctx->bf, &ctx->epoch, rss, key))
     {
         /* not exist in bloom filter */
         *mss = 0;
@@ -440,7 +280,7 @@ int mss_insert_entry(uint16_t port_id,
         rte_mempool_put(ctx->pool, entry);
 
         /* delete from bloom filter */
-        mss_bloom_delete(ctx->bf, rss, key);
+        mss_bloom_delete(ctx->bf, &ctx->epoch, rss, key);
     }
 
     /* Allocate a new entry from the mempool */
@@ -463,7 +303,7 @@ int mss_insert_entry(uint16_t port_id,
     }
 
     /* insert to bloom filter */
-    mss_bloom_insert(ctx->bf, rss, key);
+    mss_bloom_insert(ctx->bf, &ctx->epoch, rss, key);
 
     return 0;
 }
@@ -490,7 +330,7 @@ int mss_evict_entry(uint16_t port_id,
         rte_mempool_put(ctx->pool, entry);
 
         /* delete from bloom filter */
-        mss_bloom_delete(ctx->bf, rss, key);
+        mss_bloom_delete(ctx->bf, &ctx->epoch, rss, key);
 
         return 0;
     }

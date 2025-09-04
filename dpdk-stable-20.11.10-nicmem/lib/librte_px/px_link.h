@@ -130,6 +130,14 @@ px_unlink(struct rte_mbuf **pkts,
                      struct rte_mbuf *));
 /*----------------------------------------------------------------------------*/
 uint16_t
+px_unlink_and_uso0(struct rte_mbuf **pkts,
+                  uint16_t nb_pkts,
+                  struct px_ring *tx_ring,
+                  struct rte_mempool *clone_pool,
+                  void (*cb)(struct rte_mbuf *,
+                             struct rte_mbuf *));
+/*----------------------------------------------------------------------------*/
+uint16_t
 px_unlink_and_uso(struct rte_mbuf **pkts,
                   uint16_t nb_pkts,
                   struct rte_mbuf **out,

@@ -1,7 +1,7 @@
 #include "px_async.h"
 /*----------------------------------------------------------------------------*/
 /* below are for per-core node pool, hash table, and request ring */
-static struct rule_manager g_rule_manager[RTE_MAX_LCORE];
+static struct async_manager g_async_manager[RTE_MAX_LCORE];
 /*----------------------------------------------------------------------------*/
 int get_host_cached_size(uint16_t core_id)
 {
@@ -10,7 +10,7 @@ int get_host_cached_size(uint16_t core_id)
         return -1;
     }
 
-    return g_rule_manager[core_id].ht->ht_count;
+    return g_async_manager[core_id].ht->ht_count;
 }
 /*----------------------------------------------------------------------------*/
 int node_pool_create(uint16_t core_id,
@@ -20,7 +20,7 @@ int node_pool_create(uint16_t core_id,
     {
         return -1;
     }
-    struct rule_manager *rm = &g_rule_manager[core_id];
+    struct async_manager *rm = &g_async_manager[core_id];
     char name[MAX_NAME_SIZE + 1];
     sprintf(name, "node-pool-%d", core_id);
     rm->node_pool =
@@ -40,7 +40,7 @@ int node_pool_create(uint16_t core_id,
 struct ri_node *
 node_pool_alloc(uint16_t core_id)
 {
-    struct rule_manager *rm = &g_rule_manager[core_id];
+    struct async_manager *rm = &g_async_manager[core_id];
     struct ri_node *node;
     /* check if pool is full. if full, give up offloading */
     if (rte_mempool_get(rm->node_pool, (void **)&node) < 0)
@@ -56,20 +56,20 @@ node_pool_alloc(uint16_t core_id)
 void node_pool_free(uint16_t core_id,
                     struct ri_node *node)
 {
-    struct rule_manager *rm = &g_rule_manager[core_id];
+    struct async_manager *rm = &g_async_manager[core_id];
     rte_mempool_put(rm->node_pool, node);
 }
 /*----------------------------------------------------------------------------*/
 void node_pool_destroy(uint16_t core_id)
 {
-    struct rule_manager *rm = &g_rule_manager[core_id];
+    struct async_manager *rm = &g_async_manager[core_id];
     rte_mempool_free(rm->node_pool);
 }
 /*----------------------------------------------------------------------------*/
 int ht_create(uint16_t core_id,
               size_t num)
 {
-    struct rule_manager *rm = &g_rule_manager[core_id];
+    struct async_manager *rm = &g_async_manager[core_id];
     char name[MAX_NAME_SIZE + 1];
     sprintf(name, "hte-pool-%d", core_id);
     rm->hte_pool =
@@ -100,7 +100,7 @@ int ht_create(uint16_t core_id,
 /*----------------------------------------------------------------------------*/
 void ht_destroy(uint16_t core_id)
 {
-    struct rule_manager *rm = &g_rule_manager[core_id];
+    struct async_manager *rm = &g_async_manager[core_id];
     rte_mempool_free(rm->hte_pool);
     free(rm->ht);
 }
@@ -159,7 +159,7 @@ int ht_insert(uint16_t core_id,
               struct ri_node *node)
 {
     struct ht_element *item;
-    struct rule_manager *rm = &g_rule_manager[core_id];
+    struct async_manager *rm = &g_async_manager[core_id];
     struct ht_hashtable *ht = rm->ht;
     ht_hash_bucket_head *head = &ht->ht_table[ht_hash(node)];
 
@@ -183,7 +183,7 @@ ht_search(uint16_t core_id,
           struct ri_node *node)
 {
     struct ht_element *item;
-    struct rule_manager *rm = &g_rule_manager[core_id];
+    struct async_manager *rm = &g_async_manager[core_id];
     struct ht_hashtable *ht = rm->ht;
     ht_hash_bucket_head *head = &ht->ht_table[ht_hash(node)];
 
@@ -199,7 +199,7 @@ void ht_remove(uint16_t core_id,
                struct ri_node *node)
 {
     struct ht_element *item;
-    struct rule_manager *rm = &g_rule_manager[core_id];
+    struct async_manager *rm = &g_async_manager[core_id];
     struct ht_hashtable *ht = rm->ht;
     ht_hash_bucket_head *head = &ht->ht_table[ht_hash(node)];
 
@@ -218,7 +218,7 @@ int async_qp_create(uint16_t core_id,
                     uint16_t port_id,
                     size_t num)
 {
-    struct rule_manager *rm = &g_rule_manager[core_id];
+    struct async_manager *rm = &g_async_manager[core_id];
     struct req_ring *req_ring = &rm->request_ring[port_id];
     struct resp_ring *resp_ring = &rm->response_ring[port_id];
 
@@ -256,7 +256,7 @@ int async_qp_create(uint16_t core_id,
 void async_qp_destroy(uint16_t core_id,
                       uint16_t port_id)
 {
-    struct rule_manager *rm = &g_rule_manager[core_id];
+    struct async_manager *rm = &g_async_manager[core_id];
     struct req_ring *req_ring = &rm->request_ring[port_id];
     struct resp_ring *resp_ring = &rm->response_ring[port_id];
     if (req_ring->ring)
@@ -275,7 +275,7 @@ int async_request_put(uint16_t core_id,
                       uint16_t port_id,
                       struct request *req)
 {
-    struct rule_manager *rm = &g_rule_manager[core_id];
+    struct async_manager *rm = &g_async_manager[core_id];
     struct req_ring *req_ring = &rm->request_ring[port_id];
 
     /* check if request queue is initialized */
@@ -324,7 +324,7 @@ struct request *
 async_request_get(uint16_t core_id,
                   uint16_t port_id)
 {
-    struct rule_manager *rm = &g_rule_manager[core_id];
+    struct async_manager *rm = &g_async_manager[core_id];
     struct req_ring *req_ring = &rm->request_ring[port_id];
 
     /* check if request queue is initialized */
@@ -357,7 +357,7 @@ async_request_get(uint16_t core_id,
 void async_request_consume(uint16_t core_id,
                            uint16_t port_id)
 {
-    struct rule_manager *rm = &g_rule_manager[core_id];
+    struct async_manager *rm = &g_async_manager[core_id];
     struct req_ring *req_ring = &rm->request_ring[port_id];
 
     if (++req_ring->head >= req_ring->size)
@@ -370,7 +370,7 @@ int async_response_put(uint16_t core_id,
                        uint16_t port_id,
                        struct response *resp)
 {
-    struct rule_manager *rm = &g_rule_manager[core_id];
+    struct async_manager *rm = &g_async_manager[core_id];
     struct resp_ring *resp_ring = &rm->response_ring[port_id];
 
     /* check if request queue is initialized */
@@ -419,7 +419,7 @@ struct response *
 async_response_get(uint16_t core_id,
                    uint16_t port_id)
 {
-    struct rule_manager *rm = &g_rule_manager[core_id];
+    struct async_manager *rm = &g_async_manager[core_id];
     struct resp_ring *resp_ring = &rm->response_ring[port_id];
 
     /* check if request queue is initialized */
@@ -452,7 +452,7 @@ async_response_get(uint16_t core_id,
 void async_response_consume(uint16_t core_id,
                             uint16_t port_id)
 {
-    struct rule_manager *rm = &g_rule_manager[core_id];
+    struct async_manager *rm = &g_async_manager[core_id];
     struct resp_ring *resp_ring = &rm->response_ring[port_id];
 
     if (++resp_ring->head >= resp_ring->size)

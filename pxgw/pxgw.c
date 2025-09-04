@@ -555,6 +555,7 @@ int lcore_main(void *args)
                                   qid,
                                   wmbufs[port_id],
                                   nb_tx[port_id]);
+            (void)ret;
 #else
 #if (USE_LRO || USE_GRO)
             px_setup_tso_burst(port_id,
@@ -577,7 +578,6 @@ int lcore_main(void *args)
                                    qid,
                                    wmbufs[port_id],
                                    nb_tx[port_id]);
-#endif
             if (ret < nb_tx[port_id])
             {
                 printf("Port %d: Sent %d packets, "
@@ -589,6 +589,7 @@ int lcore_main(void *args)
                     rte_pktmbuf_free(wmbufs[port_id][i]);
                 }
             }
+#endif
             /* Reset after sending */
             nb_tx[port_id] = 0;
         }

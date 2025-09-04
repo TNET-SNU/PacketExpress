@@ -260,7 +260,12 @@ void print_cache_stats(void)
         iter = &g_cache_manager[port_id];
 
         fprintf(stdout,
-                " |-[P%2d] %ld/sec, cur: %lu, +: %lu, -: %lu, +-: %lu\n",
+                " |-[P%2d] "
+                "%ld/sec, "
+                "cur: %lu, "
+                "+: %lu, "
+                "-: %lu, "
+                "+-: %lu\n",
                 port_id,
                 (iter->temp_cached_size + iter->temp_evicted_size),
                 iter->current_cached_size,
@@ -285,7 +290,12 @@ void print_cache_stats(void)
         return;
     }
     fprintf(stdout,
-            "[   TOTAL   ] %ld/sec, cur: %lu, +: %lu, -: %lu, +-: %lu\n",
+            "[   TOTAL   ] "
+            "%ld/sec, "
+            "cur: %lu, "
+            "+: %lu, "
+            "-: %lu, "
+            "+-: %lu\n",
             (total.temp_cached_size + total.temp_evicted_size),
             total.current_cached_size,
             total.total_cached_size,

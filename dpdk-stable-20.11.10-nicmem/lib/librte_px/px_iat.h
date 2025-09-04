@@ -15,13 +15,6 @@ extern "C"
 #define OUTLIER_CNT 3
 #define OUTLIER_FACTOR 10
 /*----------------------------------------------------------------------------*/
-enum iat_state
-{
-    STABLE,
-    PROBING,
-    IGNORE,
-};
-/*----------------------------------------------------------------------------*/
 /* Structure to encapsulate mempool and hash table */
 struct px_iat_ctx
 {
@@ -47,7 +40,6 @@ struct flow_iat_entry
     uint32_t pending_data_len[OUTLIER_CNT];  /* size of packets per pending */
     uint32_t pending_nb_segs[OUTLIER_CNT];   /* number of segments per pending */
     uint16_t pending_cnt;                    /* number of pending */
-    enum iat_state state;                    /* state of the entry */
     uint64_t last_update;                    /* SW timestamp of this entry */
 };
 struct rpow_tbl_t

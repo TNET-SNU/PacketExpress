@@ -29,6 +29,7 @@ extern "C"
 #include <rte_version.h>
 #include <rte_ethdev.h>
 #include <rte_mbuf_core.h>
+#include <rte_atomic.h>
 #include <rte_cycles.h>
 #include <rte_ether.h>
 #include <rte_ip.h>
@@ -120,14 +121,20 @@ struct px_dev
 {
     uint16_t num_rxq;
     uint16_t max_rxq;
-    uint16_t max_rxq_incr;
+    uint16_t max_rxq_per_rxq;
+
+    uint16_t num_rxq_per_rxq;
+    uint16_t prev_num_rxq_per_rxq;
+
     uint16_t gear_val;
-    uint16_t num_rxq_incr;
+    uint16_t prev_gear_val;
+    
     uint16_t num_txq;
-    uint16_t num_txq_incr;
     uint16_t imtu_size;
     uint16_t emtu_size;
     uint16_t reta_size;
+
+    int is_transient;
 
     /* for packet delaying */
     uint32_t cutoff_ns;
