@@ -3,8 +3,19 @@
 /*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 #include <atomic> // C++ atomics
+typedef std::atomic<uint32_t> atomic_u32_t;
+typedef std::atomic<uint8_t> atomic_u8_t;
+using std::memory_order;
+using std::memory_order_relaxed;
+using std::memory_order_acquire;
+using std::memory_order_release;
+using std::memory_order_acq_rel;
+using std::memory_order_seq_cst;
 #else
 #include <stdatomic.h> // C11 atomics
+#include <stdint.h>
+typedef _Atomic uint32_t atomic_u32_t;
+typedef _Atomic uint8_t atomic_u8_t;
 #endif
 /*----------------------------------------------------------------------------*/
 #ifdef __cplusplus

@@ -558,22 +558,9 @@ uint16_t px_latent_min_gear_idx(uint16_t port_id)
     return latent_ctx->min_gear_idx;
 }
 /*----------------------------------------------------------------------------*/
-int px_latent_gear_shift_auto(float tput,
-                              float yield,
-                              float delay)
+int px_latent_gear_shift_auto(struct perf_metric *cur)
 {
-    static float prev_tput = 0;
-    static float steady_tput = 0;
-    static float prev_steady_tput = 0;
-
-    static float prev_delay = 0;
-    static float steady_delay = 0;
-    static float prev_steady_delay = 0;
-
-    static float prev_yield = 0;
-    static float steady_yield = 0;
-    static float prev_steady_yield = 0;
-
+    static struct perf_metric prev = {0}, steady = {0}, prev_steady = {0};
     static enum gear_state state = INITIAL, prev_state = INITIAL;
     static int cruise_period = 0;
     static int is_steady = 0;
@@ -605,7 +592,7 @@ int px_latent_gear_shift_auto(float tput,
     }
 
     /* skip zero turn */
-    if (!tput || !delay || !yield)
+    if (!cur->tput || !cur->delay || !cur->yield)
     {
         state = INITIAL;
         is_steady = 0;
@@ -613,17 +600,17 @@ int px_latent_gear_shift_auto(float tput,
     }
 
     /* skip first turn */
-    if (!prev_tput || !prev_delay || !prev_yield)
+    if (!prev.tput || !prev.delay || !prev.yield)
     {
         goto Finish;
     }
 
-    /* check confirmed for each port */
+    /* check confirmed by worker thread for each port */
     for (port_id = 0; port_id < g_num_ports; port_id++)
     {
         if (!px_latent_gear_check_confirm(port_id))
         {
-            /* previous gear shifting is not confirmed by worker thread */
+            /* previous shifting is not confirmed by worker thread */
             return -1;
         }
     }
@@ -634,20 +621,15 @@ int px_latent_gear_shift_auto(float tput,
         if (!is_steady)
         {
             /* wait until steady state */
-            if (!px_latent_is_steady(tput,
-                                     prev_tput,
-                                     delay,
-                                     prev_delay,
-                                     yield,
-                                     prev_yield))
+            if (!px_latent_is_steady(cur, &prev))
             {
                 goto Finish;
             }
-            steady_tput = prev_tput;
-            steady_delay = prev_delay;
-            steady_yield = prev_yield;
+            steady = *cur;
             is_steady = 1;
         }
+
+        /* not it is steady state */
 
         /**
          * check minimum and maximum gear indices and
@@ -669,18 +651,20 @@ int px_latent_gear_shift_auto(float tput,
                         {
                             /* it should not happen */
                             rte_exit(EXIT_FAILURE,
-                                     "[P%d] px_latent_gear_shift_up failed: %d\n",
+                                     "[%s:%s:%d] [P%d] "
+                                     "px_latent_gear_shift_up failed: %d\n",
+                                     __FILE__, __func__, __LINE__,
                                      port_id, ret);
                         }
                         /* it is due to QP overflow, try again */
                         fprintf(stderr,
-                                "[P%d] px_latent_gear_shift_up failed: %d\n",
+                                "[%s:%s:%d] [P%d] "
+                                "px_latent_gear_shift_up failed: %d\n",
+                                __FILE__, __func__, __LINE__,
                                 port_id, ret);
                         goto Finish;
                     }
-                    prev_steady_tput = steady_tput;
-                    prev_steady_delay = steady_delay;
-                    prev_steady_yield = steady_yield;
+                    prev_steady = steady;
                     prev_state = state;
                     state = SHIFTING_UP;
                     is_steady = 0;
@@ -688,49 +672,39 @@ int px_latent_gear_shift_auto(float tput,
                 }
                 /* it is due to QP overflow, try again */
                 fprintf(stderr,
-                        "[P%d] px_latent_gear_shift_down failed: %d\n",
+                        "[%s:%s:%d] [P%d] "
+                        "px_latent_gear_shift_down failed: %d\n",
+                        __FILE__, __func__, __LINE__,
                         port_id, ret);
                 goto Finish;
             }
         }
-        prev_steady_tput = steady_tput;
-        prev_steady_delay = steady_delay;
-        prev_steady_yield = steady_yield;
+        prev_steady = steady;
         prev_state = state;
         state = SHIFTING_DOWN;
         is_steady = 0;
         goto Finish;
     }
-    /* if gear down state */
+    /* if shift down state */
     else if (state == SHIFTING_DOWN)
     {
         if (!is_steady)
         {
             /* wait until steady state */
-            if (!px_latent_is_steady(tput,
-                                     prev_tput,
-                                     delay,
-                                     prev_delay,
-                                     yield,
-                                     prev_yield))
+            if (!px_latent_is_steady(cur, &prev))
             {
                 goto Finish;
             }
-            steady_tput = prev_tput;
-            steady_delay = prev_delay;
-            steady_yield = prev_yield;
+            steady = *cur;
             is_steady = 1;
         }
 
-        /* check if it is better after gear down */
-        if (px_latent_is_better(steady_tput,
-                                prev_steady_tput,
-                                steady_delay,
-                                prev_steady_delay,
-                                steady_yield,
-                                prev_steady_yield) > 0)
+        /* not it is steady state */
+
+        /* check if it is better after shift down */
+        if (px_latent_is_better(&steady, &prev_steady) > 0)
         {
-            /* try gear down again */
+            /* try shift down again */
             for (port_id = 0; port_id < g_num_ports; port_id++)
             {
                 ret = px_latent_gear_shift_down(core_id, port_id);
@@ -739,9 +713,7 @@ int px_latent_gear_shift_auto(float tput,
                     if (ret == -1)
                     {
                         /* if cannot shift down, go to cruise */
-                        prev_steady_tput = steady_tput;
-                        prev_steady_delay = steady_delay;
-                        prev_steady_yield = steady_yield;
+                        prev_steady = steady;
                         prev_state = state;
                         state = CRUISING;
                         is_steady = 0;
@@ -749,14 +721,14 @@ int px_latent_gear_shift_auto(float tput,
                     }
                     /* it is due to QP overflow, try again */
                     fprintf(stderr,
-                            "[P%d] px_latent_gear_shift_down failed: %d\n",
+                            "[%s:%s:%d] [P%d] "
+                            "px_latent_gear_shift_down failed: %d\n",
+                            __FILE__, __func__, __LINE__,
                             port_id, ret);
                     goto Finish;
                 }
             }
-            prev_steady_tput = steady_tput;
-            prev_steady_delay = steady_delay;
-            prev_steady_yield = steady_yield;
+            prev_steady = steady;
             prev_state = state;
             is_steady = 0;
             goto Finish;
@@ -765,7 +737,7 @@ int px_latent_gear_shift_auto(float tput,
         {
             if (prev_state == INITIAL || prev_state == SHIFTING_DOWN)
             {
-                /* try gear up and stop */
+                /* try shift up and stop */
                 for (port_id = 0; port_id < g_num_ports; port_id++)
                 {
                     ret = px_latent_gear_shift_up(core_id, port_id);
@@ -775,19 +747,21 @@ int px_latent_gear_shift_auto(float tput,
                         {
                             /* it should not happen */
                             rte_exit(EXIT_FAILURE,
-                                     "[P%d] px_latent_gear_shift_up failed: %d\n",
+                                     "[%s:%s:%d] [P%d] "
+                                     "px_latent_gear_shift_up failed: %d\n",
+                                     __FILE__, __func__, __LINE__,
                                      port_id, ret);
                         }
                         /* it is due to QP overflow, try again */
                         fprintf(stderr,
-                                "[P%d] px_latent_gear_shift_up failed: %d\n",
+                                "[%s:%s:%d] [P%d] "
+                                "px_latent_gear_shift_up failed: %d\n",
+                                __FILE__, __func__, __LINE__,
                                 port_id, ret);
                         goto Finish;
                     }
                 }
-                prev_steady_tput = steady_tput;
-                prev_steady_delay = steady_delay;
-                prev_steady_yield = steady_yield;
+                prev_steady = steady;
                 prev_state = state;
                 state = CRUISING;
                 is_steady = 0;
@@ -795,7 +769,7 @@ int px_latent_gear_shift_auto(float tput,
             }
             if (prev_state == SHIFTING_UP)
             {
-                /* try gear down again */
+                /* try shift down again */
                 for (port_id = 0; port_id < g_num_ports; port_id++)
                 {
                     ret = px_latent_gear_shift_down(core_id, port_id);
@@ -804,9 +778,7 @@ int px_latent_gear_shift_auto(float tput,
                         if (ret == -1)
                         {
                             /* if cannot shift down, go to cruise */
-                            prev_steady_tput = steady_tput;
-                            prev_steady_delay = steady_delay;
-                            prev_steady_yield = steady_yield;
+                            prev_steady = steady;
                             prev_state = state;
                             state = CRUISING;
                             is_steady = 0;
@@ -814,21 +786,21 @@ int px_latent_gear_shift_auto(float tput,
                         }
                         /* it is due to QP overflow, try again */
                         fprintf(stderr,
-                                "[P%d] px_latent_gear_shift_down failed: %d\n",
+                                "[%s:%s:%d] [P%d] "
+                                "px_latent_gear_shift_down failed: %d\n",
+                                __FILE__, __func__, __LINE__,
                                 port_id, ret);
                         goto Finish;
                     }
                 }
-                prev_steady_tput = steady_tput;
-                prev_steady_delay = steady_delay;
-                prev_steady_yield = steady_yield;
+                prev_steady = steady;
                 prev_state = state;
                 is_steady = 0;
                 goto Finish;
             }
             if (prev_state == PROBING)
             {
-                /* try gear up and go to SHIFTING_UP */
+                /* try shift up and go to SHIFTING_UP */
                 for (port_id = 0; port_id < g_num_ports; port_id++)
                 {
                     ret = px_latent_gear_shift_up(core_id, port_id);
@@ -838,19 +810,21 @@ int px_latent_gear_shift_auto(float tput,
                         {
                             /* it should not happen */
                             rte_exit(EXIT_FAILURE,
-                                     "[P%d] px_latent_gear_shift_up failed: %d\n",
+                                     "[%s:%s:%d] [P%d] "
+                                     "px_latent_gear_shift_up failed: %d\n",
+                                     __FILE__, __func__, __LINE__,
                                      port_id, ret);
                         }
                         /* it is due to QP overflow, try again */
                         fprintf(stderr,
-                                "[P%d] px_latent_gear_shift_up failed: %d\n",
+                                "[%s:%s:%d] [P%d] "
+                                "px_latent_gear_shift_up failed: %d\n",
+                                __FILE__, __func__, __LINE__,
                                 port_id, ret);
                         goto Finish;
                     }
                 }
-                prev_steady_tput = steady_tput;
-                prev_steady_delay = steady_delay;
-                prev_steady_yield = steady_yield;
+                prev_steady = steady;
                 prev_state = state;
                 state = SHIFTING_UP;
                 is_steady = 0;
@@ -858,36 +832,26 @@ int px_latent_gear_shift_auto(float tput,
             }
         }
     }
-    /* if gear up state */
+    /* if shift up state */
     else if (state == SHIFTING_UP)
     {
         if (!is_steady)
         {
             /* wait until steady state */
-            if (!px_latent_is_steady(tput,
-                                     prev_tput,
-                                     delay,
-                                     prev_delay,
-                                     yield,
-                                     prev_yield))
+            if (!px_latent_is_steady(cur, &prev))
             {
                 goto Finish;
             }
-            steady_tput = prev_tput;
-            steady_delay = prev_delay;
-            steady_yield = prev_yield;
+            steady = *cur;
             is_steady = 1;
         }
 
-        /* check if it is better after gear down */
-        if (px_latent_is_better(steady_tput,
-                                prev_steady_tput,
-                                steady_delay,
-                                prev_steady_delay,
-                                steady_yield,
-                                prev_steady_yield) > 0)
+        /* not it is steady state */
+
+        /* check if it is better after shift down */
+        if (px_latent_is_better(&steady, &prev_steady) > 0)
         {
-            /* try gear up again */
+            /* try shift up again */
             for (port_id = 0; port_id < g_num_ports; port_id++)
             {
                 ret = px_latent_gear_shift_up(core_id, port_id);
@@ -896,9 +860,7 @@ int px_latent_gear_shift_auto(float tput,
                     if (ret == -1)
                     {
                         /* if cannot shift down, go to cruise */
-                        prev_steady_tput = steady_tput;
-                        prev_steady_delay = steady_delay;
-                        prev_steady_yield = steady_yield;
+                        prev_steady = steady;
                         prev_state = state;
                         state = CRUISING;
                         is_steady = 0;
@@ -906,14 +868,14 @@ int px_latent_gear_shift_auto(float tput,
                     }
                     /* it is due to QP overflow, try again */
                     fprintf(stderr,
-                            "[P%d] px_latent_gear_shift_up failed: %d\n",
+                            "[%s:%s:%d] [P%d] "
+                            "px_latent_gear_shift_up failed: %d\n",
+                            __FILE__, __func__, __LINE__,
                             port_id, ret);
                     goto Finish;
                 }
             }
-            prev_steady_tput = steady_tput;
-            prev_steady_delay = steady_delay;
-            prev_steady_yield = steady_yield;
+            prev_steady = steady;
             prev_state = state;
             is_steady = 0;
             goto Finish;
@@ -922,7 +884,7 @@ int px_latent_gear_shift_auto(float tput,
         {
             if (prev_state == INITIAL || prev_state == SHIFTING_UP)
             {
-                /* try gear down and stop */
+                /* try shift down and stop */
                 for (port_id = 0; port_id < g_num_ports; port_id++)
                 {
                     ret = px_latent_gear_shift_down(core_id, port_id);
@@ -932,19 +894,21 @@ int px_latent_gear_shift_auto(float tput,
                         {
                             /* it should not happen */
                             rte_exit(EXIT_FAILURE,
-                                     "[P%d] px_latent_gear_shift_down failed: %d\n",
+                                     "[%s:%s:%d] [P%d] "
+                                     "px_latent_gear_shift_down failed: %d\n",
+                                     __FILE__, __func__, __LINE__,
                                      port_id, ret);
                         }
                         /* it is due to QP overflow, try again */
                         fprintf(stderr,
-                                "[P%d] px_latent_gear_shift_down failed: %d\n",
+                                "[%s:%s:%d] [P%d] "
+                                "px_latent_gear_shift_down failed: %d\n",
+                                __FILE__, __func__, __LINE__,
                                 port_id, ret);
                         goto Finish;
                     }
                 }
-                prev_steady_tput = steady_tput;
-                prev_steady_delay = steady_delay;
-                prev_steady_yield = steady_yield;
+                prev_steady = steady;
                 prev_state = state;
                 state = CRUISING;
                 is_steady = 0;
@@ -952,7 +916,7 @@ int px_latent_gear_shift_auto(float tput,
             }
             if (prev_state == SHIFTING_DOWN)
             {
-                /* try gear up again */
+                /* try shift up again */
                 for (port_id = 0; port_id < g_num_ports; port_id++)
                 {
                     ret = px_latent_gear_shift_up(core_id, port_id);
@@ -961,9 +925,7 @@ int px_latent_gear_shift_auto(float tput,
                         if (ret == -1)
                         {
                             /* if cannot shift up, go to cruise */
-                            prev_steady_tput = steady_tput;
-                            prev_steady_delay = steady_delay;
-                            prev_steady_yield = steady_yield;
+                            prev_steady = steady;
                             prev_state = state;
                             state = CRUISING;
                             is_steady = 0;
@@ -971,21 +933,21 @@ int px_latent_gear_shift_auto(float tput,
                         }
                         /* it is due to QP overflow, try again */
                         fprintf(stderr,
-                                "[P%d] px_latent_gear_shift_up failed: %d\n",
+                                "[%s:%s:%d] [P%d] "
+                                "px_latent_gear_shift_up failed: %d\n",
+                                __FILE__, __func__, __LINE__,
                                 port_id, ret);
                         goto Finish;
                     }
                 }
-                prev_steady_tput = steady_tput;
-                prev_steady_delay = steady_delay;
-                prev_steady_yield = steady_yield;
+                prev_steady = steady;
                 prev_state = state;
                 is_steady = 0;
                 goto Finish;
             }
             if (prev_state == PROBING)
             {
-                /* try gear down and go to SHIFTING_DOWN */
+                /* try shift down and go to SHIFTING_DOWN */
                 for (port_id = 0; port_id < g_num_ports; port_id++)
                 {
                     ret = px_latent_gear_shift_down(core_id, port_id);
@@ -995,19 +957,21 @@ int px_latent_gear_shift_auto(float tput,
                         {
                             /* it should not happen */
                             rte_exit(EXIT_FAILURE,
-                                     "[P%d] px_latent_gear_shift_down failed: %d\n",
+                                     "[%s:%s:%d] [P%d] "
+                                     "px_latent_gear_shift_down failed: %d\n",
+                                     __FILE__, __func__, __LINE__,
                                      port_id, ret);
                         }
                         /* it is due to QP overflow, try again */
                         fprintf(stderr,
-                                "[P%d] px_latent_gear_shift_down failed: %d\n",
+                                "[%s:%s:%d] [P%d] "
+                                "px_latent_gear_shift_down failed: %d\n",
+                                __FILE__, __func__, __LINE__,
                                 port_id, ret);
                         goto Finish;
                     }
                 }
-                prev_steady_tput = steady_tput;
-                prev_steady_delay = steady_delay;
-                prev_steady_yield = steady_yield;
+                prev_steady = steady;
                 prev_state = state;
                 state = SHIFTING_DOWN;
                 is_steady = 0;
@@ -1021,24 +985,29 @@ int px_latent_gear_shift_auto(float tput,
         if (!is_steady)
         {
             /* wait until steady state */
-            if (!px_latent_is_steady(tput,
-                                     prev_tput,
-                                     delay,
-                                     prev_delay,
-                                     yield,
-                                     prev_yield))
+            if (!px_latent_is_steady(cur, &prev))
             {
                 goto Finish;
             }
-            steady_tput = prev_tput;
-            steady_delay = prev_delay;
-            steady_yield = prev_yield;
+            steady = *cur;
             is_steady = 1;
+        }
+
+        /* not it is steady state */
+
+        /* detect if current stats are changed a lot */
+        if (px_latent_is_fluctuating(cur, &steady))
+        {
+            /* if so, go to probe state */
+            prev_steady = steady;
+            prev_state = state;
+            state = PROBING;
+            is_steady = 0;
+            goto Finish;
         }
 
         /**
          * keep cruise state for at least 5 seconds
-         * after reaching steady state
          */
         if (cruise_period < CRUISE_PERIOD)
         {
@@ -1047,54 +1016,32 @@ int px_latent_gear_shift_auto(float tput,
         }
         cruise_period = 0;
 
-        /* detect if current stats are changed a lot */
-        if (px_latent_is_fluctuating(tput,
-                                     steady_tput,
-                                     delay,
-                                     steady_delay,
-                                     yield,
-                                     steady_yield))
-        {
-            /* if so, go to probe state */
-            prev_steady_tput = steady_tput;
-            prev_steady_delay = steady_delay;
-            prev_steady_yield = steady_yield;
-            prev_state = state;
-            state = PROBING;
-            is_steady = 0;
-            goto Finish;
-        }
+        /* after CRUISE_PERIOD, try shift up for probing better space */
+        prev_steady = steady;
+        prev_state = state;
+        state = PROBING;
+        is_steady = 0;
+        goto Finish;
     }
     else if (state == PROBING)
     {
         if (!is_steady)
         {
             /* wait until steady state */
-            if (!px_latent_is_steady(tput,
-                                     prev_tput,
-                                     delay,
-                                     prev_delay,
-                                     yield,
-                                     prev_yield))
+            if (!px_latent_is_steady(cur, &prev))
             {
                 goto Finish;
             }
-            steady_tput = prev_tput;
-            steady_delay = prev_delay;
-            steady_yield = prev_yield;
+            steady = *cur;
             is_steady = 1;
         }
 
+        /* not it is steady state */
+
         /* check if it is getting better */
-        ret = px_latent_is_better(steady_tput,
-                                  prev_steady_tput,
-                                  steady_delay,
-                                  prev_steady_delay,
-                                  steady_yield,
-                                  prev_steady_yield);
-        if (ret > 0)
+        if (px_latent_is_better(&steady, &prev_steady) > 0)
         {
-            /* if so, try gear down */
+            /* if so, try shift down */
             for (port_id = 0; port_id < g_num_ports; port_id++)
             {
                 ret = px_latent_gear_shift_down(core_id, port_id);
@@ -1103,9 +1050,27 @@ int px_latent_gear_shift_auto(float tput,
                     if (ret == -1)
                     {
                         /* if cannot shift down, try shift up */
-                        prev_steady_tput = steady_tput;
-                        prev_steady_delay = steady_delay;
-                        prev_steady_yield = steady_yield;
+                        ret = px_latent_gear_shift_up(core_id, port_id);
+                        if (ret < 0)
+                        {
+                            if (ret == -1)
+                            {
+                                /* it should not happen */
+                                rte_exit(EXIT_FAILURE,
+                                         "[%s:%s:%d] [P%d] "
+                                         "px_latent_gear_shift_up failed: %d\n",
+                                         __FILE__, __func__, __LINE__,
+                                         port_id, ret);
+                            }
+                            /* it is due to QP overflow, try again */
+                            fprintf(stderr,
+                                    "[%s:%s:%d] [P%d] "
+                                    "px_latent_gear_shift_up failed: %d\n",
+                                    __FILE__, __func__, __LINE__,
+                                    port_id, ret);
+                            goto Finish;
+                        }
+                        prev_steady = steady;
                         prev_state = state;
                         state = SHIFTING_UP;
                         is_steady = 0;
@@ -1113,61 +1078,73 @@ int px_latent_gear_shift_auto(float tput,
                     }
                     /* it is due to QP overflow, try again */
                     fprintf(stderr,
-                            "[P%d] px_latent_gear_shift_down failed: %d\n",
+                            "[%s:%s:%d] [P%d] "
+                            "px_latent_gear_shift_down failed: %d\n",
+                            __FILE__, __func__, __LINE__,
                             port_id, ret);
                     goto Finish;
                 }
             }
-            prev_steady_tput = steady_tput;
-            prev_steady_delay = steady_delay;
-            prev_steady_yield = steady_yield;
+            prev_steady = steady;
             prev_state = state;
             state = SHIFTING_DOWN;
             is_steady = 0;
             goto Finish;
         }
 
-        /* check if it is getting worse */
-        if (ret < 0)
+        /* try shift up */
+        for (port_id = 0; port_id < g_num_ports; port_id++)
         {
-            /* if so, try gear up */
-            for (port_id = 0; port_id < g_num_ports; port_id++)
+            ret = px_latent_gear_shift_up(core_id, port_id);
+            if (ret < 0)
             {
-                ret = px_latent_gear_shift_up(core_id, port_id);
-                if (ret < 0)
+                if (ret == -1)
                 {
-                    if (ret == -1)
+                    /* if cannot shift up, try shift down */
+                    ret = px_latent_gear_shift_down(core_id, port_id);
+                    if (ret < 0)
                     {
-                        /* if cannot shift up, try shift down */
-                        prev_steady_tput = steady_tput;
-                        prev_steady_delay = steady_delay;
-                        prev_steady_yield = steady_yield;
-                        prev_state = state;
-                        state = SHIFTING_DOWN;
-                        is_steady = 0;
+                        if (ret == -1)
+                        {
+                            /* it should not happen */
+                            rte_exit(EXIT_FAILURE,
+                                     "[%s:%s:%d] [P%d] "
+                                     "px_latent_gear_shift_down failed: %d\n",
+                                     __FILE__, __func__, __LINE__,
+                                     port_id, ret);
+                        }
+                        /* it is due to QP overflow, try again */
+                        fprintf(stderr,
+                                "[%s:%s:%d] [P%d] "
+                                "px_latent_gear_shift_down failed: %d\n",
+                                __FILE__, __func__, __LINE__,
+                                port_id, ret);
                         goto Finish;
                     }
-                    /* it is due to QP overflow, try again */
-                    fprintf(stderr,
-                            "[P%d] px_latent_gear_shift_up failed: %d\n",
-                            port_id, ret);
+                    prev_steady = steady;
+                    prev_state = state;
+                    state = SHIFTING_DOWN;
+                    is_steady = 0;
                     goto Finish;
                 }
+                /* it is due to QP overflow, try again */
+                fprintf(stderr,
+                        "[%s:%s:%d] [P%d] "
+                        "px_latent_gear_shift_up failed: %d\n",
+                        __FILE__, __func__, __LINE__,
+                        port_id, ret);
+                goto Finish;
             }
-            prev_steady_tput = steady_tput;
-            prev_steady_delay = steady_delay;
-            prev_steady_yield = steady_yield;
-            prev_state = state;
-            state = SHIFTING_UP;
-            is_steady = 0;
-            goto Finish;
         }
+        prev_steady = steady;
+        prev_state = state;
+        state = SHIFTING_UP;
+        is_steady = 0;
+        goto Finish;
     }
 
 Finish:
-    prev_tput = tput;
-    prev_delay = delay;
-    prev_yield = yield;
+    prev = *cur;
 
     return 0;
 }

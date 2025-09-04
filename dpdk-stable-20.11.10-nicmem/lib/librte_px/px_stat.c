@@ -181,6 +181,7 @@ void px_stat_monitor(int args)
     struct px_tcp_stat *tcp_iter, tcp_total = {0};
     struct px_rx_stat *rx_iter, rx_total = {0};
     struct px_tx_stat *tx_iter, tx_total = {0};
+    struct perf_metric cur;
     uint64_t iat_burst_iat_iter, iat_burst_iat_total = 0;
     uint64_t iat_data_len_iter, iat_data_len_total = 0;
     uint64_t iat_count_iter, iat_count_total = 0;
@@ -421,9 +422,10 @@ void px_stat_monitor(int args)
     print_cache_stats();
 
     (void)yield1_total;
-    ret = px_latent_gear_shift_auto((float)gbps_total,
-                                    yield2_total,
-                                    (float)delay_total);
+    cur.tput = (float)gbps_total;
+    cur.yield = yield2_total;
+    cur.delay = (float)delay_total;
+    ret = px_latent_gear_shift_auto(&cur);
     if (ret < 0)
     {
         fprintf(stdout, "Failed to control gear\n");

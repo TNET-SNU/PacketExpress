@@ -33,8 +33,8 @@ struct px_mss_ctx
     uint16_t lq_id;
     struct rte_hash *tbl;
     struct rte_mempool *pool;
-    _Atomic uint32_t epoch;
-    _Atomic uint8_t *bf;
+    atomic_u32_t epoch;
+    atomic_u8_t *bf;
 };
 struct flow_mss_entry
 {
@@ -96,7 +96,7 @@ cpu_relax(void)
 /* writer wraps sections from begin to end */
 /* single writer entry: CAS from even e to odd e+1 */
 static inline void
-mss_bloom_update_begin(_Atomic uint32_t *epoch)
+mss_bloom_update_begin(atomic_u32_t *epoch)
 {
     uint32_t e =
         atomic_load_explicit(
@@ -127,7 +127,7 @@ mss_bloom_update_begin(_Atomic uint32_t *epoch)
 /*----------------------------------------------------------------------------*/
 /* single writer exit: CAS from odd e to even e+1 */
 static inline void
-mss_bloom_update_end(_Atomic uint32_t *epoch)
+mss_bloom_update_end(atomic_u32_t *epoch)
 {
     atomic_fetch_add_explicit(
         epoch,
@@ -135,16 +135,16 @@ mss_bloom_update_end(_Atomic uint32_t *epoch)
         memory_order_release);
 }
 /*----------------------------------------------------------------------------*/
-static inline _Atomic uint8_t *
+static inline atomic_u8_t *
 mss_bloom_init(void)
 {
     /* 65536 entries (0 .. 65535) */
     /* ToDo: Make it parameterized */
     size_t n = (size_t)UINT16_MAX + 1u;
 
-    /* calloc based on the size of _Atomic uint8_t */
-    _Atomic uint8_t *filter =
-        (_Atomic uint8_t *)calloc(n, sizeof(_Atomic uint8_t));
+    /* calloc based on the size of atomic_u8_t */
+    atomic_u8_t *filter =
+        (atomic_u8_t *)calloc(n, sizeof(atomic_u8_t));
     if (!filter)
     {
         fprintf(stderr, "mss_bloom_init: calloc failed\n");
@@ -155,14 +155,14 @@ mss_bloom_init(void)
 }
 /*----------------------------------------------------------------------------*/
 static inline void
-mss_bloom_destroy(_Atomic uint8_t *filter)
+mss_bloom_destroy(atomic_u8_t *filter)
 {
     free(filter);
 }
 /*----------------------------------------------------------------------------*/
 static inline void
-mss_bloom_insert(_Atomic uint8_t *filter,
-                 _Atomic uint32_t *epoch,
+mss_bloom_insert(atomic_u8_t *filter,
+                 atomic_u32_t *epoch,
                  uint32_t rss,
                  const struct four_tuple *key)
 {
@@ -231,8 +231,8 @@ mss_bloom_insert(_Atomic uint8_t *filter,
 }
 /*----------------------------------------------------------------------------*/
 static inline void
-mss_bloom_delete(_Atomic uint8_t *filter,
-                 _Atomic uint32_t *epoch,
+mss_bloom_delete(atomic_u8_t *filter,
+                 atomic_u32_t *epoch,
                  uint32_t rss,
                  const struct four_tuple *key)
 {
@@ -314,8 +314,8 @@ mss_bloom_delete(_Atomic uint8_t *filter,
 /*----------------------------------------------------------------------------*/
 /* reader verifies three counters in the same epoch snapshot */
 static inline int
-mss_bloom_search(const _Atomic uint8_t *filter,
-                 const _Atomic uint32_t *epoch,
+mss_bloom_search(const atomic_u8_t *filter,
+                 const atomic_u32_t *epoch,
                  uint32_t rss,
                  const struct four_tuple *key)
 {
