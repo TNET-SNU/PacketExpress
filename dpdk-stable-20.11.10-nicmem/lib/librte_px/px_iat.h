@@ -12,8 +12,8 @@ extern "C"
 #define IAT_TIMEOUT 300
 #define EWMA_ALPHA 0.125 // α = 1/8
 #define NMAX 45
-#define OUTLIER_CNT 3
-#define OUTLIER_FACTOR 10
+#define OUTLIER_CNT 4
+#define OUTLIER_FACTOR 4
 /*----------------------------------------------------------------------------*/
 /* Structure to encapsulate mempool and hash table */
 struct px_iat_ctx
@@ -36,10 +36,20 @@ struct flow_iat_entry
     uint32_t avg_burst_iat;                  /* avg. burst IAT (EWMA) */
     uint32_t avg_data_len;                   /* avg. packet size (EWMA) */
     uint32_t avg_round_iat;                  /* avg. round IAT (EWMA) */
+    uint32_t avg_throughput;                 /* avg. throughput (EWMA) */
     uint32_t pending_burst_iat[OUTLIER_CNT]; /* pending IAT (not used in EWMA) */
     uint32_t pending_data_len[OUTLIER_CNT];  /* size of packets per pending */
     uint32_t pending_nb_segs[OUTLIER_CNT];   /* number of segments per pending */
-    uint16_t pending_cnt;                    /* number of pending */
+    uint8_t pending_cnt;                     /* number of pending */
+    uint8_t l2_len;
+    uint8_t l3_len;
+    uint8_t l4_len;
+
+#if PX_MEASURE_STATS
+    uint64_t bytes;
+    uint64_t pkts;
+#endif
+
     uint64_t last_update;                    /* SW timestamp of this entry */
 };
 struct rpow_tbl_t
@@ -163,7 +173,7 @@ int iat_update_entry(uint16_t port_id,
 /*----------------------------------------------------------------------------*/
 int iat_search_entry(uint16_t port_id,
                      uint16_t queue_id,
-                     struct rte_mbuf *pkt,
+                     struct four_tuple *key,
                      uint32_t *avg_burst_iat,
                      uint32_t *avg_data_len,
                      uint64_t now);
@@ -178,6 +188,30 @@ void iat_flush_timeout(uint16_t port_id,
 static inline float
 iat_time_factor(uint32_t missing_segs_nb)
 {
+    /* below is for no delaying */
+    static const float timeout_factor_no_delay[] = {
+        00.00f, // no need to delay
+        00.00f, // no need to delay
+        00.00f, // no need to delay
+        00.00f, // no need to delay
+        00.00f, // no need to delay
+        00.00f, // no need to delay
+        00.00f, // no need to delay
+        00.00f, // no need to delay
+        00.00f, // no need to delay
+        00.00f, // no need to delay
+        00.00f, // no need to delay
+        00.00f, // no need to delay
+        00.00f, // no need to delay
+        00.00f, // no need to delay
+        00.00f, // no need to delay
+        00.00f, // no need to delay
+        00.00f, // no need to delay
+        00.00f, // no need to delay
+        00.00f, // no need to delay
+        00.00f, // no need to delay
+        00.00f, // no need to delay
+    };
     /* below is for naive delaying */
     static const float timeout_factor_naive[] = {
         00.00f, // no need to delay
@@ -274,24 +308,27 @@ iat_time_factor(uint32_t missing_segs_nb)
         34.25f, // missing_segs = 19
         35.47f, // missing_segs = 20
     };
+    (void)timeout_factor_no_delay;
     (void)timeout_factor_naive;
     (void)timeout_factor_95;
     (void)timeout_factor_99;
     (void)timeout_factor_999;
 
     /* choose one of below */
+    // static const float *timeout_factor = timeout_factor_no_delay;
     // static const float *timeout_factor = timeout_factor_naive;
-    static const float *timeout_factor = timeout_factor_95;
+    // static const float *timeout_factor = timeout_factor_95;
     // static const float *timeout_factor = timeout_factor_99;
-    // static const float *timeout_factor = timeout_factor_999;
+    static const float *timeout_factor = timeout_factor_999;
 
-    if (missing_segs_nb >= 21)
+    if (missing_segs_nb > 21)
     {
         /* to avoid seg fault due to nicmem, dump only first segment */
-        rte_exit(EXIT_FAILURE, "Missing_segs is too large. "
-                               "It might be due to overflow. "
-                               "Please do debug.\n");
-        return 0;
+        fprintf(stderr, "Missing_segs is too large: %u. "
+                        "It might be due to overflow. "
+                        "Please do debug.\n",
+                missing_segs_nb);
+        return -1;
     }
 
     return timeout_factor[missing_segs_nb];

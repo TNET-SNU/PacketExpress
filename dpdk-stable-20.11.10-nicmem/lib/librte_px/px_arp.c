@@ -46,17 +46,18 @@ void px_arp_cleanup(void)
 }
 /*----------------------------------------------------------------------------*/
 int px_arp_configure(struct px_arp_entry *arp_string_table,
-                     int arp_string_table_size)
+                     uint16_t arp_string_table_size)
 {
     // struct px_arp_ctx *arp_ctx = &g_arp_ctx[port_id];
     struct px_arp_ctx *arp_ctx = &g_arp_ctx;
-    int ret, i;
+    uint16_t i;
+    int ret;
 
     if (arp_string_table_size <= 0 ||
-        arp_string_table_size > MAX_ARP_TABLE_SIZE)
+        arp_string_table_size > (uint16_t)MAX_ARP_TABLE_SIZE)
     {
         fprintf(stdout,
-                "Invalid ARP table size: %d\n",
+                "Invalid ARP table size: %hu\n",
                 arp_string_table_size);
         return -1;
     }

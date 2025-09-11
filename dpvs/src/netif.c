@@ -1813,7 +1813,7 @@ static inline uint16_t netif_rx_burst(portid_t pid, struct netif_queue_conf *qco
         };
         nrx = rte_gro_reassemble_burst(qconf->mbufs, nrx, &gro_param);
 #endif
-        px_stat_update_rx(pid, qconf->id, qconf->mbufs, nrx);
+        px_stat_update_rx(pid, qconf->id, qconf->mbufs, nrx, 0, 0);
 #endif
     }
 
@@ -4133,8 +4133,8 @@ int netif_port_start(struct netif_port *port)
     // start PX
     ret = px_init(port->id,
                   NETIF_MAX_PKT_BURST,
-                  !JUMBO_FRAME ? 8192 : 0,
-                  CUTOFF_NS ? 8192 : 0,
+                  !JUMBO_FRAME ? 16384 : 0,
+                  CUTOFF_NS ? 16384 : 0,
                   NULL,
                   NULL,
                   USE_LINK,

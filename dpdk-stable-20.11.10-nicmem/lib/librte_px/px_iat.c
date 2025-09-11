@@ -184,10 +184,13 @@ int iat_update_entry(uint16_t port_id,
     if (rte_hash_lookup_data(ctx->tbl, key, (void **)&entry) >= 0)
     {
         entry->last_update = now;
+        entry->l3_len = (uint16_t)pkt->l3_len;
+        entry->l4_len = (uint16_t)pkt->l4_len;
         if (data_len == 0)
         {
             return 0; // No data to process
         }
+
         /* update IAT stats */
         if (entry->last_timestamp)
         {
@@ -195,6 +198,7 @@ int iat_update_entry(uint16_t port_id,
             {
                 /**
                  * ToDo: One day prevent overflow of uint64_t
+                 * (never occurs in our lifetime...)
                  */
                 burst_iat = ts_ptr - entry->last_timestamp;
 #define WEIGHT_ON_LRO 0
@@ -293,6 +297,14 @@ int iat_update_entry(uint16_t port_id,
                 // }
             }
         }
+
+#if PX_MEASURE_STATS
+        /* update throughput */
+        entry->bytes += data_len;
+        entry->pkts += 1;
+#endif
+
+        /* update the last timestamp */
         entry->last_timestamp = ts_ptr;
         return 0;
     }
@@ -307,10 +319,16 @@ int iat_update_entry(uint16_t port_id,
     /* Fill the entry */
     entry->last_timestamp = ts_ptr;
     entry->avg_burst_iat = 0;
-    entry->avg_data_len = 0;
+    entry->avg_data_len = data_len;
     entry->avg_round_iat = 0;
     entry->pending_cnt = 0;
     entry->last_update = now;
+    entry->l3_len = (uint8_t)pkt->l3_len;
+    entry->l4_len = (uint8_t)pkt->l4_len;
+#if PX_MEASURE_STATS
+    entry->bytes = data_len;
+    entry->pkts = 1;
+#endif
 
     /* Insert into the hash table */
     if (rte_hash_add_key_data(ctx->tbl, key, entry) < 0)
@@ -325,14 +343,13 @@ int iat_update_entry(uint16_t port_id,
 /*----------------------------------------------------------------------------*/
 int iat_search_entry(uint16_t port_id,
                      uint16_t queue_id,
-                     struct rte_mbuf *pkt,
+                     struct four_tuple *key,
                      uint32_t *avg_burst_iat,
                      uint32_t *avg_data_len,
                      uint64_t now)
 {
     struct px_iat_ctx *ctx = &g_iat_ctx[port_id][queue_id];
     struct flow_iat_entry *entry;
-    struct four_tuple *key = get_four_tuple(pkt);
 
     if (!ctx->initialized)
     {
@@ -359,7 +376,9 @@ int iat_search_entry(uint16_t port_id,
         return 0;
     }
 
+    *avg_data_len = 0;
     *avg_burst_iat = 0;
+
     return -1; // Not found
 }
 /*----------------------------------------------------------------------------*/
@@ -381,15 +400,12 @@ int iat_evict_entry(uint16_t port_id,
 
         return 0;
     }
-    else
+    if (errno == ENOENT)
     {
-        if (errno == ENOENT)
-        {
-            return 0;
-        }
-
-        return -1;
+        return 0;
     }
+
+    return -1;
 }
 /*----------------------------------------------------------------------------*/
 void iat_flush_timeout(uint16_t port_id,
@@ -447,7 +463,8 @@ void iat_local_stat(uint16_t port_id,
     while (rte_hash_iterate(ctx->tbl, &next_key, &next_data, &iter) >= 0)
     {
         entry = (struct flow_iat_entry *)next_data;
-        if (entry->avg_burst_iat < ctx->cutoff_ns)
+        if (entry->avg_burst_iat < ctx->cutoff_ns &&
+            entry->bytes * 8 > E6) // skip small flow (e.g., ACK-only < 1Mbps)
         {
             temp_burst_iat += entry->avg_burst_iat;
             temp_data_len += entry->avg_data_len;
@@ -457,6 +474,10 @@ void iat_local_stat(uint16_t port_id,
             //         "  IAT stats: burst_iat: %u, data_len: %u\n",
             //         entry->avg_burst_iat, entry->avg_data_len);
         }
+#if PX_MEASURE_STATS
+        entry->bytes = 0;
+        entry->pkts = 0;
+#endif
     }
 
     if (temp_count == 0 || temp_burst_iat == 0 || temp_data_len == 0)
@@ -474,7 +495,5 @@ void iat_local_stat(uint16_t port_id,
     *total_burst_iat = temp_burst_iat;
     *total_data_len = temp_data_len;
     *total_count = temp_count;
-
-    return;
 }
 /*----------------------------------------------------------------------------*/

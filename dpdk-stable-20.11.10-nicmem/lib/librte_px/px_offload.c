@@ -262,171 +262,81 @@ px_flow_slave_main(void *arg)
 
     while (!g_shutdown)
     {
-        /* poll request queue for each worker core */
-        for (core_id = 0; core_id < g_num_cores; core_id++)
+        if (check_stat_reset(port_id))
         {
-            if (check_stat_reset(port_id))
-            {
-                /* reset stats */
-                reset_stat(port_id);
-            }
+            /* reset stats */
+            reset_stat(port_id);
+        }
+        /* poll request queue for each worker thread + monitor thread */
+        for (core_id = 0; core_id < g_num_cores + 1; core_id++)
+        {
             req = async_request_get(core_id, port_id);
-            if (req)
+            if (!req)
             {
-                /* use node or gear */
-                node = req->node;
-                gear = req->node;
-
-                /* below is for debugging */
-                // fprintf(stdout,
-                //         "[%s] [port %d] [core %d] "
-                //         "req: %p, "
-                //         "cmd: %d, "
-                //         "node: %p\n",
-                //         __func__,
-                //         port_id,
-                //         core_id,
-                //         req,
-                //         req->cmd,
-                //         req->node);
-
-                /* new request is on ring */
-                // if (req->cmd == NOOP ||
-                //     req->cmd == CREATE ||
-                //     req->cmd == REPORT ||
-                //     req->cmd == UPDATE ||
-                //     req->cmd == DELETE)
-                // {
-
-                //     px_dump_tuple(&node->key);
-                //     px_dump_tuple(get_four_tuple(node->pkt));
-                // }
-                // if (req->cmd == GEAR_UP ||
-                //     req->cmd == GEAR_DOWN)
-                // {
-                //     px_dump_gear(gear);
-                // }
-
-                /* parse request */
-                switch (req->cmd)
+                if (core_id == g_num_cores)
                 {
-                case NOOP:
-                    async_request_consume(core_id, port_id);
-#if USE_CQ
-                    /* send response */
-                    resp.cmd = NOOP;
-                    resp.node = node;
-                    if (async_response_put(core_id, port_id, &resp) < 0)
-                    {
-                        fprintf(stderr,
-                                "async_response_put failed\n");
-                    }
-#endif
-                    break;
-                case CREATE:
-                case REPORT:
-                {
-                    if (!node->flow)
-                    {
-                        /* create flow rule, it takes ~330us */
-                        if (g_hp_ctx[port_id].optout)
-                        {
-                            node->flow =
-                                px_flow_create_onload_auto(port_id,
-                                                           &node->key,
-                                                           node->pkt);
-                        }
-                        else
-                        {
-                            node->flow =
-                                px_flow_create_offload_auto(port_id,
-                                                            &node->key,
-                                                            node->pkt);
-                        }
-                        if (!node->flow)
-                        {
-                            px_dump_tuple(&node->key);
-                            px_dump_tuple(get_four_tuple(node->pkt));
-                            fprintf(stderr,
-                                    "px_flow_create failed\n");
-                            /* do not consume the ring */
-#if USE_CQ
-                            /* send response */
-                            resp.cmd = INTERNAL_ERR;
-                            resp.node = node;
-                            if (async_response_put(core_id, port_id, &resp) < 0)
-                            {
-                                fprintf(stderr,
-                                        "async_response_put failed\n");
-                                break;
-                            }
-#endif
-                            break;
-                        }
-                        incr_temp_cached_size(port_id);
-                        resp.cmd = (req->cmd == CREATE)
-                                       ? CREATE_DONE
-                                       : NOT_FOUND;
-                    }
-                    else
-                    {
-                        resp.cmd = (req->cmd == REPORT)
-                                       ? REPORT_DONE
-                                       : COLLISION;
-                    }
-
-                    /*
-                     * this rule is already NIC-cached by offload slave
-                     * worker core does not know
-                     * whether this rule is already created by offload slave
-                     */
-
-                    /* manage LRU queue */
-                    if (lru_queue_insert_and_destroy_evicted(port_id, node) < 0)
-                    {
-                        break;
-                    }
-                    async_request_consume(core_id, port_id);
-#if USE_CQ
-                    /* send response */
-                    resp.node = node;
-                    if (async_response_put(core_id, port_id, &resp) < 0)
-                    {
-                        fprintf(stderr,
-                                "async_response_put failed\n");
-                        break;
-                    }
-#endif
+                    /* yield core to avoid busy looping */
+                    sched_yield();
                     break;
                 }
-                case UPDATE:
-                {
-                    fprintf(stdout, "update cmd received\n");
-                    if (!node->flow)
-                    {
-                        /* this rule is not cached on NIC yet */
+                continue;
+            }
+            /* use node or gear */
+            node = req->node;
+            gear = req->node;
+
+            /* below is for debugging */
+            // fprintf(stdout,
+            //         "[%s] [port %d] [core %d] "
+            //         "req: %p, "
+            //         "cmd: %d, "
+            //         "node: %p\n",
+            //         __func__,
+            //         port_id,
+            //         core_id,
+            //         req,
+            //         req->cmd,
+            //         req->node);
+
+            /* new request is on ring */
+            // if (req->cmd == NOOP ||
+            //     req->cmd == CREATE ||
+            //     req->cmd == REPORT ||
+            //     req->cmd == UPDATE ||
+            //     req->cmd == DELETE)
+            // {
+
+            //     px_dump_tuple(&node->key);
+            //     px_dump_tuple(get_four_tuple(node->pkt));
+            // }
+            // if (req->cmd == GEAR_UP ||
+            //     req->cmd == GEAR_DOWN)
+            // {
+            //     px_dump_gear(gear);
+            // }
+
+            /* parse request */
+            switch (req->cmd)
+            {
+            case NOOP:
+                async_request_consume(core_id, port_id);
 #if USE_CQ
-                        /* send response */
-                        resp.cmd = NOT_FOUND;
-                        resp.node = node;
-                        if (async_response_put(core_id, port_id, &resp) < 0)
-                        {
-                            fprintf(stderr,
-                                    "async_response_put failed\n");
-                        }
+                /* send response */
+                resp.cmd = NOOP;
+                resp.node = node;
+                if (async_response_put(core_id, port_id, &resp) < 0)
+                {
+                    fprintf(stderr,
+                            "async_response_put failed\n");
+                }
 #endif
-                        break;
-                    }
-
-                    /* delete existing one */
-                    if (px_flow_destroy(port_id, node->flow) < 0)
-                    {
-                        /* do not consume the ring */
-                        break;
-                    }
-                    incr_temp_evicted_size(port_id);
-
-                    /* create flow rule */
+                break;
+            case CREATE:
+            case REPORT:
+            {
+                if (!node->flow)
+                {
+                    /* create flow rule, it takes ~330us */
                     if (g_hp_ctx[port_id].optout)
                     {
                         node->flow =
@@ -443,56 +353,69 @@ px_flow_slave_main(void *arg)
                     }
                     if (!node->flow)
                     {
+                        px_dump_tuple(&node->key);
+                        px_dump_tuple(get_four_tuple(node->pkt));
+                        fprintf(stderr,
+                                "px_flow_create failed\n");
                         /* do not consume the ring */
+#if USE_CQ
+                        /* send response */
+                        resp.cmd = INTERNAL_ERR;
+                        resp.node = node;
+                        if (async_response_put(core_id, port_id, &resp) < 0)
+                        {
+                            fprintf(stderr,
+                                    "async_response_put failed\n");
+                            break;
+                        }
+#endif
                         break;
                     }
                     incr_temp_cached_size(port_id);
+                    resp.cmd = (req->cmd == CREATE)
+                                   ? CREATE_DONE
+                                   : NOT_FOUND;
+                }
+                else
+                {
+                    resp.cmd = (req->cmd == REPORT)
+                                   ? REPORT_DONE
+                                   : COLLISION;
+                }
 
-                    /* manage LRU queue */
-                    if (lru_queue_insert_and_destroy_evicted(port_id, node) < 0)
-                    {
-                        break;
-                    }
-                    async_request_consume(core_id, port_id);
-#if USE_CQ
-                    /* send response */
-                    resp.cmd = UPDATE_DONE;
-                    resp.node = node;
-                    if (async_response_put(core_id, port_id, &resp) < 0)
-                    {
-                        fprintf(stderr,
-                                "async_response_put failed\n");
-                    }
-#endif
+                /*
+                 * this rule is already NIC-cached by offload slave
+                 * worker core does not know
+                 * whether this rule is already created by offload slave
+                 */
+
+                /* manage LRU queue */
+                if (lru_queue_insert_and_destroy_evicted(port_id, node) < 0)
+                {
                     break;
                 }
-                case DELETE:
+                async_request_consume(core_id, port_id);
+#if USE_CQ
+                /* send response */
+                resp.node = node;
+                if (async_response_put(core_id, port_id, &resp) < 0)
                 {
                     fprintf(stderr,
-                            "delete cmd received\n");
-                    if (!node->flow)
-                    {
-                        /* this rule is already removed */
-                        resp.cmd = NOT_FOUND;
-                        resp.node = node;
-                        async_response_put(core_id, port_id, &resp);
-                        break;
-                    }
-
-                    /* delete this rule */
-                    // if (px_flow_destroy_async(port_id, node->flow) < 0) {
-                    if (px_flow_destroy(port_id, node->flow) < 0)
-                    {
-                        /* do not consume the ring */
-                        break;
-                    }
-                    node->flow = NULL;
-                    incr_temp_evicted_size(port_id);
-                    lru_queue_evict(port_id, node);
-                    async_request_consume(core_id, port_id);
+                            "async_response_put failed\n");
+                    break;
+                }
+#endif
+                break;
+            }
+            case UPDATE:
+            {
+                fprintf(stdout, "update cmd received\n");
+                if (!node->flow)
+                {
+                    /* this rule is not cached on NIC yet */
 #if USE_CQ
                     /* send response */
-                    resp.cmd = DELETE_DONE;
+                    resp.cmd = NOT_FOUND;
                     resp.node = node;
                     if (async_response_put(core_id, port_id, &resp) < 0)
                     {
@@ -502,64 +425,149 @@ px_flow_slave_main(void *arg)
 #endif
                     break;
                 }
-                case GEAR_UP:
+
+                /* delete existing one */
+                if (px_flow_destroy(port_id, node->flow) < 0)
                 {
-                    assert(gear->flow);
-                    ret = px_flow_destroy(port_id,
-                                          gear->flow);
-                    if (ret < 0)
-                    {
-                        fprintf(stderr,
-                                "px_flow_destroy failed\n");
-                    }
-                    gear->flow = NULL;
+                    /* do not consume the ring */
+                    break;
+                }
+                incr_temp_evicted_size(port_id);
+
+                /* create flow rule */
+                if (g_hp_ctx[port_id].optout)
+                {
+                    node->flow =
+                        px_flow_create_onload_auto(port_id,
+                                                   &node->key,
+                                                   node->pkt);
+                }
+                else
+                {
+                    node->flow =
+                        px_flow_create_offload_auto(port_id,
+                                                    &node->key,
+                                                    node->pkt);
+                }
+                if (!node->flow)
+                {
+                    /* do not consume the ring */
+                    break;
+                }
+                incr_temp_cached_size(port_id);
+
+                /* manage LRU queue */
+                if (lru_queue_insert_and_destroy_evicted(port_id, node) < 0)
+                {
+                    break;
+                }
+                async_request_consume(core_id, port_id);
 #if USE_CQ
-                    /* send response */
-                    resp.cmd = GEAR_UP_DONE;
-                    resp.node = gear;
-                    if (async_response_put(core_id, port_id, &resp) < 0)
-                    {
-                        fprintf(stderr,
-                                "async_response_put failed\n");
-                    }
+                /* send response */
+                resp.cmd = UPDATE_DONE;
+                resp.node = node;
+                if (async_response_put(core_id, port_id, &resp) < 0)
+                {
+                    fprintf(stderr,
+                            "async_response_put failed\n");
+                }
 #endif
-                    async_request_consume(core_id, port_id);
+                break;
+            }
+            case DELETE:
+            {
+                fprintf(stderr,
+                        "delete cmd received\n");
+                if (!node->flow)
+                {
+                    /* this rule is already removed */
+                    resp.cmd = NOT_FOUND;
+                    resp.node = node;
+                    async_response_put(core_id, port_id, &resp);
                     break;
                 }
-                case GEAR_DOWN:
+
+                /* delete this rule */
+                // if (px_flow_destroy_async(port_id, node->flow) < 0) {
+                if (px_flow_destroy(port_id, node->flow) < 0)
                 {
-                    gear->flow =
-                        px_flow_create_static(port_id,
-                                              &gear->attr,
-                                              gear->patterns,
-                                              gear->actions);
-                    if (!gear->flow)
-                    {
-                        fprintf(stderr,
-                                "px_flow_create_static failed "
-                                "for gear %d (val %d)\n",
-                                gear->index, gear->gear_val);
-                    }
-                    px_latent_gear_reset_confirm(port_id);
+                    /* do not consume the ring */
+                    break;
+                }
+                node->flow = NULL;
+                incr_temp_evicted_size(port_id);
+                lru_queue_evict(port_id, node);
+                async_request_consume(core_id, port_id);
 #if USE_CQ
-                    /* send response */
-                    resp.cmd = GEAR_DOWN_DONE;
-                    resp.node = gear;
-                    if (async_response_put(core_id, port_id, &resp) < 0)
-                    {
-                        fprintf(stderr,
-                                "async_response_put failed\n");
-                    }
-#endif
-                    async_request_consume(core_id, port_id);
-                    break;
-                }
-                default:
+                /* send response */
+                resp.cmd = DELETE_DONE;
+                resp.node = node;
+                if (async_response_put(core_id, port_id, &resp) < 0)
                 {
-                    /* not implemented yet */
-                    break;
+                    fprintf(stderr,
+                            "async_response_put failed\n");
                 }
+#endif
+                break;
+            }
+            case GEAR_UP:
+            {
+                assert(gear->flow);
+                ret = px_flow_destroy(port_id,
+                                      gear->flow);
+                if (ret < 0)
+                {
+                    fprintf(stderr,
+                            "px_flow_destroy failed\n");
                 }
+                gear->flow = NULL;
+                px_latent_gear_notify(port_id);
+#if USE_CQ
+                /* send response */
+                resp.cmd = GEAR_UP_DONE;
+                resp.node = gear;
+                if (async_response_put(core_id, port_id, &resp) < 0)
+                {
+                    fprintf(stderr,
+                            "async_response_put failed\n");
+                }
+#endif
+                async_request_consume(core_id, port_id);
+                break;
+            }
+            case GEAR_DOWN:
+            {
+                gear->flow =
+                    px_flow_create_static(port_id,
+                                          &gear->attr,
+                                          gear->patterns,
+                                          gear->actions);
+                if (!gear->flow)
+                {
+                    fprintf(stderr,
+                            "px_flow_create_static failed "
+                            "for gear %d (val %d)\n",
+                            gear->index, gear->gear_val);
+                }
+                px_latent_gear_notify(port_id);
+#if USE_CQ
+                /* send response */
+                resp.cmd = GEAR_DOWN_DONE;
+                resp.node = gear;
+                if (async_response_put(core_id, port_id, &resp) < 0)
+                {
+                    fprintf(stderr,
+                            "async_response_put failed\n");
+                }
+#endif
+                async_request_consume(core_id, port_id);
+                break;
+            }
+            default:
+            {
+                /* not implemented yet */
+                break;
+            }
             }
         }
     }
@@ -587,8 +595,6 @@ void px_hairpin_configure(uint16_t port_id,
     hp_ctx->hp_num_rxq = hp_num_rxq;
     hp_ctx->hp_num_txq = hp_num_txq;
     hp_ctx->max_rxq = max_rxq;
-
-    fprintf(stdout, "max_rxq: %d\n", max_rxq);
 
     /* setup DMA RSS rule */
     hp_ctx->rss = (struct rte_flow_action_rss){
@@ -738,18 +744,17 @@ int px_hairpin_setup(uint16_t port_id,
 }
 /*----------------------------------------------------------------------------*/
 int px_async_start(uint16_t thread_core_id,
+                   uint16_t num_cores,
+                   uint16_t num_ports,
                    size_t per_core_host_cache_size,
                    size_t per_port_nic_cache_size)
 {
     uint16_t port_id, core_id;
     static int arg[RTE_MAX_ETHPORTS];
-    g_num_ports = rte_eth_dev_count_avail();
     int ret;
 
-    /* caveat! In BESS, rte_lcore_count() sometimes returns 0. debug it. */
-    g_num_cores = rte_lcore_count();
-    // fprintf(stdout,
-    //         "g_num_ports: %d, g_num_cores: %d\n", g_num_ports, g_num_cores);
+    g_num_cores = num_cores;
+    g_num_ports = num_ports;
 
     if (g_haripin_manager_core_id != -1)
     {
@@ -814,7 +819,7 @@ int px_async_start(uint16_t thread_core_id,
     /* initialize request ring for monitor thread */
     for (port_id = 0; port_id < g_num_ports; port_id++)
     {
-        ret = async_qp_create(g_haripin_manager_core_id,
+        ret = async_qp_create(g_num_cores,
                               port_id,
                               per_core_host_cache_size);
         if (ret < 0)
@@ -864,7 +869,7 @@ void px_async_stop(void)
     /* destroy request ring for monitor thread */
     for (port_id = 0; port_id < g_num_ports; port_id++)
     {
-        async_qp_destroy(g_haripin_manager_core_id,
+        async_qp_destroy(g_num_cores,
                          port_id);
     }
 

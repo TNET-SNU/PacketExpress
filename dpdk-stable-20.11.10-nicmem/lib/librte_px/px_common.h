@@ -6,10 +6,10 @@
 typedef std::atomic<uint32_t> atomic_u32_t;
 typedef std::atomic<uint8_t> atomic_u8_t;
 using std::memory_order;
-using std::memory_order_relaxed;
-using std::memory_order_acquire;
-using std::memory_order_release;
 using std::memory_order_acq_rel;
+using std::memory_order_acquire;
+using std::memory_order_relaxed;
+using std::memory_order_release;
 using std::memory_order_seq_cst;
 #else
 #include <stdatomic.h> // C11 atomics
@@ -88,15 +88,20 @@ extern "C"
 #define PX_MEASURE_PER_QUEUE_STAT 0
 #define PX_MEASURE_DIST 0
 #define MEASURE_DELAY 1
+#define LOG_RX_HW_TIMESTAMP 0
+#define LOG_BUFFER_SIZE (1024 * 1024)
+#define FIX_GEAR 1
 /*----------------------------------------------------------------------------*/
 /* Custom timestamp flags */
 #define CLOCK_CPU_TIMESTAMP 100
-#define CLOCK_NIC_TIMESTAMP 101
+#define CLOCK_CPU_TIMESTAMP_PRECISE 101
+#define CLOCK_NIC_TIMESTAMP 102
 
 /* Choose one of below */
 // #define TIME_FLAG (CLOCK_REALTIME)
 // #define TIME_FLAG (CLOCK_MONOTONIC)
 #define TIME_FLAG (CLOCK_CPU_TIMESTAMP)
+// #define TIME_FLAG (CLOCK_CPU_TIMESTAMP_PRECISE)
 // #define TIME_FLAG (CLOCK_NIC_TIMESTAMP)
 /*----------------------------------------------------------------------------*/
 #define E9 (NS_PER_S)
@@ -139,13 +144,13 @@ struct px_dev
 
     uint16_t gear_val;
     uint16_t prev_gear_val;
-    
+
     uint16_t num_txq;
     uint16_t imtu_size;
     uint16_t emtu_size;
     uint16_t reta_size;
 
-    int is_transient;
+    int rxq_decreased;
 
     /* for packet delaying */
     uint32_t cutoff_ns;
@@ -180,6 +185,11 @@ static inline uint64_t
 px_gettime(clockid_t clk_id)
 {
     struct timespec ts;
+    /* ToDo: make below use switch */
+    if (clk_id == CLOCK_CPU_TIMESTAMP_PRECISE)
+    {
+        return (uint64_t)((double)rte_rdtsc_precise() * NS_PER_S / rte_get_tsc_hz());
+    }
     if (clk_id == CLOCK_CPU_TIMESTAMP)
     {
         return (uint64_t)((double)rte_rdtsc() * NS_PER_S / rte_get_tsc_hz());
@@ -196,20 +206,21 @@ px_gettime(clockid_t clk_id)
 }
 /*----------------------------------------------------------------------------*/
 #ifdef MEASURE_DELAY
-#define MEASURE(name, cmd)                                                    \
-    do                                                                        \
-    {                                                                         \
-        uint64_t _start1, _start2, _end1, _end2;                              \
-        long _time1, _time2;                                                  \
-        _start1 = px_gettime(TIME_FLAG);                                      \
-        _start2 = px_gettime(CLOCK_THREAD_CPUTIME_ID);                        \
-        cmd;                                                                  \
-        _end1 = px_gettime(TIME_FLAG);                                        \
-        _end2 = px_gettime(CLOCK_THREAD_CPUTIME_ID);                          \
-        _time1 = (_end1 - _start1);                                           \
-        _time2 = (_end2 - _start2);                                           \
-        fprintf(stdout, "[%s] Wallclock time: %lf ns, Thread time: %lf ns\n", \
-                name, (double)_time1, (double)_time2);                        \
+#define MEASURE(name, cmd)                                                \
+    do                                                                    \
+    {                                                                     \
+        uint64_t _start1, _start2, _end1, _end2;                          \
+        long _time1, _time2;                                              \
+        _start1 = px_gettime(TIME_FLAG);                                  \
+        _start2 = px_gettime(CLOCK_THREAD_CPUTIME_ID);                    \
+        cmd;                                                              \
+        _end1 = px_gettime(TIME_FLAG);                                    \
+        _end2 = px_gettime(CLOCK_THREAD_CPUTIME_ID);                      \
+        _time1 = (_end1 - _start1);                                       \
+        _time2 = (_end2 - _start2);                                       \
+        fprintf(stdout,                                                   \
+                "[%s] Wallclock time: %.0lf ns, Thread time: %.0lf ns\n", \
+                name, (double)_time1, (double)_time2);                    \
     } while (/*CONSTCOND*/ 0);
 #else
 #define MEASURE(name, cmd) \

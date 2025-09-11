@@ -36,14 +36,17 @@
 #if NICMEM
 /* Make sure you set LARGE_MTU_TWEAK_64 as 1 */
 // #define MBUF_DATA_SIZE (65536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
-#define MBUF_DATA_SIZE (49152 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
+#define MBUF_DATA_SIZE (53184 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
+// #define MBUF_DATA_SIZE (49152 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
 #define NB_MBUF ((2 * 1024 * 1024) - 1)
 #else
 #if USE_LRO
 /* Make sure you set LARGE_MTU_TWEAK_64 as 1 */
 // #define MBUF_DATA_SIZE (65536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
-#define MBUF_DATA_SIZE (49152 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
-#define NB_MBUF ((1024 * 1024) - 1)
+// #define MBUF_DATA_SIZE (49152 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
+#define MBUF_DATA_SIZE (32768 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
+// #define MBUF_DATA_SIZE (9536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
+#define NB_MBUF ((2 * 1024 * 1024) - 1)
 #else
 #define MBUF_DATA_SIZE 1536
 #define NB_MBUF ((2 * 1024 * 1024) - 1)
@@ -70,7 +73,9 @@ static uint16_t nb_txd = RTE_TEST_TX_DESC_DEFAULT;
 static uint32_t nb_mbuf = NB_MBUF;
 /*----------------------------------------------------------------------------*/
 /* static ARP table configuration */
-static struct px_arp_entry g_arp_entries[] = {
+struct px_arp_entry *g_arp_entries = NULL;
+uint16_t g_arp_entries_size = 0;
+static struct px_arp_entry g_arp_entries_normal[] = {
     {"10.1.90.2", "58:a2:e1:a7:a9:ee"}, // stream1
     {"10.2.90.2", "a0:88:c2:d6:9e:32"}, // stream3
     // {"10.3.90.2", "58:a2:e1:a7:a9:fe"}, // stream5
@@ -128,6 +133,28 @@ static struct px_arp_entry g_arp_entries_two_hops_dpvs[] = {
     {"10.2.95.2", "58:a2:e1:a7:a8:b6"}, // stream4
     {"10.3.95.2", "58:a2:e1:a7:aa:7e"}, // stream6
     {"10.4.95.2", "58:a2:e1:a7:aa:86"}, // stream8
+
+    {"10.1.90.1", "58:a2:e1:a7:a8:46"}, // rapids1.eth0
+    {"10.2.90.1", "58:a2:e1:a7:a9:be"}, // rapids1.eth1
+    {"10.3.90.1", "58:a2:e1:a7:a8:c6"}, // rapids1.eth2
+    {"10.4.90.1", "a0:88:c2:d7:81:0e"}, // rapids1.eth3
+
+    {"10.1.95.1", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
+    {"10.2.95.1", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
+    {"10.3.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
+    {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
+};
+static struct px_arp_entry g_arp_entries_two_hops_for_gamma_test[] = {
+    {"10.1.95.2", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
+    {"10.2.95.2", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
+    {"10.3.95.2", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
+    {"10.4.95.2", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
+
+    {"10.1.90.2", "58:a2:e1:a7:a9:ee"}, // stream1
+    {"10.2.90.2", "a0:88:c2:d6:9e:32"}, // stream3
+    // {"10.3.90.2", "58:a2:e1:a7:a9:fe"}, // stream5
+    {"10.3.90.2", "a0:88:c2:d2:df:f2"}, // stream10
+    {"10.4.90.2", "58:a2:e1:a7:a9:7e"}, // stream7
 
     {"10.1.90.1", "58:a2:e1:a7:a8:46"}, // rapids1.eth0
     {"10.2.90.1", "58:a2:e1:a7:a9:be"}, // rapids1.eth1
@@ -338,7 +365,7 @@ port_init(uint16_t port_id, uint16_t num_queue)
                                NUM_HAIRPIN_Q,
                                &port_conf,
                                g_arp_entries,
-                               sizeof(g_arp_entries) / sizeof(g_arp_entries[0]),
+                               g_arp_entries_size,
 #if USE_OPTOUT
                                1
 #else
@@ -352,9 +379,7 @@ port_init(uint16_t port_id, uint16_t num_queue)
                                 &port_conf);
 
     /* Explicitly configure ARP table */
-    ret = px_arp_configure(g_arp_entries,
-                           sizeof(g_arp_entries) /
-                               sizeof(g_arp_entries[0]));
+    ret = px_arp_configure(g_arp_entries, g_arp_entries_size);
     if (ret < 0)
     {
         rte_exit(EXIT_FAILURE, "Failed to configure ARP table\n");
@@ -424,8 +449,8 @@ port_init(uint16_t port_id, uint16_t num_queue)
     /* Start PX */
     ret = px_init(port_id,
                   MAX_PKT_BURST,
-                  !JUMBO_FRAME ? 8192 : 0,
-                  CUTOFF_NS ? 8192 : 0,
+                  !JUMBO_FRAME ? 16384 : 0,
+                  CUTOFF_NS ? 16384 : 0,
                   is_uplink,
                   is_downlink,
                   USE_LINK,
@@ -517,7 +542,9 @@ int lcore_main(void *args)
             px_stat_update_rx(port_id,
                               qid,
                               rmbufs[port_id],
-                              nb_rx[port_id]);
+                              nb_rx[port_id],
+                              0,
+                              0);
 #endif
             for (i = 0; i < nb_rx[port_id]; i++)
             {
@@ -626,20 +653,25 @@ int main(int argc, char **argv)
     }
     optind = 0;
 
-    (void)g_arp_entries;
+    /* choose ARP table */
+    g_arp_entries = g_arp_entries_normal;
+    // g_arp_entries = g_arp_entries_two_hops;
+    // g_arp_entries = g_arp_entries_two_hops_dpvs;
+    // g_arp_entries = g_arp_entries_two_hops_for_gamma_test;
+
+    g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_normal) /
+                         sizeof(struct px_arp_entry);
+    // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_two_hops) /
+    //                      sizeof(struct px_arp_entry);
+    // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_two_hops_dpvs) /
+    //                      sizeof(struct px_arp_entry);
+    // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_two_hops_for_gamma_test) /
+    //                      sizeof(struct px_arp_entry);
+
+    (void)g_arp_entries_normal;
     (void)g_arp_entries_two_hops;
     (void)g_arp_entries_two_hops_dpvs;
-
-    rte_log_set_global_level(RTE_LOG_DEBUG);
-    rte_log_set_level(RTE_LOGTYPE_PMD, RTE_LOG_DEBUG);
-    rte_log_set_level(RTE_LOGTYPE_MALLOC, 0);
-    rte_log_set_level(RTE_LOGTYPE_RING, 0);
-    rte_log_set_level(RTE_LOGTYPE_MEMPOOL, 0);
-    rte_log_set_level(RTE_LOG_WARNING, 0);
-
-    // rte_log_set_global_level(RTE_LOG_ERR);
-    // rte_log_set_level(RTE_LOGTYPE_PMD, RTE_LOG_ERR);
-    // rte_log_set_level(rte_log_register("pmd.net.mlx5"), RTE_LOG_ERR);
+    (void)g_arp_entries_two_hops_for_gamma_test;
 
     char mem_channels[5];
     char lcores_arg[256];

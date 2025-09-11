@@ -32,6 +32,8 @@ int px_hairpin_setup(uint16_t port_id,
 /*----------------------------------------------------------------------------*/
 /* returns handle for initiate and destroy of hairpin context */
 int px_async_start(uint16_t thread_core_id,
+                   uint16_t num_cores,
+                   uint16_t num_ports,
                    size_t per_core_host_cache_size,
                    size_t per_port_nic_cache_size);
 /*----------------------------------------------------------------------------*/

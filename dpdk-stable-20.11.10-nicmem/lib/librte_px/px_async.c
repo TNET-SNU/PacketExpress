@@ -263,11 +263,17 @@ void async_qp_destroy(uint16_t core_id,
     {
         free(req_ring->ring);
         req_ring->ring = NULL;
+        // req_ring->size = 0;
+        // req_ring->head = 0;
+        // req_ring->tail = 0;
     }
     if (resp_ring->ring)
     {
         free(resp_ring->ring);
         resp_ring->ring = NULL;
+        // resp_ring->size = 0;
+        // resp_ring->head = 0;
+        // resp_ring->tail = 0;
     }
 }
 /*----------------------------------------------------------------------------*/
@@ -281,11 +287,11 @@ int async_request_put(uint16_t core_id,
     /* check if request queue is initialized */
     if (!req_ring->size)
     {
-        // fprintf(stdout,
-        //         "[%s:%s:%d] [port %d] [core %d] "
-        //         "Request queue is not initialized\n",
-        //         __FILE__, __func__, __LINE__,
-        //         port_id, core_id);
+        fprintf(stdout,
+                "[%s:%s:%d] [port %d] [core %d] "
+                "Request queue is not initialized\n",
+                __FILE__, __func__, __LINE__,
+                port_id, core_id);
         return -1;
     }
 
@@ -330,11 +336,11 @@ async_request_get(uint16_t core_id,
     /* check if request queue is initialized */
     if (!req_ring->size)
     {
-        // fprintf(stdout,
-        //         "[%s:%s:%d] [port %d] [core %d] "
-        //         "Request queue is not initialized\n",
-        //         __FILE__, __func__, __LINE__,
-        //         port_id, core_id);
+        fprintf(stdout,
+                "[%s:%s:%d] [port %d] [core %d] "
+                "Request queue is not initialized\n",
+                __FILE__, __func__, __LINE__,
+                port_id, core_id);
         return NULL;
     }
 

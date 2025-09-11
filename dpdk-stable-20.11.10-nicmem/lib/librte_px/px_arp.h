@@ -25,7 +25,7 @@ struct px_arp_bin
 struct px_arp_ctx
 {
     struct px_arp_bin arp_bin_table[MAX_ARP_TABLE_SIZE];
-    int table_size;
+    uint16_t table_size;
 };
 /*----------------------------------------------------------------------------*/
 void px_arp_cleanup(void);
@@ -39,7 +39,7 @@ void px_arp_cleanup(void);
  * make per-thread ARP contexts.
  */
 int px_arp_configure(struct px_arp_entry *arp_string_table,
-                     int arp_string_table_size);
+                     uint16_t arp_string_table_size);
 /*----------------------------------------------------------------------------*/
 struct rte_ether_addr *
 px_arp_search(uint32_t ip_dst);

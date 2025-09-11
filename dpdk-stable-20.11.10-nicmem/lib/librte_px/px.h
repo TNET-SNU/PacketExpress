@@ -79,6 +79,8 @@ struct px_stash
     /* array of stashed item array */
     /* since stashing is stateful, we keep per-latent-queue stash array */
     struct px_item *items;
+
+    int is_drained;
 };
 
 /*
@@ -907,7 +909,7 @@ int px_eth_dev_configure(uint16_t port_id,
                          uint16_t hp_num_txq,
                          struct rte_eth_conf *eth_conf,
                          struct px_arp_entry *arp_table,
-                         int arp_table_size,
+                         uint16_t arp_table_size,
                          int optout);
 /*----------------------------------------------------------------------------*/
 int px_eth_rx_queue_setup(uint16_t port_id,

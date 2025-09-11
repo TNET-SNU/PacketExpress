@@ -307,7 +307,7 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 	};
 	ret = rte_gro_reassemble_burst(dpc->rmbufs[ifidx].m_table, ret, &gro_param);
 #endif
-	px_stat_update_rx(ifidx, qid, dpc->rmbufs[ifidx].m_table, ret);
+	px_stat_update_rx(ifidx, qid, dpc->rmbufs[ifidx].m_table, ret, 0, 0);
 #endif
 	dpc->rmbufs[ifidx].len = ret;
 
@@ -687,8 +687,8 @@ dpdk_load_module_lower_half(void)
 #if USE_PX
 			ret = px_init(portid,
 						  MAX_PKT_BURST,
-						  !JUMBO_FRAME ? 8192 : 0,
-						  CUTOFF_NS ? 8192 : 0,
+						  !JUMBO_FRAME ? 16384 : 0,
+						  CUTOFF_NS ? 16384 : 0,
 						  NULL,
 						  NULL,
 						  USE_LINK,

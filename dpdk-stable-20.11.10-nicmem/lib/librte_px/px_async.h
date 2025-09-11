@@ -76,17 +76,17 @@ struct response
 struct req_ring
 {
     struct request *ring;
-    int size;
-    int head;
-    int tail;
+    uint32_t size;
+    uint32_t head;
+    uint32_t tail;
 };
 
 struct resp_ring
 {
     struct response *ring;
-    int size;
-    int head;
-    int tail;
+    uint32_t size;
+    uint32_t head;
+    uint32_t tail;
 };
 
 struct async_manager

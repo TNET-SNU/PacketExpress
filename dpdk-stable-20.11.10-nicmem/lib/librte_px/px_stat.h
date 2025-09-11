@@ -12,6 +12,7 @@ extern "C"
 #include "px_iat.h"
 /*----------------------------------------------------------------------------*/
 #define STAT_INTERVAL 1
+#define LOG_BUF_SIZE (64 * 1024)
 /*----------------------------------------------------------------------------*/
 /*
  * Ethernet frame overhead
@@ -32,6 +33,12 @@ struct px_tcp_stat
     uint64_t synack_cnt;
 };
 /*----------------------------------------------------------------------------*/
+struct px_rx_stat_latent
+{
+    /* every packets */
+    uint64_t pkt_cnt;
+};
+/*----------------------------------------------------------------------------*/
 struct px_rx_stat
 {
     int reset;
@@ -41,12 +48,19 @@ struct px_rx_stat
     uint64_t bytes_cnt;
     uint64_t pkt_cnt;
 
+    /* sum of packets' delay during delayed merging in nanosecond */
+    uint64_t delay_ns;
+
     /* only packets with payload */
     uint64_t data_bytes_cnt;
     uint64_t data_pkt_cnt;
     uint64_t data_pkt_segs_cnt;
     uint64_t data_pkt_cnt_in_batch;
     uint64_t batch_cnt;
+
+    /* number of flows per RXQ */
+    uint64_t num_flows_per_rxq;
+    uint64_t active_rxq_cnt;
 
 #if PX_MEASURE_DIST
     /* distribution of packets with payload */
@@ -75,6 +89,13 @@ struct px_tx_stat
 
     struct px_dev *dev;
 };
+struct px_bubble_stat
+{
+    uint64_t tsc_temp;
+    uint64_t tsc_bubble;
+    uint64_t tsc_start;
+    uint64_t tsc_end;
+};
 /*----------------------------------------------------------------------------*/
 void px_stat_count_syn(uint16_t port_id,
                        uint16_t queue_id);
@@ -82,10 +103,16 @@ void px_stat_count_syn(uint16_t port_id,
 void px_stat_count_synack(uint16_t port_id,
                           uint16_t queue_id);
 /*----------------------------------------------------------------------------*/
+void px_stat_update_rx_latent(uint16_t port_id,
+                              uint16_t queue_id,
+                              const uint16_t nb_pkts);
+/*----------------------------------------------------------------------------*/
 void px_stat_update_rx(uint16_t port_id,
                        uint16_t queue_id,
                        struct rte_mbuf **pkts,
-                       const uint16_t nb_pkts);
+                       const uint16_t nb_pkts,
+                       uint16_t nb_flows_per_rxq,
+                       uint16_t active_rxq_cnt);
 /*----------------------------------------------------------------------------*/
 void px_stat_update_tx(uint16_t port_id,
                        uint16_t queue_id,

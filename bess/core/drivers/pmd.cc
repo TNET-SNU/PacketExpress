@@ -553,8 +553,8 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
 #if USE_PX
   if (px_init(dpdk_port_id_,
               bess::PacketBatch::kMaxBurst,
-              !JUMBO_FRAME ? 8192 : 0,
-              CUTOFF_NS ? 8192 : 0,
+              !JUMBO_FRAME ? 16384 : 0,
+              CUTOFF_NS ? 16384 : 0,
               NULL,
               NULL,
               USE_LINK,
@@ -576,14 +576,14 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
 
   driver_ = dev_info.driver_name ?: "unknown";
 
-  if (arg.flow_profiles_size() > 0) {
-    for (int i = 0; i < arg.flow_profiles_size(); ++i) {
-      err = flow_create(ret_port_id, arg.flow_profiles(i));
-      if (err.error().code() != 0) {
-        return err;
-      }
-    }
-  }
+  // if (arg.flow_profiles_size() > 0) {
+  //   for (int i = 0; i < arg.flow_profiles_size(); ++i) {
+  //     err = flow_create(ret_port_id, arg.flow_profiles(i));
+  //     if (err.error().code() != 0) {
+  //       return err;
+  //     }
+  //   }
+  // }
 
   return CommandSuccess();
 }
@@ -762,7 +762,7 @@ int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   };
   recv = rte_gro_reassemble_burst(reinterpret_cast<rte_mbuf **>(pkts), recv, &gro_param);
 #endif
-  px_stat_update_rx(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), recv);
+  px_stat_update_rx(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), recv, 0, 0);
 #endif
 
   return recv;

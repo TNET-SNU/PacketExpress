@@ -19,6 +19,7 @@ DPDK_21 {
 	px_stat_update_rx;
 	px_stat_update_tx;
 	px_stat_start_monitor;
+	px_stat_stop_monitor;
 	px_pktmbuf_free;
 	px_pktmbuf_free_bulk;
 	px_flow_create_static;

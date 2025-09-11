@@ -11,9 +11,11 @@ extern "C"
 /*----------------------------------------------------------------------------*/
 #define PX_FLOW_MAX_ACTIONS 10
 #define RETA_CONF_SIZE (ETH_RSS_RETA_SIZE_512 / RTE_RETA_GROUP_SIZE)
-#define CRUISE_PERIOD 5
+#define CRUISE_PERIOD 0
 #define STEADY_THRESHOLD 0.01
-#define FLUCTUATE_THRESHOLD 0.03
+#define FLUCTUATE_THRESHOLD 0.1
+#define BETTER_THRESHOLD 0
+#define YIELD_THRESHOLD 95
 /*----------------------------------------------------------------------------*/
 enum gear_state
 {
@@ -21,14 +23,17 @@ enum gear_state
     SHIFTING_DOWN,
     SHIFTING_UP,
     CRUISING,
-    PROBING,
 };
 /*----------------------------------------------------------------------------*/
 struct perf_metric
 {
-    float tput;
-    float yield;
-    float delay;
+    uint32_t tput;
+    uint32_t yield;
+    uint32_t delay;
+    uint32_t max_delay;
+    float num_flows_per_rxq;
+    float active_rxq_cnt;
+    float num_flows_per_active_rxq;
 };
 /*----------------------------------------------------------------------------*/
 struct px_latent_gear
@@ -38,13 +43,31 @@ struct px_latent_gear
     int gear_val;
     struct rte_flow_attr attr;
 
-    struct rte_flow_item patterns[2];
+    struct rte_flow_item patterns[3];
     struct rte_flow_item_eth eth_spec;
     struct rte_flow_item_eth eth_mask;
+    struct rte_flow_item_ipv4 ipv4_spec;
+    struct rte_flow_item_ipv4 ipv4_mask;
 
     struct rte_flow_action actions[2];
     struct rte_flow_action_rss rss;
     uint16_t rss_queues[RTE_MAX_QUEUES_PER_PORT];
+
+    struct rte_flow *flow;
+};
+/*----------------------------------------------------------------------------*/
+struct px_latent_jump_g1
+{
+    struct rte_flow_attr attr;
+
+    struct rte_flow_item patterns[3];
+    struct rte_flow_item_eth eth_spec;
+    struct rte_flow_item_eth eth_mask;
+    struct rte_flow_item_ipv4 ipv4_spec;
+    struct rte_flow_item_ipv4 ipv4_mask;
+
+    struct rte_flow_action actions[2];
+    struct rte_flow_action_jump jump;
 
     struct rte_flow *flow;
 };
@@ -54,8 +77,13 @@ struct px_latent_ctx
     int reta_initialized;
     int flow_initialized;
 
-    /* gear confirmed by worker thread */
-    atomic_u32_t confirmed;
+    uint32_t cutoff_ns;
+
+    /* gear change notify by manager thread */
+    atomic_u32_t notify;
+
+    /* gear acked by worker thread */
+    atomic_u32_t acked[RTE_MAX_LCORE];
 
     /* below are for hairpin management */
     uint16_t num_rxq;
@@ -68,6 +96,7 @@ struct px_latent_ctx
     uint16_t gear_val;
     uint16_t gear_idx;
     struct px_latent_gear gears[10];
+    struct px_latent_jump_g1 jump_g1;
 
     struct rte_eth_rss_reta_entry64 requested_reta_entry[RETA_CONF_SIZE];
     uint16_t requested_reta_size;
@@ -156,6 +185,45 @@ px_latent_is_fluctuating(struct perf_metric *cur,
     return 0;
 }
 /*----------------------------------------------------------------------------*/
+static inline int
+px_latent_is_flows_fluctuating(struct perf_metric *cur,
+                               struct perf_metric *steady)
+{
+    float cur_flows_per_active_rxq =
+        (cur->active_rxq_cnt)
+            ? cur->num_flows_per_rxq /
+                  cur->active_rxq_cnt
+            : 0;
+    float steady_flows_per_active_rxq =
+        (steady->active_rxq_cnt)
+            ? steady->num_flows_per_rxq /
+                  steady->active_rxq_cnt
+            : 0;
+
+    if (cur_flows_per_active_rxq >
+        steady_flows_per_active_rxq * (1 + FLUCTUATE_THRESHOLD))
+    {
+        return 1;
+    }
+    if (cur_flows_per_active_rxq <
+        steady_flows_per_active_rxq * (1 - FLUCTUATE_THRESHOLD))
+    {
+        return -1;
+    }
+
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline int
+px_latent_is_yield_enough(struct perf_metric *steady)
+{
+    if (steady->yield >= YIELD_THRESHOLD)
+    {
+        return 1;
+    }
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
 /**
  * Priority: throughput > yield > delay
  */
@@ -166,44 +234,44 @@ px_latent_is_better(struct perf_metric *steady,
     /* stage 1: first compare throughput */
 
     /**
-     * if throughput increased more than FLUCTUATE_THRESHOLD,
+     * if throughput increased more than BETTER_THRESHOLD,
      * it's getting better
      */
-    if (steady->tput > prev_steady->tput * (1 + FLUCTUATE_THRESHOLD))
+    if (steady->tput > prev_steady->tput * (1 + BETTER_THRESHOLD))
     {
         return 1;
     }
     /**
-     * if throughput decreased more than FLUCTUATE_THRESHOLD,
+     * if throughput decreased more than BETTER_THRESHOLD,
      * it's getting worse
      */
-    if (steady->tput < prev_steady->tput * (1 - FLUCTUATE_THRESHOLD))
+    if (steady->tput < prev_steady->tput * (1 - BETTER_THRESHOLD))
     {
         return -1;
     }
 
     /* stage 2: throughput did not change a lot, now compare yield */
 
-    /* if yield increased more than FLUCTUATE_THRESHOLD, it's getting better */
-    if (steady->yield > prev_steady->yield * (1 + FLUCTUATE_THRESHOLD))
+    /* if yield increased more than BETTER_THRESHOLD, it's getting better */
+    if (steady->yield > prev_steady->yield * (1 + BETTER_THRESHOLD))
     {
         return 1;
     }
-    /* if yield decreased more than FLUCTUATE_THRESHOLD, it's getting worse */
-    if (steady->yield < prev_steady->yield * (1 - FLUCTUATE_THRESHOLD))
+    /* if yield decreased more than BETTER_THRESHOLD, it's getting worse */
+    if (steady->yield < prev_steady->yield * (1 - BETTER_THRESHOLD))
     {
         return -1;
     }
 
     /* stage 3: yield did not change a lot, now compare delay */
 
-    /* if delay decreased more than FLUCTUATE_THRESHOLD, it's getting better */
-    if (steady->delay < prev_steady->delay * (1 - FLUCTUATE_THRESHOLD))
+    /* if delay decreased more than BETTER_THRESHOLD, it's getting better */
+    if (steady->delay < prev_steady->delay * (1 - BETTER_THRESHOLD))
     {
         return 1;
     }
-    /* if delay increased more than FLUCTUATE_THRESHOLD, it's getting worse */
-    if (steady->delay > prev_steady->delay * (1 + FLUCTUATE_THRESHOLD))
+    /* if delay increased more than BETTER_THRESHOLD, it's getting worse */
+    if (steady->delay > prev_steady->delay * (1 + BETTER_THRESHOLD))
     {
         return -1;
     }
@@ -212,29 +280,35 @@ px_latent_is_better(struct perf_metric *steady,
 }
 /*----------------------------------------------------------------------------*/
 /**
- * This function reset confirm field to notify worker thread
+ * This function store notify field to notify worker thread
  * that gear has changed.
- *
- * 1. notify from manager thread to worker thread
  */
-void px_latent_gear_reset_confirm(uint16_t port_id);
+void px_latent_gear_notify(uint16_t port_id);
+/*----------------------------------------------------------------------------*/
+void px_latent_gear_reset_notify(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 /**
- * This function set confirm field to notify manager thread
- * that worker thread has confirmed the change.
- *
- * 1. worker thread reads
- * 2. notify from worker thread to manager thread
+ * This function load notify field to check whether the manager thread
+ * has changed the gear.
  */
-void px_latent_gear_set_confirm(uint16_t port_id);
+uint32_t px_latent_gear_check_notify(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 /**
- * This function check confirm field is set to check
- * that worker thread has confirmed the change.
- *
- * 1. manager thread reads
+ * This function store ack field to notify manager thread
+ * that worker thread has acked the change.
  */
-uint32_t px_latent_gear_check_confirm(uint16_t port_id);
+void px_latent_gear_ack(uint16_t port_id);
+/*----------------------------------------------------------------------------*/
+void px_latent_gear_ack_per_thread(uint16_t port_id,
+                                   uint16_t queue_id);
+/*----------------------------------------------------------------------------*/
+void px_latent_gear_reset_ack(uint16_t port_id);
+/*----------------------------------------------------------------------------*/
+/**
+ * This function load ack field to check whether the worker thread
+ * has acked the change.
+ */
+uint32_t px_latent_gear_check_ack(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 void px_dump_all_gears(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
@@ -251,37 +325,37 @@ px_dump_gear(struct px_latent_gear *gear)
             __FILE__, __func__, __LINE__,
             gear->index,
             gear->gear_val);
-    // fprintf(stdout,
-    //         "  attr: group %d, priority %d, "
-    //         "ingress %d, egress %d, transfer %d\n",
-    //         gear->attr.group,
-    //         gear->attr.priority,
-    //         gear->attr.ingress,
-    //         gear->attr.egress,
-    //         gear->attr.transfer);
-    // fprintf(stdout,
-    //         "  pattern: type %d, spec %p, mask %p\n",
-    //         gear->patterns[0].type,
-    //         gear->patterns[0].spec,
-    //         gear->patterns[0].mask);
-    // fprintf(stdout,
-    //         "           eth type 0x%04x / 0x%04x\n",
-    //         ntohs(gear->eth_spec.type),
-    //         ntohs(gear->eth_mask.type));
-    // fprintf(stdout,
-    //         "  action: type %d, conf %p\n",
-    //         gear->actions[0].type,
-    //         gear->actions[0].conf);
-    // fprintf(stdout,
-    //         "          RSS func %d, level %d, types 0x%016" PRIx64 ", "
-    //         "key_len %d, queue_num %d, key %p, queue %p\n",
-    //         gear->rss.func,
-    //         gear->rss.level,
-    //         gear->rss.types,
-    //         gear->rss.key_len,
-    //         gear->rss.queue_num,
-    //         gear->rss.key,
-    //         gear->rss.queue);
+    fprintf(stdout,
+            "  attr: group %d, priority %d, "
+            "ingress %d, egress %d, transfer %d\n",
+            gear->attr.group,
+            gear->attr.priority,
+            gear->attr.ingress,
+            gear->attr.egress,
+            gear->attr.transfer);
+    fprintf(stdout,
+            "  pattern: type %d, spec %p, mask %p\n",
+            gear->patterns[0].type,
+            gear->patterns[0].spec,
+            gear->patterns[0].mask);
+    fprintf(stdout,
+            "           eth type 0x%04x / 0x%04x\n",
+            ntohs(gear->eth_spec.type),
+            ntohs(gear->eth_mask.type));
+    fprintf(stdout,
+            "  action: type %d, conf %p\n",
+            gear->actions[0].type,
+            gear->actions[0].conf);
+    fprintf(stdout,
+            "          RSS func %d, level %d, types 0x%016" PRIx64 ", "
+            "key_len %d, queue_num %d, key %p, queue %p\n",
+            gear->rss.func,
+            gear->rss.level,
+            gear->rss.types,
+            gear->rss.key_len,
+            gear->rss.queue_num,
+            gear->rss.key,
+            gear->rss.queue);
     for (i = 0; i < gear->rss.queue_num; i++)
     {
         if (i % 8)
@@ -348,6 +422,7 @@ void px_latent_configure(uint16_t port_id,
                          uint16_t max_rxq,
                          uint16_t num_txq,
                          uint16_t reta_size,
+                         uint32_t cutoff_ns,
                          struct rte_eth_conf *eth_conf);
 /*----------------------------------------------------------------------------*/
 void px_reta_init(uint16_t port_id);
@@ -375,10 +450,25 @@ uint16_t px_latent_max_gear_idx(uint16_t port_id);
  */
 uint16_t px_latent_min_gear_idx(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
+int px_latent_gear_jump(uint16_t port_id);
+/*----------------------------------------------------------------------------*/
 /**
  * Call this function after rte_eth_dev_start().
  */
-int px_latent_gear_to_min(uint16_t port_id);
+int px_latent_gear_init(uint16_t port_id,
+                        uint16_t gear_idx);
+/*----------------------------------------------------------------------------*/
+static inline int
+px_latent_gear_to_min(uint16_t port_id)
+{
+    return px_latent_gear_init(port_id, px_latent_min_gear_idx(port_id));
+}
+/*----------------------------------------------------------------------------*/
+static inline int
+px_latent_gear_to_max(uint16_t port_id)
+{
+    return px_latent_gear_init(port_id, px_latent_max_gear_idx(port_id));
+}
 /*----------------------------------------------------------------------------*/
 /**
  * Call this function after rte_eth_dev_start().
@@ -391,6 +481,10 @@ int px_latent_gear_shift_up(uint16_t core_id,
  */
 int px_latent_gear_shift_down(uint16_t core_id,
                               uint16_t port_id);
+/*----------------------------------------------------------------------------*/
+void px_latent_static_gear_up(int args);
+/*----------------------------------------------------------------------------*/
+void px_latent_static_gear_down(int args);
 /*----------------------------------------------------------------------------*/
 /**
  * Call this function after rte_eth_dev_start().
