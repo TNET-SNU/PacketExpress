@@ -33,9 +33,17 @@
 #include <px.h>
 /*----------------------------------------------------------------------------*/
 /* Essential macros */
-#define MBUF_DATA_SIZE 9024
-#define NB_MBUF ((2 * 1024 * 1024) - 1)
 #define MAX_PKT_BURST 64
+#if USE_LRO
+/* Make sure you set LARGE_MTU_TWEAK_64 as 1 */
+#define MBUF_DATA_SIZE (65536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
+// #define MBUF_DATA_SIZE (49152 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
+// #define MBUF_DATA_SIZE (9536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
+#define NB_MBUF ((1536 * 1024) - 1)
+#else
+#define MBUF_DATA_SIZE 9024
+#define NB_MBUF ((1536 * 1024) - 1)
+#endif
 
 /*
  * Configurable number of RX/TX ring descriptors
@@ -62,9 +70,9 @@ static uint8_t g_key[] = {
     0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A};
 /*----------------------------------------------------------------------------*/
 /* static ARP table configuration */
-struct px_arp_entry *g_arp_entries = NULL;
+const struct px_arp_entry *g_arp_entries = NULL;
 uint16_t g_arp_entries_size = 0;
-static struct px_arp_entry g_arp_entries_normal[] = {
+const struct px_arp_entry g_arp_entries_normal[] = {
     {"10.1.90.2", "58:a2:e1:a7:a9:ee"}, // stream1
     {"10.2.90.2", "a0:88:c2:d6:9e:32"}, // stream3
     // {"10.3.90.2", "58:a2:e1:a7:a9:fe"}, // stream5
@@ -86,7 +94,7 @@ static struct px_arp_entry g_arp_entries_normal[] = {
     {"10.3.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
     {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
 };
-static struct px_arp_entry g_arp_entries_two_hops[] = {
+const struct px_arp_entry g_arp_entries_two_hops[] = {
     {"10.1.90.2", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
     {"10.2.90.2", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
     {"10.3.90.2", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
@@ -107,7 +115,7 @@ static struct px_arp_entry g_arp_entries_two_hops[] = {
     {"10.3.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
     {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
 };
-static struct px_arp_entry g_arp_entries_two_hops_dpvs[] = {
+const struct px_arp_entry g_arp_entries_two_hops_dpvs[] = {
     {"10.1.90.10", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
     {"10.2.90.10", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
     {"10.3.90.10", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
@@ -133,7 +141,7 @@ static struct px_arp_entry g_arp_entries_two_hops_dpvs[] = {
     {"10.3.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
     {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
 };
-static struct px_arp_entry g_arp_entries_two_hops_for_gamma_test[] = {
+const struct px_arp_entry g_arp_entries_two_hops_for_gamma_test[] = {
     {"10.1.95.2", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
     {"10.2.95.2", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
     {"10.3.95.2", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
@@ -186,7 +194,7 @@ check_all_ports_link_status(uint8_t port_num, uint32_t port_mask)
 #define CHECK_INTERVAL 100 /* 100ms */
 #define MAX_CHECK_TIME 90  /* 9s (90 * 100ms) in total */
 
-    uint8_t portid, count, all_ports_up, print_flag = 0;
+    uint8_t port_id, count, all_ports_up, print_flag = 0;
     struct rte_eth_link link;
 
     fprintf(stdout, "\nChecking link status\n");
@@ -194,14 +202,14 @@ check_all_ports_link_status(uint8_t port_num, uint32_t port_mask)
     for (count = 0; count <= MAX_CHECK_TIME; count++)
     {
         all_ports_up = 1;
-        for (portid = 0; portid < port_num; portid++)
+        for (port_id = 0; port_id < port_num; port_id++)
         {
-            if ((port_mask & (1 << portid)) == 0)
+            if ((port_mask & (1 << port_id)) == 0)
             {
                 continue;
             }
             memset(&link, 0, sizeof(link));
-            rte_eth_link_get_nowait(portid, &link);
+            rte_eth_link_get_nowait(port_id, &link);
             /* print link status if flag set */
             if (print_flag == 1)
             {
@@ -211,14 +219,14 @@ check_all_ports_link_status(uint8_t port_num, uint32_t port_mask)
                     fprintf(stdout,
                             "Port %d Link Up - speed %u "
                             "Mbps - %s\n",
-                            (uint8_t)portid,
+                            (uint8_t)port_id,
                             (unsigned)link.link_speed,
                             (link.link_duplex == ETH_LINK_FULL_DUPLEX) ? ("full-duplex") : ("half-duplex\n"));
 #else
                     fprintf(stdout,
                             "Port %d Link Up - speed %u "
                             "Mbps - %s\n",
-                            (uint8_t)portid,
+                            (uint8_t)port_id,
                             (unsigned)link.link_speed,
                             (link.link_duplex == RTE_ETH_LINK_FULL_DUPLEX) ? ("full-duplex") : ("half-duplex\n"));
 #endif
@@ -254,13 +262,13 @@ check_all_ports_link_status(uint8_t port_num, uint32_t port_mask)
 }
 /*----------------------------------------------------------------------------*/
 static int
-port_init(uint16_t portid, uint16_t num_queue)
+port_init(uint16_t port_id, uint16_t num_queue)
 {
     int sid, ret;
     uint16_t queue_id;
     struct rte_eth_conf port_conf = {0};
     struct rte_eth_fc_conf fc_conf; /* for Ethernet flow control settings */
-    rte_eth_dev_info_get(portid, &g_dev_info[portid]);
+    rte_eth_dev_info_get(port_id, &g_dev_info[port_id]);
 
     /* adjust rss_hf */
     port_conf.link_speeds = ETH_LINK_SPEED_AUTONEG;
@@ -274,17 +282,20 @@ port_init(uint16_t portid, uint16_t num_queue)
                                 DEV_TX_OFFLOAD_UDP_CKSUM |
                                 DEV_TX_OFFLOAD_TCP_CKSUM;
 #endif
-#if SG_DMA
+#if USE_SGDMA
     port_conf.txmode.offloads |= DEV_TX_OFFLOAD_MULTI_SEGS;
+#endif
+#if USE_LRO
+    port_conf.rxmode.offloads |= DEV_RX_OFFLOAD_TCP_LRO;
 #endif
     port_conf.rx_adv_conf.rss_conf.rss_key = g_key;
     port_conf.rx_adv_conf.rss_conf.rss_key_len = sizeof(g_key);
     port_conf.rx_adv_conf.rss_conf.rss_hf = (ETH_RSS_IP | ETH_RSS_UDP | ETH_RSS_TCP);
 
     /* init port */
-    fprintf(stdout, "[port %u] Initializing port... \n", (unsigned)portid);
+    fprintf(stdout, "[port %u] Initializing port... \n", (unsigned)port_id);
     fflush(stdout);
-    ret = rte_eth_dev_configure(portid,
+    ret = rte_eth_dev_configure(port_id,
                                 num_queue,
                                 num_queue,
                                 &port_conf);
@@ -292,7 +303,7 @@ port_init(uint16_t portid, uint16_t num_queue)
     {
         rte_exit(EXIT_FAILURE, "Cannot configure device:"
                                "err=%d, port=%u\n",
-                 ret, (unsigned)portid);
+                 ret, (unsigned)port_id);
     }
 
     /* Explicitly configure ARP table */
@@ -304,48 +315,49 @@ port_init(uint16_t portid, uint16_t num_queue)
 
     fflush(stdout);
 
-    rte_eth_macaddr_get(portid, &port_mac[portid]);
+    rte_eth_macaddr_get(port_id, &port_mac[port_id]);
 
     for (queue_id = 0; queue_id < num_queue; queue_id++)
     {
-        sid = rte_lcore_to_socket_id(queue_id);
+        // sid = rte_lcore_to_socket_id(queue_id);
+        sid = rte_eth_dev_socket_id(port_id);
 
         /* init RX queue on each port per CPU */
-        ret = rte_eth_rx_queue_setup(portid, queue_id, nb_rxd, sid,
-                                     &g_dev_info[portid].default_rxconf,
+        ret = rte_eth_rx_queue_setup(port_id, queue_id, nb_rxd, sid,
+                                     &g_dev_info[port_id].default_rxconf,
                                      g_pktmbuf_pool[sid]);
         if (ret < 0)
         {
             rte_exit(EXIT_FAILURE, "rte_eth_rx_queue_setup: "
                                    "err=%d, port=%u, queue_id for data: %d\n",
-                     ret, (unsigned)portid, queue_id);
+                     ret, (unsigned)port_id, queue_id);
         }
 
         /* init TX queue on each port per CPU */
-        ret = rte_eth_tx_queue_setup(portid, queue_id, nb_txd, sid,
-                                     &g_dev_info[portid].default_txconf);
+        ret = rte_eth_tx_queue_setup(port_id, queue_id, nb_txd, sid,
+                                     &g_dev_info[port_id].default_txconf);
         if (ret < 0)
         {
             rte_exit(EXIT_FAILURE, "rte_eth_tx_queue_setup: "
                                    "err=%d, port=%u, queue_id: %d\n",
-                     ret, (unsigned)portid, queue_id);
+                     ret, (unsigned)port_id, queue_id);
         }
     }
 
     /* Start device */
-    ret = rte_eth_dev_start(portid);
+    ret = rte_eth_dev_start(port_id);
     if (ret < 0)
     {
         rte_exit(EXIT_FAILURE,
                  "rte_eth_dev_start:err=%d, port=%u\n",
                  ret,
-                 (unsigned)portid);
+                 (unsigned)port_id);
     }
     fprintf(stdout, "done: \n");
 
     /* retrieve current flow control settings per port */
     memset(&fc_conf, 0, sizeof(fc_conf));
-    ret = rte_eth_dev_flow_ctrl_get(portid, &fc_conf);
+    ret = rte_eth_dev_flow_ctrl_get(port_id, &fc_conf);
     if (ret != 0)
     {
         rte_exit(EXIT_FAILURE, "Failed to get flow control info!\n");
@@ -357,7 +369,7 @@ port_init(uint16_t portid, uint16_t num_queue)
 #else
     fc_conf.mode = RTE_ETH_FC_NONE;
 #endif
-    ret = rte_eth_dev_flow_ctrl_set(portid, &fc_conf);
+    ret = rte_eth_dev_flow_ctrl_set(port_id, &fc_conf);
     if (ret != 0)
     {
         rte_exit(EXIT_FAILURE,
@@ -411,6 +423,8 @@ int lcore_main(void *args)
                               rmbufs[port_id],
                               nb_rx[port_id],
                               0,
+                              0,
+                              0,
                               0);
 
             for (i = 0; i < nb_rx[port_id]; i++)
@@ -424,8 +438,7 @@ int lcore_main(void *args)
                     rte_pktmbuf_free(m);
                     continue;
                 }
-
-#if !SG_DMA
+#if !USE_SGDMA
                 /* make chained segments into one large segment */
                 ret = rte_pktmbuf_linearize(m);
                 if (ret < 0)
@@ -437,7 +450,6 @@ int lcore_main(void *args)
                     continue;
                 }
 #endif
-
                 /* modify DST MAC */
                 dst_mac = px_arp_search(*get_dst_ip(m));
                 if (!dst_mac)
@@ -464,7 +476,13 @@ int lcore_main(void *args)
                 /* insert to send buffer */
                 wmbufs[port_id][nb_tx[port_id]++] = m;
             }
-
+#if USE_LRO
+            px_setup_tso_burst(port_id,
+                               qid,
+                               wmbufs[port_id],
+                               nb_tx[port_id],
+                               SEMANTIC_TEST);
+#endif
             /* Update TX statistics */
             px_stat_update_tx(port_id,
                               qid,
@@ -537,11 +555,6 @@ int main(int argc, char **argv)
     //                      sizeof(struct px_arp_entry);
     // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_two_hops_for_gamma_test) /
     //                      sizeof(struct px_arp_entry);
-
-    (void)g_arp_entries_normal;
-    (void)g_arp_entries_two_hops;
-    (void)g_arp_entries_two_hops_dpvs;
-    (void)g_arp_entries_two_hops_for_gamma_test;
 
     rte_log_set_global_level(RTE_LOG_DEBUG);
     rte_log_set_level(RTE_LOGTYPE_PMD, RTE_LOG_DEBUG);
@@ -648,7 +661,9 @@ int main(int argc, char **argv)
                           g_num_cores,
                           g_num_cores,
                           9000,
-                          RTE_ETHER_MTU);
+                          RTE_ETHER_MTU,
+                          is_uplink,
+                          is_downlink);
 
     /* launch lcore main on each worker core */
     g_shutdown = 0;

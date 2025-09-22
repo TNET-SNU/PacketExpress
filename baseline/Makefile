@@ -24,21 +24,31 @@ CFLAGS += -D JUMBO_FRAME=0
 
 # Choose one of below
 
-# 1. Using 1500B MTU for incoming packets
-# CFLAGS += -D HW_CSUM=0
+# 1. HW checksum on
+# CFLAGS += -D HW_CSUM=1
 
-# 2. Using 9000B MTU for incoming packets
-CFLAGS += -D HW_CSUM=1
+# 2. HW checksum off
+CFLAGS += -D HW_CSUM=0
+
+################################################################################
+
+# Choose one of below
+
+# 1. LRO on
+# CFLAGS += -D USE_LRO=1
+
+# 2. LRO off
+CFLAGS += -D USE_LRO=0
 
 ################################################################################
 
 # Choose one of below
 
 # 1. Using 1500B MTU for incoming packets
-# CFLAGS += -D SG_DMA=0
+CFLAGS += -D USE_SGDMA=0
 
 # 2. Using 9000B MTU for incoming packets
-CFLAGS += -D SG_DMA=1
+# CFLAGS += -D USE_SGDMA=1
 
 ################################################################################
 
