@@ -33,24 +33,13 @@
 #include <px.h>
 /*----------------------------------------------------------------------------*/
 /* Essential macros */
-#if NICMEM
+#if NICMEM || USE_LRO
 /* Make sure you set LARGE_MTU_TWEAK_64 as 1 */
-// #define MBUF_DATA_SIZE (65536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
-#define MBUF_DATA_SIZE (53184 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
-// #define MBUF_DATA_SIZE (49152 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
-#define NB_MBUF ((2 * 1024 * 1024) - 1)
-#else
-#if USE_LRO
-/* Make sure you set LARGE_MTU_TWEAK_64 as 1 */
-// #define MBUF_DATA_SIZE (65536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
-// #define MBUF_DATA_SIZE (49152 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
-#define MBUF_DATA_SIZE (32768 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
-// #define MBUF_DATA_SIZE (9536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
-#define NB_MBUF ((2 * 1024 * 1024) - 1)
+#define MBUF_DATA_SIZE (65536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
+#define NB_MBUF ((1536 * 1024) - 1)
 #else
 #define MBUF_DATA_SIZE 1536
-#define NB_MBUF ((2 * 1024 * 1024) - 1)
-#endif
+#define NB_MBUF ((1536 * 1024) - 1)
 #endif
 
 #define MAX_PKT_BURST 64
@@ -58,13 +47,13 @@
 /*
  * Configurable number of RX/TX ring descriptors
  */
-// #define RTE_TEST_RX_DESC_DEFAULT 8192
-#define RTE_TEST_RX_DESC_DEFAULT 4096
+#define RTE_TEST_RX_DESC_DEFAULT 8192
+// #define RTE_TEST_RX_DESC_DEFAULT 4096
 // #define RTE_TEST_RX_DESC_DEFAULT 2048
 // #define RTE_TEST_RX_DESC_DEFAULT 1024
 
-// #define RTE_TEST_TX_DESC_DEFAULT 8192
-#define RTE_TEST_TX_DESC_DEFAULT 4096
+#define RTE_TEST_TX_DESC_DEFAULT 8192
+// #define RTE_TEST_TX_DESC_DEFAULT 4096
 // #define RTE_TEST_TX_DESC_DEFAULT 2048
 // #define RTE_TEST_TX_DESC_DEFAULT 1024
 
@@ -73,9 +62,9 @@ static uint16_t nb_txd = RTE_TEST_TX_DESC_DEFAULT;
 static uint32_t nb_mbuf = NB_MBUF;
 /*----------------------------------------------------------------------------*/
 /* static ARP table configuration */
-struct px_arp_entry *g_arp_entries = NULL;
+const struct px_arp_entry *g_arp_entries = NULL;
 uint16_t g_arp_entries_size = 0;
-static struct px_arp_entry g_arp_entries_normal[] = {
+const struct px_arp_entry g_arp_entries_normal[] = {
     {"10.1.90.2", "58:a2:e1:a7:a9:ee"}, // stream1
     {"10.2.90.2", "a0:88:c2:d6:9e:32"}, // stream3
     // {"10.3.90.2", "58:a2:e1:a7:a9:fe"}, // stream5
@@ -92,12 +81,12 @@ static struct px_arp_entry g_arp_entries_normal[] = {
     {"10.3.90.1", "58:a2:e1:a7:a8:c6"}, // rapids1.eth2
     {"10.4.90.1", "a0:88:c2:d7:81:0e"}, // rapids1.eth3
 
-    {"10.1.95.1", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
-    {"10.2.95.1", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
-    {"10.3.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
-    {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
+    {"10.5.95.1", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
+    {"10.6.95.1", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
+    {"10.7.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
+    {"10.8.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
 };
-static struct px_arp_entry g_arp_entries_two_hops[] = {
+const struct px_arp_entry g_arp_entries_two_hops[] = {
     {"10.1.90.2", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
     {"10.2.90.2", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
     {"10.3.90.2", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
@@ -118,7 +107,7 @@ static struct px_arp_entry g_arp_entries_two_hops[] = {
     {"10.3.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
     {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
 };
-static struct px_arp_entry g_arp_entries_two_hops_dpvs[] = {
+const struct px_arp_entry g_arp_entries_two_hops_dpvs[] = {
     {"10.1.90.10", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
     {"10.2.90.10", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
     {"10.3.90.10", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
@@ -144,7 +133,7 @@ static struct px_arp_entry g_arp_entries_two_hops_dpvs[] = {
     {"10.3.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
     {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
 };
-static struct px_arp_entry g_arp_entries_two_hops_for_gamma_test[] = {
+const struct px_arp_entry g_arp_entries_two_hops_for_skew_test[] = {
     {"10.1.95.2", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
     {"10.2.95.2", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
     {"10.3.95.2", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
@@ -167,7 +156,6 @@ static struct px_arp_entry g_arp_entries_two_hops_for_gamma_test[] = {
     {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
 };
 /*----------------------------------------------------------------------------*/
-#if USE_PX
 /* static routing table configuration */
 static int
 is_uplink(struct rte_mbuf *pkt)
@@ -182,7 +170,6 @@ is_downlink(struct rte_mbuf *pkt)
     uint8_t *s = (uint8_t *)get_four_tuple(pkt);
     return *(s + 2) == 95;
 }
-#endif
 /*----------------------------------------------------------------------------*/
 /* global information for port configuration */
 volatile int g_shutdown = 0;
@@ -325,7 +312,7 @@ port_init(uint16_t port_id, uint16_t num_queue)
 #else
                             0,
 #endif
-#if USE_PX || USE_GRO
+#if USE_SGDMA
                             1,
 #else
                             0,
@@ -366,17 +353,39 @@ port_init(uint16_t port_id, uint16_t num_queue)
                                &port_conf,
                                g_arp_entries,
                                g_arp_entries_size,
-#if USE_OPTOUT
-                               1
+#if USE_SGDMA
+                               1,
+#else
+                               0,
+#endif
+#if USE_DYNRXQ
+                               1,
+#else
+                               0,
+#endif
+#if NUM_HAIRPIN_Q
+                               HAIRPIN_POLICY
 #else
                                0
 #endif
     );
+    if (ret < 0)
+    {
+        rte_exit(EXIT_FAILURE, "Cannot configure device:"
+                               "err=%d, port=%u\n",
+                 ret, (unsigned)port_id);
+    }
 #else
     ret = rte_eth_dev_configure(port_id,
                                 num_queue,
                                 num_queue,
                                 &port_conf);
+    if (ret < 0)
+    {
+        rte_exit(EXIT_FAILURE, "Cannot configure device:"
+                               "err=%d, port=%u\n",
+                 ret, (unsigned)port_id);
+    }
 
     /* Explicitly configure ARP table */
     ret = px_arp_configure(g_arp_entries, g_arp_entries_size);
@@ -385,12 +394,6 @@ port_init(uint16_t port_id, uint16_t num_queue)
         rte_exit(EXIT_FAILURE, "Failed to configure ARP table\n");
     }
 #endif
-    if (ret < 0)
-    {
-        rte_exit(EXIT_FAILURE, "Cannot configure device:"
-                               "err=%d, port=%u\n",
-                 ret, (unsigned)port_id);
-    }
 
     fflush(stdout);
 
@@ -398,8 +401,8 @@ port_init(uint16_t port_id, uint16_t num_queue)
 
     for (queue_id = 0; queue_id < num_queue; queue_id++)
     {
-        sid = rte_lcore_to_socket_id(queue_id);
-        // sid = rte_eth_dev_socket_id(port_id);
+        // sid = rte_lcore_to_socket_id(queue_id);
+        sid = rte_eth_dev_socket_id(port_id);
 
         /* init RX queue on each port per CPU */
 #if (USE_PX || NICMEM || NUM_HAIRPIN_Q)
@@ -526,11 +529,12 @@ int lcore_main(void *args)
                                               rmbufs[port_id],
                                               MAX_PKT_BURST);
 #if (USE_LRO || USE_GRO)
-            px_parse_batch(port_id, qid,
+            px_parse_batch(port_id,
+                           qid,
                            rmbufs[port_id],
                            nb_rx[port_id],
                            !JUMBO_FRAME,
-                           1,
+                           1, // HW_CSUM
                            SEMANTIC_TEST);
 #endif
 #if USE_GRO
@@ -544,12 +548,25 @@ int lcore_main(void *args)
                               rmbufs[port_id],
                               nb_rx[port_id],
                               0,
+                              0,
+                              0,
                               0);
 #endif
             for (i = 0; i < nb_rx[port_id]; i++)
             {
                 m = rmbufs[port_id][i];
-
+#if !USE_SGDMA
+                /* make chained segments into one large segment */
+                ret = rte_pktmbuf_linearize(m);
+                if (ret < 0)
+                {
+                    fprintf(stdout,
+                            "Port %d: Failed to linearize mbuf %d, ret: %d\n",
+                            port_id, i, ret);
+                    rte_pktmbuf_free(m);
+                    continue;
+                }
+#endif
                 eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
                 if (eth_hdr->ether_type !=
                     rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4))
@@ -654,24 +671,21 @@ int main(int argc, char **argv)
     optind = 0;
 
     /* choose ARP table */
-    g_arp_entries = g_arp_entries_normal;
-    // g_arp_entries = g_arp_entries_two_hops;
-    // g_arp_entries = g_arp_entries_two_hops_dpvs;
-    // g_arp_entries = g_arp_entries_two_hops_for_gamma_test;
+    // g_arp_entries = g_arp_entries_normal;
+    // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_normal) /
+    //                      sizeof(struct px_arp_entry);
 
-    g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_normal) /
-                         sizeof(struct px_arp_entry);
+    // g_arp_entries = g_arp_entries_two_hops;
     // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_two_hops) /
     //                      sizeof(struct px_arp_entry);
+
+    // g_arp_entries = g_arp_entries_two_hops_dpvs;
     // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_two_hops_dpvs) /
     //                      sizeof(struct px_arp_entry);
-    // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_two_hops_for_gamma_test) /
-    //                      sizeof(struct px_arp_entry);
 
-    (void)g_arp_entries_normal;
-    (void)g_arp_entries_two_hops;
-    (void)g_arp_entries_two_hops_dpvs;
-    (void)g_arp_entries_two_hops_for_gamma_test;
+    g_arp_entries = g_arp_entries_two_hops_for_skew_test;
+    g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_two_hops_for_skew_test) /
+                         sizeof(struct px_arp_entry);
 
     char mem_channels[5];
     char lcores_arg[256];
@@ -814,7 +828,9 @@ int main(int argc, char **argv)
                           g_num_cores,
                           g_num_cores,
                           9000,
-                          RTE_ETHER_MTU);
+                          RTE_ETHER_MTU,
+                          is_uplink,
+                          is_downlink);
 #endif
 
     /* launch lcore main on each worker core */

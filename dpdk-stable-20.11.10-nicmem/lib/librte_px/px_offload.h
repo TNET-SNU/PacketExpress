@@ -17,18 +17,20 @@ extern "C"
 /*----------------------------------------------------------------------------*/
 void px_hairpin_configure(uint16_t port_id,
                           uint16_t num_rxq,
-                          uint16_t max_rxq,
                           uint16_t num_txq,
+                          uint16_t max_rxq,
                           uint16_t hp_num_rxq,
                           uint16_t hp_num_txq,
                           struct rte_eth_conf *eth_conf,
-                          int optout);
+                          int hp_policy);
 /*----------------------------------------------------------------------------*/
 int px_hairpin_setup(uint16_t port_id,
                      uint16_t num_rxq,
                      uint16_t num_txq,
                      uint16_t nb_rx_desc,
                      uint16_t nb_tx_desc);
+/*----------------------------------------------------------------------------*/
+int px_hairpin_start(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 /* returns handle for initiate and destroy of hairpin context */
 int px_async_start(uint16_t thread_core_id,

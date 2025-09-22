@@ -48,7 +48,7 @@ void lru_queue_print_all(uint16_t port_id)
 /*----------------------------------------------------------------------------*/
 void lru_queue_init(uint16_t port_id,
                     size_t num,
-                    int optout)
+                    int hp_policy)
 {
     struct cache_manager *cm = &g_cache_manager[port_id];
     cm->cache_size = num;
@@ -60,7 +60,7 @@ void lru_queue_init(uint16_t port_id,
     cm->total_cached_size = 0;
     cm->total_evicted_size = 0;
     cm->reset = 0;
-    cm->optout = optout;
+    cm->hp_policy = hp_policy;
 
     cm->init = 1;
 }
@@ -201,7 +201,7 @@ lru_queue_insert(uint16_t port_id,
     /*-------------------------------------------------------*/
     /* choose one of below */
     /* 2-1. evict LRU: remove tail */
-    if (cm->optout)
+    if (cm->hp_policy == 2) // opt-in
     {
         evicted = cm->tail.prev;
     }

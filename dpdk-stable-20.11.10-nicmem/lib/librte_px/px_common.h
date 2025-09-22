@@ -83,26 +83,50 @@ extern "C"
 // #define FALLBACK_eMTU 576
 #define FALLBACK_eMTU 1240
 /*----------------------------------------------------------------------------*/
+/*
+ * Ethernet frame overhead
+ */
+#ifndef ETHER_CRC_LEN
+#define ETHER_CRC_LEN 4
+#endif
+#define ETHER_IFG 12
+#define ETHER_PREAMBLE 8
+#define ETHER_OVR (ETHER_CRC_LEN + ETHER_PREAMBLE + ETHER_IFG)
+/*----------------------------------------------------------------------------*/
 /* Below are for statistics measurement */
 #define PX_MEASURE_STATS 1
 #define PX_MEASURE_PER_QUEUE_STAT 0
 #define PX_MEASURE_DIST 0
-#define MEASURE_DELAY 1
+#define MEASURE_DELAY 0
+/*----------------------------------------------------------------------------*/
 #define LOG_RX_HW_TIMESTAMP 0
+#define LOG_DELAY 0
 #define LOG_BUFFER_SIZE (1024 * 1024)
-#define FIX_GEAR 1
+/*----------------------------------------------------------------------------*/
+#define FIXED_TIMEOUT 720000 /* 720us */ /* 100Mps */
+// #define FIXED_TIMEOUT 72000 /* 72us */ /* 1Gbps */
+// #define FIXED_TIMEOUT 180000 /* 180us */ /* 400Mbps */
+// #define MULTIPLE_OF_AVG_IAT 1
+/*----------------------------------------------------------------------------*/
+#define FIX_GEAR 0
+#define TEST_RSS_ATOMICITY 0
+#define LOG_IAT_ENTRIES 1
+#define USE_JUMP_RULE 0
+/*----------------------------------------------------------------------------*/
+#define USE_USO 0
+#define LIMIT_64K 1
 /*----------------------------------------------------------------------------*/
 /* Custom timestamp flags */
-#define CLOCK_CPU_TIMESTAMP 100
-#define CLOCK_CPU_TIMESTAMP_PRECISE 101
-#define CLOCK_NIC_TIMESTAMP 102
+#define CLOCK_CPUTSC 100
+#define CLOCK_CPUTSC_PRECISE 101
+#define CLOCK_NICTSC 102
 
 /* Choose one of below */
 // #define TIME_FLAG (CLOCK_REALTIME)
 // #define TIME_FLAG (CLOCK_MONOTONIC)
-#define TIME_FLAG (CLOCK_CPU_TIMESTAMP)
-// #define TIME_FLAG (CLOCK_CPU_TIMESTAMP_PRECISE)
-// #define TIME_FLAG (CLOCK_NIC_TIMESTAMP)
+// #define TIME_FLAG (CLOCK_CPUTSC)
+#define TIME_FLAG (CLOCK_CPUTSC_PRECISE)
+// #define TIME_FLAG (CLOCK_NICTSC)
 /*----------------------------------------------------------------------------*/
 #define E9 (NS_PER_S)
 #define E6 (US_PER_S)
@@ -178,7 +202,24 @@ struct px_dev
     /* whether hairpin context initialized */
     uint8_t initialized_hairpin : 1;
 
-    uint8_t unused : 3;
+    /* whether SGDMA is enabled or not */
+    uint8_t sgdma : 1;
+
+    /* whether dynamic RXQ scaling is enabled or not */
+    uint8_t dyn_rxq : 1;
+
+    uint8_t unused : 1;
+
+    /* hairpin polic */
+    int hp_policy;
+};
+/*----------------------------------------------------------------------------*/
+struct px_caravan_hdr
+{
+    /* caravan encap header length */
+    uint16_t hdr_len;
+    /* length of each segment */
+    uint16_t seglen;
 };
 /*----------------------------------------------------------------------------*/
 static inline uint64_t
@@ -186,15 +227,17 @@ px_gettime(clockid_t clk_id)
 {
     struct timespec ts;
     /* ToDo: make below use switch */
-    if (clk_id == CLOCK_CPU_TIMESTAMP_PRECISE)
+    if (clk_id == CLOCK_CPUTSC_PRECISE)
     {
-        return (uint64_t)((double)rte_rdtsc_precise() * NS_PER_S / rte_get_tsc_hz());
+        return (uint64_t)((double)rte_rdtsc_precise() *
+                          NS_PER_S / rte_get_tsc_hz());
     }
-    if (clk_id == CLOCK_CPU_TIMESTAMP)
+    if (clk_id == CLOCK_CPUTSC)
     {
-        return (uint64_t)((double)rte_rdtsc() * NS_PER_S / rte_get_tsc_hz());
+        return (uint64_t)((double)rte_rdtsc() *
+                          NS_PER_S / rte_get_tsc_hz());
     }
-    if (clk_id == CLOCK_NIC_TIMESTAMP)
+    if (clk_id == CLOCK_NICTSC)
     {
         /* not implemented yet */
         return 0;
@@ -205,22 +248,24 @@ px_gettime(clockid_t clk_id)
     return (uint64_t)ts.tv_sec * NS_PER_S + ts.tv_nsec;
 }
 /*----------------------------------------------------------------------------*/
-#ifdef MEASURE_DELAY
-#define MEASURE(name, cmd)                                                \
-    do                                                                    \
-    {                                                                     \
-        uint64_t _start1, _start2, _end1, _end2;                          \
-        long _time1, _time2;                                              \
-        _start1 = px_gettime(TIME_FLAG);                                  \
-        _start2 = px_gettime(CLOCK_THREAD_CPUTIME_ID);                    \
-        cmd;                                                              \
-        _end1 = px_gettime(TIME_FLAG);                                    \
-        _end2 = px_gettime(CLOCK_THREAD_CPUTIME_ID);                      \
-        _time1 = (_end1 - _start1);                                       \
-        _time2 = (_end2 - _start2);                                       \
-        fprintf(stdout,                                                   \
-                "[%s] Wallclock time: %.0lf ns, Thread time: %.0lf ns\n", \
-                name, (double)_time1, (double)_time2);                    \
+#if MEASURE_DELAY
+#define MEASURE(name, cmd)                                           \
+    do                                                               \
+    {                                                                \
+        uint64_t _start1, _start2, _end1, _end2;                     \
+        long _time1, _time2;                                         \
+        _start1 = px_gettime(TIME_FLAG);                             \
+        _start2 = px_gettime(CLOCK_THREAD_CPUTIME_ID);               \
+        cmd;                                                         \
+        _end1 = px_gettime(TIME_FLAG);                               \
+        _end2 = px_gettime(CLOCK_THREAD_CPUTIME_ID);                 \
+        _time1 = (_end1 - _start1);                                  \
+        _time2 = (_end2 - _start2);                                  \
+        fprintf(stdout,                                              \
+                "[%s:%d:%s:%s] "                                     \
+                "Wallclock time: %.0lf ns, Thread time: %.0lf ns\n", \
+                __FILE__, __LINE__, __func__, name,                  \
+                (double)_time1, (double)_time2);                     \
     } while (/*CONSTCOND*/ 0);
 #else
 #define MEASURE(name, cmd) \
@@ -839,6 +884,56 @@ unmark_px(struct rte_mbuf *pkt)
     return *tos &= ~PX_MARK_ON_TOS;
 }
 /*----------------------------------------------------------------------------*/
+static inline int
+is_single_pkt(struct rte_mbuf *pkt)
+{
+    return pkt->nb_segs == 1 ||
+           (pkt->nb_segs == 2 &&
+            (pkt->next->ol_flags & EXT_ATTACHED_MBUF));
+}
+/*----------------------------------------------------------------------------*/
+static inline int
+is_uso_needed(struct rte_mbuf *pkt)
+{
+    struct px_caravan_hdr *pxh;
+    if (!is_udp(pkt))
+    {
+        return 0;
+    }
+    if (!is_px(pkt))
+    {
+        return 0;
+    }
+    if (!is_single_pkt(pkt))
+    {
+        return 0;
+    }
+
+    /* parse PX caravan header */
+    pxh = (struct px_caravan_hdr *)get_payload(pkt);
+    if (pxh->hdr_len < sizeof(struct px_caravan_hdr))
+    {
+        return 0;
+    }
+
+    return 1;
+}
+/*----------------------------------------------------------------------------*/
+/* how to figure out direction by default */
+static inline int
+is_uplink_default(struct rte_mbuf *pkt)
+{
+    uint8_t *s = (uint8_t *)get_four_tuple(pkt);
+    return *(s + 2) == 90;
+}
+/*----------------------------------------------------------------------------*/
+static inline int
+is_downlink_default(struct rte_mbuf *pkt)
+{
+    uint8_t *s = (uint8_t *)get_four_tuple(pkt);
+    return *(s + 2) == 95;
+}
+/*----------------------------------------------------------------------------*/
 /*
  * if packets are merged or concatenated,
  * update total_length in ip header
@@ -982,7 +1077,7 @@ put_sw_timestamp(struct rte_mbuf *pkt,
 {
     uint64_t *timestamp_pos =
         (uint64_t *)((uint8_t *)pkt->buf_addr +
-                     pkt->data_off - sizeof(uint64_t));
+                     sizeof(struct four_tuple));
 
     /* backup the tuple in the headroom */
     *timestamp_pos = timestamp;
@@ -992,7 +1087,7 @@ static inline uint64_t
 get_sw_timestamp(struct rte_mbuf *pkt)
 {
     return *(uint64_t *)((uint8_t *)pkt->buf_addr +
-                         pkt->data_off - sizeof(uint64_t));
+                         sizeof(struct four_tuple));
 }
 /*----------------------------------------------------------------------------*/
 #ifdef __cplusplus

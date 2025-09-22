@@ -9,13 +9,15 @@ extern "C"
 #include "px_common.h"
 #include "px_async.h"
 /*----------------------------------------------------------------------------*/
+#define PX_MAX_GEAR_NUM 10
 #define PX_FLOW_MAX_ACTIONS 10
 #define RETA_CONF_SIZE (ETH_RSS_RETA_SIZE_512 / RTE_RETA_GROUP_SIZE)
 #define CRUISE_PERIOD 0
-#define STEADY_THRESHOLD 0.01
+#define STEADY_RXQ 0.1
+#define STEADY_THRESHOLD 0.05
 #define FLUCTUATE_THRESHOLD 0.1
 #define BETTER_THRESHOLD 0
-#define YIELD_THRESHOLD 95
+#define YIELD_THRESHOLD 90
 /*----------------------------------------------------------------------------*/
 enum gear_state
 {
@@ -32,8 +34,11 @@ struct perf_metric
     uint32_t delay;
     uint32_t max_delay;
     float num_flows_per_rxq;
+    float num_pkts_per_rxq;
     float active_rxq_cnt;
+    float active_rxq_per_available_rxq;
     float num_flows_per_active_rxq;
+    float num_pkts_per_active_rxq;
 };
 /*----------------------------------------------------------------------------*/
 struct px_latent_gear
@@ -43,11 +48,9 @@ struct px_latent_gear
     int gear_val;
     struct rte_flow_attr attr;
 
-    struct rte_flow_item patterns[3];
+    struct rte_flow_item patterns[2];
     struct rte_flow_item_eth eth_spec;
     struct rte_flow_item_eth eth_mask;
-    struct rte_flow_item_ipv4 ipv4_spec;
-    struct rte_flow_item_ipv4 ipv4_mask;
 
     struct rte_flow_action actions[2];
     struct rte_flow_action_rss rss;
@@ -60,11 +63,9 @@ struct px_latent_jump_g1
 {
     struct rte_flow_attr attr;
 
-    struct rte_flow_item patterns[3];
+    struct rte_flow_item patterns[2];
     struct rte_flow_item_eth eth_spec;
     struct rte_flow_item_eth eth_mask;
-    struct rte_flow_item_ipv4 ipv4_spec;
-    struct rte_flow_item_ipv4 ipv4_mask;
 
     struct rte_flow_action actions[2];
     struct rte_flow_action_jump jump;
@@ -95,7 +96,7 @@ struct px_latent_ctx
 
     uint16_t gear_val;
     uint16_t gear_idx;
-    struct px_latent_gear gears[10];
+    struct px_latent_gear gears[PX_MAX_GEAR_NUM];
     struct px_latent_jump_g1 jump_g1;
 
     struct rte_eth_rss_reta_entry64 requested_reta_entry[RETA_CONF_SIZE];
@@ -123,6 +124,25 @@ px_dump_rss_queue(uint16_t *rss_queues, uint16_t rss_len)
     fprintf(stdout, "\n");
 }
 /*----------------------------------------------------------------------------*/
+static inline int
+px_latent_is_hard_to_merge(struct perf_metric *cur)
+{
+    // return (cur->active_rxq_per_available_rxq > 40) &&
+    //        (cur->num_flows_per_active_rxq >= 1);
+    // return (cur->active_rxq_per_available_rxq > 40) &&
+    //        (cur->num_pkts_per_active_rxq > 2);
+    return (cur->active_rxq_per_available_rxq > 40);
+}
+/*----------------------------------------------------------------------------*/
+static inline int
+px_latent_is_easy_to_merge(struct perf_metric *cur)
+{
+    // return (cur->active_rxq_per_available_rxq <= 25) &&
+    //        (cur->num_pkts_per_active_rxq <= 2);
+    return (cur->active_rxq_per_available_rxq <= 20);
+    // return (cur->active_rxq_per_available_rxq < 40);
+}
+/*----------------------------------------------------------------------------*/
 /**
  * Priority: throughput > yield > delay
  */
@@ -130,21 +150,53 @@ static inline int
 px_latent_is_steady(struct perf_metric *cur,
                     struct perf_metric *prev)
 {
-    if (cur->tput > prev->tput * (1 + STEADY_THRESHOLD) ||
-        cur->tput < prev->tput * (1 - STEADY_THRESHOLD))
+    // if (cur->active_rxq_per_available_rxq > 
+    //     prev->active_rxq_per_available_rxq * (1 + STEADY_RXQ) ||
+    //     cur->active_rxq_per_available_rxq < 
+    //     prev->active_rxq_per_available_rxq * (1 - STEADY_RXQ))
+    if (cur->active_rxq_per_available_rxq > 
+        prev->active_rxq_per_available_rxq * (1 + STEADY_RXQ))
     {
         return 0;
     }
-    if (cur->yield > prev->yield * (1 + STEADY_THRESHOLD) ||
-        cur->yield < prev->yield * (1 - STEADY_THRESHOLD))
-    {
-        return 0;
-    }
-    if (cur->delay > prev->delay * (1 + STEADY_THRESHOLD) ||
-        cur->delay < prev->delay * (1 - STEADY_THRESHOLD))
-    {
-        return 0;
-    }
+    // if (cur->num_flows_per_active_rxq > 
+    //     prev->num_flows_per_active_rxq * (1 + STEADY_RXQ) ||
+    //     cur->num_flows_per_active_rxq < 
+    //     prev->num_flows_per_active_rxq * (1 - STEADY_RXQ))
+    // if (cur->num_flows_per_active_rxq > 
+    //     prev->num_flows_per_active_rxq * (1 + STEADY_RXQ) ||
+    //     cur->num_flows_per_active_rxq < 
+    //     prev->num_flows_per_active_rxq * (1 - STEADY_RXQ))
+    // {
+    //     return 0;
+    // }
+    // if (cur->num_pkts_per_active_rxq > 
+    //     prev->num_pkts_per_active_rxq * (1 + STEADY_RXQ) ||
+    //     cur->num_pkts_per_active_rxq < 
+    //     prev->num_pkts_per_active_rxq * (1 - STEADY_RXQ))
+    // {
+    //     return 0;
+    // }
+    // if (cur->delay > prev->delay * (1 + STEADY_THRESHOLD) ||
+    //     cur->delay < prev->delay * (1 - STEADY_THRESHOLD))
+    // {
+    //     return 0;
+    // }
+    // if (cur->tput > prev->tput * (1 + STEADY_THRESHOLD) ||
+    //     cur->tput < prev->tput * (1 - STEADY_THRESHOLD))
+    // {
+    //     return 0;
+    // }
+    // if (cur->yield > prev->yield * (1 + STEADY_THRESHOLD) ||
+    //     cur->yield < prev->yield * (1 - STEADY_THRESHOLD))
+    // {
+    //     return 0;
+    // }
+    // if (cur->delay > prev->delay * (1 + STEADY_THRESHOLD) ||
+    //     cur->delay < prev->delay * (1 - STEADY_THRESHOLD))
+    // {
+    //     return 0;
+    // }
 
     return 1;
 }

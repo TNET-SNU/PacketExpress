@@ -149,3 +149,5 @@ fi
 # sudo python3 ../../bess/bin/bessctl run up4
 # sudo python3 ../../bess/route_control.py -i "${ifaces[@]}"
 # ../pfcpbin/pfcpiface -config ../../bess/bessctl/conf/upf.json
+
+sudo sysctl net.ipv4.ip_forward=1

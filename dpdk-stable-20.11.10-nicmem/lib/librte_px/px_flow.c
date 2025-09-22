@@ -56,9 +56,9 @@ onload_ctrl_pkts(uint16_t port_id)
 
     /* make rte_flow DMA onload rule */
     struct rte_flow_action actions[] = {
-        /* deliver to DMA queue RSS */
-        {.type = RTE_FLOW_ACTION_TYPE_RSS,
-         .conf = &hp_ctx->rss},
+        /* deliver to DMA jump rule */
+        {.type = RTE_FLOW_ACTION_TYPE_JUMP,
+         .conf = &hp_ctx->jump},
         {.type = RTE_FLOW_ACTION_TYPE_END},
     };
 
@@ -301,7 +301,111 @@ offload_all_flows(uint16_t port_id)
             return -1;
         }
 #endif
+        hp_ctx->common_offload_rule[i] =
+            px_latent_flow_create(port_id,
+                                  &attr,
+                                  patterns,
+                                  actions,
+                                  &error);
+        if (!hp_ctx->common_offload_rule[i])
+        {
+            fprintf(stderr,
+                    "[%s:%s:%d] [port %d] px_latent_flow_create() failed. "
+                    "Error type: %d, Error msg: %s\n",
+                    __FILE__, __func__, __LINE__,
+                    port_id, error.type, error.message);
+        }
+    }
 
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
+/**
+ * Offload all flows with ARP action to hairpin queue
+ * We use synchronous legacy API regardless of flow delay
+ * because this function is called only once at initial time
+ */
+static inline int
+offload_small_pkts(uint16_t port_id)
+{
+    struct px_hairpin_ctx *hp_ctx = &g_hp_ctx[port_id];
+    struct rte_flow_error error;
+    /* Holds the flow attributes. */
+    struct rte_flow_attr attr = {
+        /* set the rule on the main group. */
+        .group = 0,
+        /* give the offload rule the lowest priority (higer value = lower priority) */
+        .priority = 0,
+        /* Rx flow */
+        .ingress = 1,
+        .egress = 0,
+        .transfer = 0};
+    int i;
+
+    /* make patterns */
+    struct rte_flow_item_eth eth_spec = {0};
+    struct rte_flow_item_eth eth_mask = {0};
+    struct rte_flow_item_ipv4 ipv4_spec = {0};
+    struct rte_flow_item_ipv4 ipv4_mask = {0};
+    struct rte_flow_item patterns[] = {
+        {.type = RTE_FLOW_ITEM_TYPE_ETH,
+         .spec = &eth_spec,
+         .last = NULL,
+         .mask = &eth_mask},
+        {.type = RTE_FLOW_ITEM_TYPE_IPV4,
+         .spec = &ipv4_spec,
+         .last = NULL,
+         .mask = &ipv4_mask},
+        {.type = RTE_FLOW_ITEM_TYPE_END},
+    };
+    ipv4_mask.hdr.dst_addr = UINT32_MAX;
+    ipv4_mask.hdr.next_proto_id = UINT8_MAX;
+    ipv4_spec.hdr.next_proto_id = IPPROTO_UDP;
+
+    /* make SRC MAC action */
+    struct rte_flow_action_set_mac modify_src_mac, modify_dst_mac;
+    memcpy(modify_src_mac.mac_addr,
+           &g_px_dev[port_id].mac,
+           RTE_ETHER_ADDR_LEN);
+
+    /* make actions */
+    struct rte_flow_action actions[] = {
+        /* modify src MAC */
+        {.type = RTE_FLOW_ACTION_TYPE_SET_MAC_SRC,
+         .conf = &modify_src_mac},
+        /* modify dst MAC */
+        {.type = RTE_FLOW_ACTION_TYPE_SET_MAC_DST,
+         .conf = &modify_dst_mac},
+        /* deliver to hairpin queue RSS */
+        {.type = RTE_FLOW_ACTION_TYPE_RSS,
+         .conf = &hp_ctx->hp_rss},
+        {.type = RTE_FLOW_ACTION_TYPE_END}};
+
+    /* make rte_flow rules for all ARP entries */
+    for (i = 0; i < g_arp_ctx.table_size; i++)
+    {
+        /* update DST IP in pattern and DST MAC in action */
+        ipv4_spec.hdr.dst_addr = g_arp_ctx.arp_bin_table[i].ip;
+        memcpy(modify_dst_mac.mac_addr,
+               &g_arp_ctx.arp_bin_table[i].mac,
+               RTE_ETHER_ADDR_LEN);
+
+        /* create main traffic rule */
+#if VALIDATE_FLOW_RULE
+        if (px_latent_flow_validate(port_id,
+                                    &attr,
+                                    patterns,
+                                    actions,
+                                    &error) < 0)
+        {
+            fprintf(stderr,
+                    "[%s:%s:%d] [port %d] px_latent_flow_validate() failed. "
+                    "Error type: %d, Error msg: %s\n",
+                    __FILE__, __func__, __LINE__,
+                    port_id, error.type, error.message);
+            return -1;
+        }
+#endif
         hp_ctx->common_offload_rule[i] =
             px_latent_flow_create(port_id,
                                   &attr,
@@ -322,6 +426,23 @@ offload_all_flows(uint16_t port_id)
 }
 /*----------------------------------------------------------------------------*/
 int px_flow_create_optout(uint16_t port_id)
+{
+    int ret;
+
+    /* offload every UDP packets -- priority 3 */
+    ret = offload_small_pkts(port_id);
+    if (ret < 0)
+    {
+        fprintf(stderr,
+                "[port %d] offload_small_flows() failed, ret: %d\n",
+                port_id, ret);
+        return ret;
+    }
+
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
+int px_flow_create_optin(uint16_t port_id)
 {
     int ret;
 

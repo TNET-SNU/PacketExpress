@@ -39,11 +39,6 @@ static uint8_t rss_key[40] = {0xD8, 0x2A, 0x6C, 0x5A, 0xDD, 0x3B, 0x9D, 0x1E,
                               0x44, 0x31, 0x7E, 0xA2, 0x07, 0xA5, 0x0A, 0x99,
                               0x49, 0xC6, 0xA4, 0xFE, 0x0C, 0x4F, 0x59, 0x02,
                               0xD4, 0x44, 0xE2, 0x4A, 0xDB, 0xE1, 0x05, 0x82};
-// static uint8_t rss_key[40] = {0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
-//                               0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
-//                               0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
-//                               0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
-//                               0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A};
 
 void PMDPort::InitDriver() {
   dpdk_port_t num_dpdk_ports = rte_eth_dev_count_avail();
@@ -423,8 +418,10 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
                              &eth_conf,
                              NULL,
                              0,
-#if USE_OPTOUT
-                             1
+                             1,
+                             1,
+#if NUM_HAIRPIN_Q
+                             HAIRPIN_POLICY
 #else
                              0
 #endif
@@ -561,6 +558,16 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
               SEMANTIC_TEST) < 0) {
     return CommandFailure(ENOMEM, "px_init failed");
   }
+#else
+  /* thread for stat printing */
+  ret = px_stat_start_monitor(STAT_INTERVAL,
+                              rte_eth_dev_count_avail(),
+                              num_rxq,
+                              num_txq,
+                              0,
+                              0,
+                              NULL,
+                              NULL);
 #endif
 
   int numa_node = arg.socket_case() == bess::pb::PMDPortArg::kSocketId ?
@@ -762,7 +769,7 @@ int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   };
   recv = rte_gro_reassemble_burst(reinterpret_cast<rte_mbuf **>(pkts), recv, &gro_param);
 #endif
-  px_stat_update_rx(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), recv, 0, 0);
+  px_stat_update_rx(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), recv, 0, 0, 0, 0);
 #endif
 
   return recv;
@@ -777,6 +784,7 @@ int PMDPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   px_setup_tso_burst(dpdk_port_id_, qid,
                      reinterpret_cast<rte_mbuf **>(pkts), cnt,
                      SEMANTIC_TEST);
+  px_stat_update_tx(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), cnt);
 #endif
 #if NUM_HAIRPIN_Q
   px_flow_create_burst(dpdk_port_id_, qid,

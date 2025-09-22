@@ -22,14 +22,12 @@ extern "C"
 #include "rte_gso.h"
 #include "rte_thash.h"
 /*----------------------------------------------------------------------------*/
-#define LIMIT_64K 0
-
 #define INVALID_INDEX UINT16_MAX
 #define MAX_TCP_HLEN 60
 #define MAX_KEY_LEN 32
 
 #define IP_VERSION_IHL 0x45
-#define NB_CLONE_MBUF ((1 << 15) - 1)
+#define NB_CLONE_MBUF ((1 << 25) - 1)
 /*----------------------------------------------------------------------------*/
 struct px_flow
 {
@@ -67,6 +65,9 @@ struct px_item
      */
     uint16_t next_item_idx;
 
+    /* whether HOL blocking happened */
+    int hol_blocked;
+
     /* for stash timeout */
     uint64_t timestamp;
 };
@@ -79,8 +80,6 @@ struct px_stash
     /* array of stashed item array */
     /* since stashing is stateful, we keep per-latent-queue stash array */
     struct px_item *items;
-
-    int is_drained;
 };
 
 /*
@@ -132,6 +131,9 @@ struct px_ctx
     /* per-latent-queue stash arrays */
     struct px_stash *stash_array;
 
+    /* for timing measurement */
+    uint64_t queue_time;
+
     /* for stash timeout */
     uint64_t now_ns;
 
@@ -157,7 +159,8 @@ struct px_ctx
     uint8_t do_mss_trans : 1;
     uint8_t do_delayed_merging : 1;
     uint8_t do_latent_rxq : 1;
-    uint8_t unused : 3;
+    uint8_t sgdma : 1;
+    uint8_t unused : 2;
 };
 /*----------------------------------------------------------------------------*/
 static inline int
@@ -591,11 +594,8 @@ px_uso_burst0(struct rte_mbuf **pkts,
     {
         pkt = pkts[i];
 
-        /* pass non UDP */
-        if (!is_udp(pkt) ||
-            !is_px(pkt) ||
-            !(pkt->nb_segs > 1) ||
-            (rte_be_to_cpu_16(*(uint16_t *)get_payload(pkt)) > 4))
+        /* pass non USO target packets */
+        if (!is_uso_needed(pkt))
         {
             /* enqueue to TX ring */
             if (px_ring_enqueue(tx_ring, &pkt, 1) != 1)
@@ -654,7 +654,9 @@ px_uso_burst0(struct rte_mbuf **pkts,
                                              get_hdr_len(pkt));
                 if (!hdr_clone)
                 {
-                    fprintf(stderr, "hdr clone failed\n");
+                    fprintf(stderr,
+                            "[%s:%s:%d] hdr clone failed\n",
+                            __FILE__, __func__, __LINE__);
                     continue;
                 }
                 iplen = get_ip_len(hdr_clone);
@@ -671,7 +673,9 @@ px_uso_burst0(struct rte_mbuf **pkts,
                 hdr_clone = rte_pktmbuf_clone(pkt, clone_pool);
                 if (!hdr_clone)
                 {
-                    fprintf(stderr, "hdr clone failed\n");
+                    fprintf(stderr,
+                            "[%s:%s:%d] hdr clone failed\n",
+                            __FILE__, __func__, __LINE__);
                     continue;
                 }
             }
@@ -679,7 +683,9 @@ px_uso_burst0(struct rte_mbuf **pkts,
             body_clone = rte_pktmbuf_clone(pkt, clone_pool);
             if (!body_clone)
             {
-                fprintf(stderr, "body clone failed\n");
+                fprintf(stderr,
+                        "[%s:%s:%d] body clone failed\n",
+                        __FILE__, __func__, __LINE__);
                 rte_pktmbuf_free(hdr_clone);
                 continue;
             }
@@ -717,7 +723,7 @@ px_uso_burst(struct rte_mbuf **pkts,
              struct px_ring *tx_ring,
              struct rte_mempool *clone_pool)
 {
-    struct rte_mbuf *pkt, *hdr_clone, *body_clone;
+    struct rte_mbuf *pkt, *hdr_clone, *body_clone, *next;
     uint16_t idx = 0;
     uint16_t seglen, segnum, last_seglen, offset = 0;
     uint16_t *iplen, *udplen;
@@ -727,11 +733,10 @@ px_uso_burst(struct rte_mbuf **pkts,
     {
         pkt = pkts[i];
 
-        /* pass non UDP */
-        if (!is_udp(pkt) ||
-            !is_px(pkt) ||
-            !(pkt->nb_segs > 1) ||
-            (rte_be_to_cpu_16(*(uint16_t *)get_payload(pkt)) > 4))
+        /* pass non USO target packets */
+#if USE_USO
+        if (!is_uso_needed(pkt))
+#endif
         {
             /* flush */
             if (idx == nb_out)
@@ -754,6 +759,7 @@ px_uso_burst(struct rte_mbuf **pkts,
 
         /* now this packet is PX tunneling packet */
         seglen = rte_be_to_cpu_16(*((uint16_t *)get_payload(pkt) + 1));
+        seglen = 1472; // default
 
         /* below are for debugging */
         // if ((seglen + pkt->l3_len + pkt->l4_len > DEFAULT_eMTU) ||
@@ -776,7 +782,15 @@ px_uso_burst(struct rte_mbuf **pkts,
         // }
 
         segnum = CEIL_DIV(get_data_len(pkt) - 2 * sizeof(uint16_t), seglen);
+        segnum = 6; // default
+
         last_seglen = (get_data_len(pkt) - 2 * sizeof(uint16_t)) % seglen;
+
+        // if (last_seglen)
+        // {
+        //     printf("seglen: %u, segnum: %u, last_seglen: %u\n",
+        //            seglen, segnum, last_seglen);
+        // }
 
         /* update header */
         pkt->data_len = get_hdr_len(pkt);
@@ -792,15 +806,22 @@ px_uso_burst(struct rte_mbuf **pkts,
             if (last_seglen && (j == segnum - 1))
             {
                 /* last seg may have different header */
+                /* backup next */
+                next = pkt->next;
+                pkt->next = NULL;
                 hdr_clone = rte_pktmbuf_copy(pkt,
-                                             clone_pool,
+                                             pkt->pool,
                                              0,
                                              get_hdr_len(pkt));
                 if (!hdr_clone)
                 {
-                    fprintf(stderr, "hdr clone failed\n");
-                    continue;
+                    fprintf(stderr,
+                            "[%s:%s:%d] hdr clone failed\n",
+                            __FILE__, __func__, __LINE__);
+                    pkt->next = next;
+                    goto Free_pkt;
                 }
+                pkt->next = next;
                 iplen = get_ip_len(hdr_clone);
                 *iplen = rte_cpu_to_be_16(pkt->l3_len +
                                           pkt->l4_len +
@@ -812,21 +833,38 @@ px_uso_burst(struct rte_mbuf **pkts,
             }
             else
             {
-                hdr_clone = rte_pktmbuf_clone(pkt, clone_pool);
+                /* backup next */
+                next = pkt->next;
+                pkt->next = NULL;
+                hdr_clone = rte_pktmbuf_clone(pkt, pkt->pool);
                 if (!hdr_clone)
                 {
-                    fprintf(stderr, "hdr clone failed\n");
-                    continue;
+                    fprintf(stderr,
+                            "[%s:%s:%d] hdr clone failed\n",
+                            __FILE__, __func__, __LINE__);
+                    pkt->next = next;
+                    goto Free_pkt;
                 }
+                pkt->next = next;
             }
 
-            body_clone = rte_pktmbuf_clone(pkt, clone_pool);
+            /* backup next */
+            next = pkt->next;
+            pkt->next = NULL;
+            body_clone = rte_pktmbuf_clone(pkt, pkt->pool);
             if (!body_clone)
             {
-                fprintf(stderr, "body clone failed\n");
+                fprintf(stderr,
+                        "[%s:%s:%d] body clone failed\n",
+                        __FILE__, __func__, __LINE__);
+                pkt->next = next;
                 rte_pktmbuf_free(hdr_clone);
-                continue;
+                hdr_clone = NULL;
+                goto Free_pkt;
             }
+            pkt->next = next;
+
+            /* chain header and payload */
             body_clone->data_off += offset;
             body_clone->data_len = seglen;
 
@@ -852,28 +890,26 @@ px_uso_burst(struct rte_mbuf **pkts,
             }
 
             offset += seglen;
+            hdr_clone = NULL;
+            body_clone = NULL;
         }
 
+Free_pkt:
         rte_pktmbuf_free(pkt);
         pkt = NULL;
+        if (hdr_clone)
+        {
+            rte_pktmbuf_free(hdr_clone);
+            hdr_clone = NULL;
+        }
+        if (body_clone)
+        {
+            rte_pktmbuf_free(body_clone);
+            body_clone = NULL;
+        }
     }
 
     return idx;
-}
-/*----------------------------------------------------------------------------*/
-/* how to figure out direction by default */
-static inline int
-is_uplink_default(struct rte_mbuf *pkt)
-{
-    uint8_t *s = (uint8_t *)get_four_tuple(pkt);
-    return *(s + 2) == 90;
-}
-/*----------------------------------------------------------------------------*/
-static inline int
-is_downlink_default(struct rte_mbuf *pkt)
-{
-    uint8_t *s = (uint8_t *)get_four_tuple(pkt);
-    return *(s + 2) == 95;
 }
 /*----------------------------------------------------------------------------*/
 void px_deinit(uint16_t port_id);
@@ -894,7 +930,7 @@ px_eth_conf(uint16_t port_id,
             int rss_key_len,
             int pkt_size,
             int is_lro,
-            int is_gro,
+            int is_sgdma,
             int is_delayed,
             int is_nicmem);
 /*----------------------------------------------------------------------------*/
@@ -908,9 +944,11 @@ int px_eth_dev_configure(uint16_t port_id,
                          uint16_t hp_num_rxq,
                          uint16_t hp_num_txq,
                          struct rte_eth_conf *eth_conf,
-                         struct px_arp_entry *arp_table,
+                         const struct px_arp_entry *arp_table,
                          uint16_t arp_table_size,
-                         int optout);
+                         int sgdma,
+                         int dyn_rxq,
+                         int hp_policy);
 /*----------------------------------------------------------------------------*/
 int px_eth_rx_queue_setup(uint16_t port_id,
                           uint16_t rx_queue_id,

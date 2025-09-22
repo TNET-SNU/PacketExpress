@@ -109,7 +109,6 @@ static bool ValidateMegabytesPerSocket(const char *, int32_t value) {
 
   return true;
 }
-// DEFINE_int32(m, 32768,
 DEFINE_int32(m, 65536,
              "Specifies per-socket hugepages to allocate (in MBs). "
              "If set to 0, no hugepage is used");

@@ -21,6 +21,7 @@ struct px_hairpin_ctx
     uint16_t num_txq;
     struct rte_flow_action_count ctr;
     struct rte_flow_action_rss rss;
+    struct rte_flow_action_jump jump;
     uint16_t rss_queues[RTE_MAX_QUEUES_PER_PORT];
     struct rte_flow *common_onload_rule[4]; // TCP SYN|FIN|RST and ICMP
 
@@ -31,8 +32,8 @@ struct px_hairpin_ctx
     uint16_t hp_rss_queues[RTE_MAX_QUEUES_PER_PORT];
     struct rte_flow *common_offload_rule[MAX_ARP_TABLE_SIZE];
 
-    /* whether optout policy is used */
-    int optout;
+    /* hairpin policy */
+    int hp_policy;
 
     /* below are for asynchronous offloading using rte_flow_async */
 #if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0) && RTE_FLOW_ASYNC_API
@@ -42,9 +43,13 @@ struct px_hairpin_ctx
     struct rte_flow *offload_flow_ack[1 << 16];
     struct rte_flow_template_table *template_table_offload[MAX_TEMPLATE_TABLE_NUM];
 #endif
+
+    int hairpin_initialized;
 };
 /*----------------------------------------------------------------------------*/
 int px_flow_create_optout(uint16_t port_id);
+/*----------------------------------------------------------------------------*/
+int px_flow_create_optin(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 struct rte_flow *
 px_flow_create_static(uint16_t port_id,

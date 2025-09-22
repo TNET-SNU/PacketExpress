@@ -303,6 +303,8 @@ class Port {
   Conf conf_;
 
  private:
+  // static const size_t kDefaultIncQueueSize = 8192;
+  // static const size_t kDefaultOutQueueSize = 8192;
   static const size_t kDefaultIncQueueSize = 4096;
   static const size_t kDefaultOutQueueSize = 4096;
   // static const size_t kDefaultIncQueueSize = 2048;

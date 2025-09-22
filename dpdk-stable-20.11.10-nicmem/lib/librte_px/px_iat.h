@@ -12,8 +12,9 @@ extern "C"
 #define IAT_TIMEOUT 300
 #define EWMA_ALPHA 0.125 // α = 1/8
 #define NMAX 45
-#define OUTLIER_CNT 4
-#define OUTLIER_FACTOR 4
+#define OUTLIER_CNT 10
+#define OUTLIER_FACTOR 10
+#define PER_FLOW_YIELD_THRESHOLD 90.0f
 /*----------------------------------------------------------------------------*/
 /* Structure to encapsulate mempool and hash table */
 struct px_iat_ctx
@@ -34,9 +35,10 @@ struct flow_iat_entry
 {
     rte_mbuf_timestamp_t last_timestamp;     /* HW timestamp of last packet */
     uint32_t avg_burst_iat;                  /* avg. burst IAT (EWMA) */
+    uint32_t avg_burst_iat_var;              /* variance of burst IAT (EWMA) */
     uint32_t avg_data_len;                   /* avg. packet size (EWMA) */
     uint32_t avg_round_iat;                  /* avg. round IAT (EWMA) */
-    uint32_t avg_throughput;                 /* avg. throughput (EWMA) */
+    uint64_t avg_bytes_per_sec;              /* avg. throughput (EWMA) */
     uint32_t pending_burst_iat[OUTLIER_CNT]; /* pending IAT (not used in EWMA) */
     uint32_t pending_data_len[OUTLIER_CNT];  /* size of packets per pending */
     uint32_t pending_nb_segs[OUTLIER_CNT];   /* number of segments per pending */
@@ -49,8 +51,23 @@ struct flow_iat_entry
     uint64_t bytes;
     uint64_t pkts;
 #endif
+    /* yield value for this flow */
+    float prev_yield;
+    float yield;
 
-    uint64_t last_update;                    /* SW timestamp of this entry */
+    uint64_t _1_seg_cnt;
+    uint64_t _2_seg_cnt;
+    uint64_t _3_seg_cnt;
+    uint64_t _4_seg_cnt;
+    uint64_t _5_seg_cnt;
+    uint64_t under_iMTU_cnt;
+    uint64_t iMTU_cnt;
+
+    /* SW timestamp of this entry */
+    uint64_t last_update;
+
+    /* whether this flow will oscilate */
+    int oscillate;
 };
 struct rpow_tbl_t
 {
@@ -160,8 +177,12 @@ get_rx_hw_timestamp(struct rte_mbuf *mbuf)
 int iat_init_ctx(uint16_t port_id,
                  uint16_t queue_id,
                  uint32_t num_entry,
+                 uint32_t imtu_size,
+                 uint32_t emtu_size,
                  uint32_t cutoff_ns,
-                 float ewma_alpha);
+                 float ewma_alpha,
+                 int (*is_uplink)(struct rte_mbuf *pkt),
+                 int (*is_downlink)(struct rte_mbuf *pkt));
 /*----------------------------------------------------------------------------*/
 int iat_destroy_ctx(uint16_t port_id,
                     uint16_t queue_id);
@@ -169,174 +190,35 @@ int iat_destroy_ctx(uint16_t port_id,
 int iat_update_entry(uint16_t port_id,
                      uint16_t queue_id,
                      struct rte_mbuf *pkt,
-                     uint64_t now);
+                     uint64_t now_ns);
 /*----------------------------------------------------------------------------*/
-int iat_search_entry(uint16_t port_id,
-                     uint16_t queue_id,
-                     struct four_tuple *key,
-                     uint32_t *avg_burst_iat,
-                     uint32_t *avg_data_len,
-                     uint64_t now);
+int iat_update_entry_yield(uint16_t port_id,
+                           uint16_t queue_id,
+                           struct rte_mbuf *pkt,
+                           uint64_t now_ns);
 /*----------------------------------------------------------------------------*/
 int iat_evict_entry(uint16_t port_id,
                     uint16_t queue_id,
                     struct rte_mbuf *pkt);
 /*----------------------------------------------------------------------------*/
 void iat_flush_timeout(uint16_t port_id,
-                       uint16_t queue_id);
+                       uint16_t queue_id,
+                       uint64_t now_ns);
 /*----------------------------------------------------------------------------*/
-static inline float
-iat_time_factor(uint32_t missing_segs_nb)
-{
-    /* below is for no delaying */
-    static const float timeout_factor_no_delay[] = {
-        00.00f, // no need to delay
-        00.00f, // no need to delay
-        00.00f, // no need to delay
-        00.00f, // no need to delay
-        00.00f, // no need to delay
-        00.00f, // no need to delay
-        00.00f, // no need to delay
-        00.00f, // no need to delay
-        00.00f, // no need to delay
-        00.00f, // no need to delay
-        00.00f, // no need to delay
-        00.00f, // no need to delay
-        00.00f, // no need to delay
-        00.00f, // no need to delay
-        00.00f, // no need to delay
-        00.00f, // no need to delay
-        00.00f, // no need to delay
-        00.00f, // no need to delay
-        00.00f, // no need to delay
-        00.00f, // no need to delay
-        00.00f, // no need to delay
-    };
-    /* below is for naive delaying */
-    static const float timeout_factor_naive[] = {
-        00.00f, // no need to delay
-        01.00f, // missing_segs = 1
-        02.00f, // missing_segs = 2
-        03.00f, // missing_segs = 3
-        04.00f, // missing_segs = 4
-        05.00f, // missing_segs = 5
-        06.00f, // missing_segs = 6
-        07.00f, // missing_segs = 7
-        08.00f, // missing_segs = 8
-        09.00f, // missing_segs = 9
-        10.00f, // missing_segs = 10
-        11.00f, // missing_segs = 11
-        12.00f, // missing_segs = 12
-        13.00f, // missing_segs = 13
-        14.00f, // missing_segs = 14
-        15.00f, // missing_segs = 15
-        16.00f, // missing_segs = 16
-        17.00f, // missing_segs = 17
-        18.00f, // missing_segs = 18
-        19.00f, // missing_segs = 19
-        20.00f, // missing_segs = 20
-    };
-    /* below is for 95% reception rate */
-    static const float timeout_factor_95[] = {
-        00.00f, // no need to delay
-        03.00f, // missing_segs = 1
-        04.74f, // missing_segs = 2
-        06.30f, // missing_segs = 3
-        07.75f, // missing_segs = 4
-        09.15f, // missing_segs = 5
-        10.51f, // missing_segs = 6
-        11.84f, // missing_segs = 7
-        13.15f, // missing_segs = 8
-        14.43f, // missing_segs = 9
-        15.71f, // missing_segs = 10
-        16.96f, // missing_segs = 11
-        18.21f, // missing_segs = 12
-        19.44f, // missing_segs = 13
-        20.67f, // missing_segs = 14
-        21.89f, // missing_segs = 15
-        23.10f, // missing_segs = 16
-        24.31f, // missing_segs = 17
-        25.51f, // missing_segs = 18
-        26.71f, // missing_segs = 19
-        27.90f, // missing_segs = 20
-    };
-    /* below is for 99% reception rate */
-    static const float timeout_factor_99[] = {
-        00.00f, // no need to delay
-        04.61f, // missing_segs = 1
-        06.64f, // missing_segs = 2
-        08.41f, // missing_segs = 3
-        10.05f, // missing_segs = 4
-        11.60f, // missing_segs = 5
-        13.06f, // missing_segs = 6
-        14.45f, // missing_segs = 7
-        15.79f, // missing_segs = 8
-        17.11f, // missing_segs = 9
-        18.42f, // missing_segs = 10
-        19.69f, // missing_segs = 11
-        20.96f, // missing_segs = 12
-        22.21f, // missing_segs = 13
-        23.45f, // missing_segs = 14
-        24.67f, // missing_segs = 15
-        25.89f, // missing_segs = 16
-        27.09f, // missing_segs = 17
-        28.29f, // missing_segs = 18
-        29.48f, // missing_segs = 19
-        30.66f, // missing_segs = 20
-    };
-    /* below is for 99.9% reception rate */
-    static const float timeout_factor_999[] = {
-        00.00f, // no need to delay
-        06.91f, // missing_segs = 1
-        09.88f, // missing_segs = 2
-        11.26f, // missing_segs = 3
-        13.11f, // missing_segs = 4
-        14.85f, // missing_segs = 5
-        16.50f, // missing_segs = 6
-        18.08f, // missing_segs = 7
-        19.60f, // missing_segs = 8
-        21.07f, // missing_segs = 9
-        22.51f, // missing_segs = 10
-        23.91f, // missing_segs = 11
-        25.28f, // missing_segs = 12
-        26.62f, // missing_segs = 13
-        27.94f, // missing_segs = 14
-        29.24f, // missing_segs = 15
-        30.52f, // missing_segs = 16
-        31.78f, // missing_segs = 17
-        33.02f, // missing_segs = 18
-        34.25f, // missing_segs = 19
-        35.47f, // missing_segs = 20
-    };
-    (void)timeout_factor_no_delay;
-    (void)timeout_factor_naive;
-    (void)timeout_factor_95;
-    (void)timeout_factor_99;
-    (void)timeout_factor_999;
-
-    /* choose one of below */
-    // static const float *timeout_factor = timeout_factor_no_delay;
-    // static const float *timeout_factor = timeout_factor_naive;
-    // static const float *timeout_factor = timeout_factor_95;
-    // static const float *timeout_factor = timeout_factor_99;
-    static const float *timeout_factor = timeout_factor_999;
-
-    if (missing_segs_nb > 21)
-    {
-        /* to avoid seg fault due to nicmem, dump only first segment */
-        fprintf(stderr, "Missing_segs is too large: %u. "
-                        "It might be due to overflow. "
-                        "Please do debug.\n",
-                missing_segs_nb);
-        return -1;
-    }
-
-    return timeout_factor[missing_segs_nb];
-}
+uint32_t
+iat_get_timeout(uint16_t port_id,
+                uint16_t queue_id,
+                struct four_tuple *key,
+                uint32_t data_len,
+                uint32_t orig_segsz,
+                uint32_t target_segsz,
+                uint64_t now_ns,
+                uint32_t cutoff_ns);
 /*----------------------------------------------------------------------------*/
 void iat_local_stat(uint16_t port_id,
                     uint16_t queue_id,
                     uint64_t *total_burst_iat,
+                    uint64_t *total_global_iat,
                     uint64_t *total_data_len,
                     uint64_t *total_count);
 /*----------------------------------------------------------------------------*/

@@ -118,7 +118,7 @@ CFLAGS += -D NUM_HAIRPIN_Q=0
 # CFLAGS += -D NUM_HAIRPIN_Q=1
 
 # 3. Hairpin on (1 queue, opt-out mode)
-# CFLAGS += -D NUM_HAIRPIN_Q=1 -D USE_OPTOUT=1
+# CFLAGS += -D NUM_HAIRPIN_Q=1 -D HAIRPIN_POLICY=1
 
 ################################################################################
 

@@ -1813,7 +1813,7 @@ static inline uint16_t netif_rx_burst(portid_t pid, struct netif_queue_conf *qco
         };
         nrx = rte_gro_reassemble_burst(qconf->mbufs, nrx, &gro_param);
 #endif
-        px_stat_update_rx(pid, qconf->id, qconf->mbufs, nrx, 0, 0);
+        px_stat_update_rx(pid, qconf->id, qconf->mbufs, nrx, 0, 0, 0, 0);
 #endif
     }
 
@@ -4050,10 +4050,10 @@ int netif_port_start(struct netif_port *port)
                                &port->dev_conf,
                                NULL,
                                0,
-#if USE_OPTOUT
-                               1
-#else
-                               0
+                               1,
+                               1,
+#if NUM_HAIRPIN_Q
+                               HAIRPIN_POLICY
 #endif
                                );
 #else

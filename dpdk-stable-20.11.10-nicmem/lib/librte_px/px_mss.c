@@ -10,7 +10,7 @@ void update_mss(uint16_t *mss_ptr,
                 uint16_t new_mss,
                 int direction)
 {
-    fprintf(stdout, "%d -> ", rte_be_to_cpu_16(*mss_ptr));
+    // fprintf(stdout, "%d -> ", rte_be_to_cpu_16(*mss_ptr));
     if (g_is_semantic_test)
     {
         if (new_mss)
@@ -39,25 +39,27 @@ void update_mss(uint16_t *mss_ptr,
             *mss_ptr = rte_cpu_to_be_16(DEFAULT_eMSS);
         }
     }
-    fprintf(stdout, "%d\n", rte_be_to_cpu_16(*mss_ptr));
+    // fprintf(stdout, "%d\n", rte_be_to_cpu_16(*mss_ptr));
 }
 /*----------------------------------------------------------------------------*/
 static void *
 mss_periodic_cleanup(void *arg)
 {
+    uint64_t now_ns;
     uint16_t port_nb = rte_eth_dev_count_avail();
     int i, j;
     g_num_cores = *(uint16_t *)arg;
     free(arg);
     while (!g_mss_shutdown)
     {
+        now_ns = px_gettime(TIME_FLAG);
         for (i = 0; i < port_nb; i++)
         {
             for (j = 0; j < g_num_cores; j++)
             {
                 if (g_mss_ctx[i][j].initialized)
                 {
-                    mss_flush_timeout(i, j);
+                    mss_flush_timeout(i, j, now_ns);
                 }
                 if (g_mss_shutdown)
                 {
@@ -205,7 +207,7 @@ int mss_search_entry(uint16_t port_id,
                      uint32_t rss,
                      struct four_tuple *key,
                      uint32_t *mss,
-                     uint64_t now)
+                     uint64_t now_ns)
 {
     struct px_mss_ctx *ctx = &g_mss_ctx[port_id][queue_id];
     struct flow_mss_entry *entry;
@@ -232,7 +234,7 @@ int mss_search_entry(uint16_t port_id,
 
     /* Update time and return the MSS */
     *mss = entry->mss;
-    entry->last_update = now;
+    entry->last_update = now_ns;
 
     return 0;
 }
@@ -242,7 +244,7 @@ int mss_insert_entry(uint16_t port_id,
                      uint32_t rss,
                      struct four_tuple *key,
                      uint32_t mss,
-                     uint64_t now)
+                     uint64_t now_ns)
 {
     struct px_mss_ctx *ctx = &g_mss_ctx[port_id][queue_id];
     struct flow_mss_entry *entry;
@@ -292,7 +294,7 @@ int mss_insert_entry(uint16_t port_id,
 
     /* copy update mss */
     entry->mss = mss;
-    entry->last_update = now;
+    entry->last_update = now_ns;
 
     /* Insert into the hash table */
     if (rte_hash_add_key_data(ctx->tbl, key, entry) < 0)
@@ -346,22 +348,22 @@ int mss_evict_entry(uint16_t port_id,
 }
 /*----------------------------------------------------------------------------*/
 void mss_flush_timeout(uint16_t port_id,
-                       uint16_t queue_id)
+                       uint16_t queue_id,
+                       uint64_t now_ns)
 {
     struct px_mss_ctx *ctx = &g_mss_ctx[port_id][queue_id];
     struct flow_mss_entry *entry;
     const void *next_key;
     void *next_data;
     uint32_t iter = 0;
-    uint64_t now;
-    now = px_gettime(TIME_FLAG);
 
     /* Iterate through the hash table and remove old entries */
     while (rte_hash_iterate(ctx->tbl, &next_key, &next_data, &iter) >= 0)
     {
         entry = (struct flow_mss_entry *)next_data;
 
-        if ((now - entry->last_update) > (uint64_t)MSS_TIMEOUT * NS_PER_S)
+        if ((now_ns - entry->last_update) >
+            (uint64_t)MSS_TIMEOUT * NS_PER_S)
         {
             fprintf(stdout, "Removing flow due to timeout\n");
             rte_hash_del_key(ctx->tbl, next_key);

@@ -141,10 +141,7 @@ px_unlink_and_uso0(struct rte_mbuf **pkts,
          */
         do
         {
-            if (is_udp(pkt) &&
-                is_px(pkt) &&
-                (pkt->nb_segs == 1) &&
-                (rte_be_to_cpu_16(*(uint16_t *)get_payload(pkt)) <= 4))
+            if (is_uso_needed(pkt))
             {
                 seglen =
                     rte_be_to_cpu_16(*((uint16_t *)get_payload(pkt) + 1));
@@ -196,7 +193,9 @@ px_unlink_and_uso0(struct rte_mbuf **pkts,
                                              get_hdr_len(pkt));
                         if (!hdr_clone)
                         {
-                            fprintf(stderr, "hdr clone failed\n");
+                            fprintf(stderr,
+                                    "[%s:%s:%d] hdr clone failed\n",
+                                    __FILE__, __func__, __LINE__);
                             continue;
                         }
                         iplen = get_ip_len(hdr_clone);
@@ -217,7 +216,9 @@ px_unlink_and_uso0(struct rte_mbuf **pkts,
                         hdr_clone = rte_pktmbuf_clone(pkt, clone_pool);
                         if (!hdr_clone)
                         {
-                            fprintf(stderr, "hdr clone failed\n");
+                            fprintf(stderr,
+                                    "[%s:%s:%d] hdr clone failed\n",
+                                    __FILE__, __func__, __LINE__);
                             continue;
                         }
                     }
@@ -225,7 +226,9 @@ px_unlink_and_uso0(struct rte_mbuf **pkts,
                     body_clone = rte_pktmbuf_clone(pkt, clone_pool);
                     if (!body_clone)
                     {
-                        fprintf(stderr, "body clone failed\n");
+                        fprintf(stderr,
+                                "[%s:%s:%d] body clone failed\n",
+                                __FILE__, __func__, __LINE__);
                         rte_pktmbuf_free(hdr_clone);
                         continue;
                     }
@@ -357,13 +360,12 @@ px_unlink_and_uso(struct rte_mbuf **pkts,
          */
         do
         {
-            if (is_udp(pkt) &&
-                is_px(pkt) &&
-                (pkt->nb_segs == 1) &&
-                (rte_be_to_cpu_16(*(uint16_t *)get_payload(pkt)) <= 4))
+#if USE_USO
+            if (is_uso_needed(pkt))
             {
                 seglen =
                     rte_be_to_cpu_16(*((uint16_t *)get_payload(pkt) + 1));
+                seglen = 1472; // default
 
                 /* below are for debugging */
                 // if ((seglen + pkt->l3_len + pkt->l4_len > DEFAULT_eMTU) ||
@@ -390,6 +392,7 @@ px_unlink_and_uso(struct rte_mbuf **pkts,
 
                 segnum =
                     CEIL_DIV(get_data_len(pkt) - 2 * sizeof(uint16_t), seglen);
+                segnum = 6; // default
                 last_seglen =
                     (get_data_len(pkt) - 2 * sizeof(uint16_t)) % seglen;
 
@@ -412,7 +415,9 @@ px_unlink_and_uso(struct rte_mbuf **pkts,
                                              get_hdr_len(pkt));
                         if (!hdr_clone)
                         {
-                            fprintf(stderr, "hdr clone failed\n");
+                            fprintf(stderr,
+                                    "[%s:%s:%d] hdr clone failed\n",
+                                    __FILE__, __func__, __LINE__);
                             continue;
                         }
                         iplen = get_ip_len(hdr_clone);
@@ -433,7 +438,9 @@ px_unlink_and_uso(struct rte_mbuf **pkts,
                         hdr_clone = rte_pktmbuf_clone(pkt, clone_pool);
                         if (!hdr_clone)
                         {
-                            fprintf(stderr, "hdr clone failed\n");
+                            fprintf(stderr,
+                                    "[%s:%s:%d] hdr clone failed\n",
+                                    __FILE__, __func__, __LINE__);
                             continue;
                         }
                     }
@@ -441,7 +448,9 @@ px_unlink_and_uso(struct rte_mbuf **pkts,
                     body_clone = rte_pktmbuf_clone(pkt, clone_pool);
                     if (!body_clone)
                     {
-                        fprintf(stderr, "body clone failed\n");
+                        fprintf(stderr,
+                                "[%s:%s:%d] body clone failed\n",
+                                __FILE__, __func__, __LINE__);
                         rte_pktmbuf_free(hdr_clone);
                         continue;
                     }
@@ -484,6 +493,7 @@ px_unlink_and_uso(struct rte_mbuf **pkts,
                 }
             }
             else
+#endif
             {
                 /* flush */
                 if (idx == nb_out)

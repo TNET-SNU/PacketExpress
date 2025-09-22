@@ -307,7 +307,7 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 	};
 	ret = rte_gro_reassemble_burst(dpc->rmbufs[ifidx].m_table, ret, &gro_param);
 #endif
-	px_stat_update_rx(ifidx, qid, dpc->rmbufs[ifidx].m_table, ret, 0, 0);
+	px_stat_update_rx(ifidx, qid, dpc->rmbufs[ifidx].m_table, ret, 0, 0, 0, 0);
 #endif
 	dpc->rmbufs[ifidx].len = ret;
 
@@ -610,10 +610,10 @@ dpdk_load_module_lower_half(void)
 									   &port_conf,
 									   NULL,
 									   0,
-#if USE_OPTOUT
-									   1
-#else
-									   0
+									   1,
+									   1,
+#if NUM_HAIRPIN_Q
+                            		   HAIRPIN_POLICY
 #endif
 									   );
 #else

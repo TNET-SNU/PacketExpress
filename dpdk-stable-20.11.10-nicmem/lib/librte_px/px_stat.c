@@ -4,7 +4,6 @@ static struct px_tcp_stat g_tcp_stat[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] 
 static struct px_rx_stat_latent g_rx_stat_latent[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
 static struct px_rx_stat g_rx_stat[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
 static struct px_tx_stat g_tx_stat[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
-static uint64_t g_px_bubble_stat[RTE_MAX_LCORE] = {0};
 static volatile int g_stat_interval = 0;
 extern int g_is_semantic_test;
 extern struct px_dev g_px_dev[RTE_MAX_ETHPORTS];
@@ -15,7 +14,11 @@ static uint16_t g_max_rxqs = 512;
 static uint16_t g_num_txqs = 1;
 uint16_t g_default_imtu;
 uint16_t g_default_emtu;
+#if TEST_RSS_ATOMICITY
 FILE *g_latent_log_fp = NULL;
+#endif
+static int (*g_is_uplink)(struct rte_mbuf *pkt) = NULL;
+static int (*g_is_downlink)(struct rte_mbuf *pkt) = NULL;
 /*----------------------------------------------------------------------------*/
 void px_stat_count_syn(uint16_t port_id,
                        uint16_t queue_id)
@@ -37,19 +40,14 @@ void px_stat_update_rx_latent(uint16_t port_id,
     g_rx_stat_latent[port_id][queue_id].pkt_cnt += nb_pkts;
 }
 /*----------------------------------------------------------------------------*/
-void px_stat_update_bubble(uint16_t core_id,
-                           uint64_t tsc_bubble)
-{
-    /* measure each packet */
-    g_px_bubble_stat[core_id] += px_gettime(TIME_FLAG) - tsc_bubble;
-}
-/*----------------------------------------------------------------------------*/
 void px_stat_update_rx(uint16_t port_id,
                        uint16_t queue_id,
                        struct rte_mbuf **pkts,
                        const uint16_t nb_pkts,
-                       uint16_t nb_flows_per_rxq,
-                       uint16_t active_rxq_cnt)
+                       uint16_t num_flows_per_rxq,
+                       uint16_t num_pkts_per_rxq,
+                       uint16_t active_rxq_cnt,
+                       uint64_t queue_time)
 {
     struct px_rx_stat *rx_stat;
     struct rte_mbuf *pkt;
@@ -97,17 +95,14 @@ void px_stat_update_rx(uint16_t port_id,
         }
     }
 
-    /* if no data packets, return */
-    if (!data_pkt_cnt)
-    {
-        return;
-    }
-
     /* measure batch */
-    rx_stat->num_flows_per_rxq += nb_flows_per_rxq;
+    rx_stat->num_flows_per_rxq += num_flows_per_rxq;
+    rx_stat->num_pkts_per_rxq += num_pkts_per_rxq;
     rx_stat->active_rxq_cnt += active_rxq_cnt;
     rx_stat->data_pkt_cnt_in_batch += data_pkt_cnt;
     rx_stat->batch_cnt++;
+
+    rx_stat->queue_time += queue_time;
 }
 /*----------------------------------------------------------------------------*/
 void px_stat_update_tx(uint16_t port_id,
@@ -117,18 +112,12 @@ void px_stat_update_tx(uint16_t port_id,
 {
     struct px_tx_stat *tx_stat;
     struct rte_mbuf *pkt;
-    uint64_t leftover = 0;
+    uint32_t leftover = 0;
     uint32_t orig_segsz, target_segsz;
     uint32_t data_len;
     int max_segnum, i;
     tx_stat = &g_tx_stat[port_id][queue_id];
-    uint64_t now = px_gettime(TIME_FLAG);
-
-    /* if main core has already read my stats, reset mine */
-    if (tx_stat->reset)
-    {
-        memset(tx_stat, 0, sizeof(*tx_stat));
-    }
+    uint64_t now_ns = px_gettime(TIME_FLAG);
 
     /* if main core has already read my stats, reset mine */
     if (tx_stat->reset)
@@ -140,61 +129,77 @@ void px_stat_update_tx(uint16_t port_id,
     for (i = 0; i < nb_pkts; i++)
     {
         pkt = pkts[i];
+
+        /* filter trex packets not to calculate yield for them */
+        // uint8_t *s = (uint8_t *)get_four_tuple(pkt);
+        // if (*(s + 2) == 91)
+        // {
+        //     continue;
+        // }
+
         data_len = get_data_len(pkt);
-        if (data_len)
+        if (!data_len)
         {
-            tx_stat->data_pkt_cnt++;
+            continue;
+        }
 
-            /* measure delay */
-            tx_stat->delay_ns += now - get_sw_timestamp(pkt);
-            put_sw_timestamp(pkt, 0);
+        iat_update_entry_yield(port_id, queue_id, pkt, now_ns);
 
-            /* calculate conversion yield */
-            if (g_is_semantic_test && is_px(pkt))
-            {
-                /* for semantic test, only for downlink flow */
-                continue;
-            }
-            tx_stat->data_downlink_pkt_cnt++;
-            orig_segsz = g_default_emtu - pkt->l3_len - pkt->l4_len;
-            max_segnum = (g_default_imtu - pkt->l3_len - pkt->l4_len) /
-                         orig_segsz;
-            target_segsz = is_tso(pkt)
-                               ? pkt->tso_segsz
-                               : max_segnum * orig_segsz;
-            assert(target_segsz % orig_segsz == 0);
-            tx_stat->iMTU_cnt +=
-                data_len / target_segsz;
-            leftover = data_len % target_segsz;
+        tx_stat->data_pkt_cnt++;
 
-            /* below are for conversion yield type 1 */
-            tx_stat->under_iMTU_cnt += leftover > 128 ? 1 : 0;
+        /* measure delay */
+        tx_stat->delay_ns += now_ns - get_sw_timestamp(pkt);
 
-            /* below are for conversion yield type 2 */
-            if (leftover > 5 * orig_segsz)
-            {
-                tx_stat->iMTU_cnt++;
-            }
-            else if (leftover > 4 * orig_segsz)
-            {
-                tx_stat->_5_seg_cnt++;
-            }
-            else if (leftover > 3 * orig_segsz)
-            {
-                tx_stat->_4_seg_cnt++;
-            }
-            else if (leftover > 2 * orig_segsz)
-            {
-                tx_stat->_3_seg_cnt++;
-            }
-            else if (leftover > orig_segsz)
-            {
-                tx_stat->_2_seg_cnt++;
-            }
-            else if (leftover > 128)
-            {
-                tx_stat->_1_seg_cnt++;
-            }
+        /* for semantic test, skip uplink flow */
+        if (g_is_semantic_test && g_is_uplink(pkt))
+        {
+            continue;
+        }
+
+        /* calculate conversion yield */
+        tx_stat->data_downlink_pkt_cnt++;
+        orig_segsz = g_default_emtu - pkt->l3_len - pkt->l4_len;
+        max_segnum = (g_default_imtu - pkt->l3_len - pkt->l4_len) /
+                     orig_segsz;
+        target_segsz = is_tso(pkt)
+                           ? pkt->tso_segsz
+                           : max_segnum * orig_segsz;
+        assert(target_segsz % orig_segsz == 0);
+        // printf("tx_stat->iMTU_cnt: %lu\n", tx_stat->iMTU_cnt);
+        tx_stat->iMTU_cnt +=
+            data_len / target_segsz;
+        leftover = data_len % target_segsz;
+
+        // printf("pkt %d: data_len %u, orig_segsz %u, target_segsz %u, max_segnum %d, leftover %u\n",
+        //        i, data_len, orig_segsz, target_segsz, max_segnum, leftover);
+
+        /* below are for conversion yield type 1 */
+        tx_stat->under_iMTU_cnt += leftover > 128 ? 1 : 0;
+
+        /* below are for conversion yield type 2 */
+        if (leftover > 5 * orig_segsz)
+        {
+            tx_stat->iMTU_cnt++;
+        }
+        else if (leftover > 4 * orig_segsz)
+        {
+            tx_stat->_5_seg_cnt++;
+        }
+        else if (leftover > 3 * orig_segsz)
+        {
+            tx_stat->_4_seg_cnt++;
+        }
+        else if (leftover > 2 * orig_segsz)
+        {
+            tx_stat->_3_seg_cnt++;
+        }
+        else if (leftover > orig_segsz)
+        {
+            tx_stat->_2_seg_cnt++;
+        }
+        else if (leftover > 128)
+        {
+            tx_stat->_1_seg_cnt++;
         }
     }
 }
@@ -209,6 +214,7 @@ void px_stat_monitor(int args)
     struct perf_metric cur;
     uint64_t iat_burst_iat_iter, iat_burst_iat_total = 0;
     uint64_t iat_data_len_iter, iat_data_len_total = 0;
+    uint64_t iat_global_iat_iter, iat_global_iat_total = 0;
     uint64_t iat_count_iter, iat_count_total = 0;
     uint16_t port_id, queue_id;
     int ret;
@@ -222,6 +228,7 @@ void px_stat_monitor(int args)
             iat_local_stat(port_id,
                            queue_id,
                            &iat_burst_iat_iter,
+                           &iat_global_iat_iter,
                            &iat_data_len_iter,
                            &iat_count_iter);
 
@@ -251,14 +258,15 @@ void px_stat_monitor(int args)
                                   tx_iter->under_iMTU_cnt) *
                                  100)
                     : 0;
+            (void)yield1_iter;
 
             yield2_iter =
-                (tx_iter->_1_seg_cnt * 1 +
-                 tx_iter->_2_seg_cnt * 2 +
-                 tx_iter->_3_seg_cnt * 3 +
-                 tx_iter->_4_seg_cnt * 4 +
-                 tx_iter->_5_seg_cnt * 5 +
-                 tx_iter->iMTU_cnt * 6)
+                (tx_iter->_1_seg_cnt ||
+                 tx_iter->_2_seg_cnt ||
+                 tx_iter->_3_seg_cnt ||
+                 tx_iter->_4_seg_cnt ||
+                 tx_iter->_5_seg_cnt ||
+                 tx_iter->iMTU_cnt)
                     ? (uint32_t)((float)tx_iter->iMTU_cnt * 6 /
                                  (tx_iter->_1_seg_cnt * 1 +
                                   tx_iter->_2_seg_cnt * 2 +
@@ -278,17 +286,21 @@ void px_stat_monitor(int args)
             /* per queue stat */
             fprintf(stdout,
                     "  [%2hu-%2hu] "
-                    "%4.0f Gbps "
-                    "%5.0f Kpps "
-                    "delay: %5.0f ns "
-                    //    "yield: %5.0f%% "
-                    "yield: %5.0f%% "
+                    "%4u Gbps "
+                    "%5u Kpps "
+                    "delay: %6u ns "
+                    "yield: %2u%% "
+                    "yield: %2u%% "
                     "pktsize: %6lu "
-                    "IAT: %5lu ns "
-                    "LROsize: %6lu "
+                    "globalIAT: %5lu ns "
+                    "burstIAT: %5lu ns "
+                    "LROsize: %6lu \n"
                     "flows/rxq: %2.1f "
-                    "active_rxq: %2.1f "
+                    "pkts/rxq: %2.1f "
+                    "active_rxq/available: %2.1f%% "
                     "flows/active_rxq: %2.1f "
+                    "pkts/active_rxq: %2.1f "
+                    "queue_time: %lu ns "
                     "segs/pkt: %2.1f "
                     "pkts/batch: %2.1f "
                     "pkts: %5lu\n",
@@ -303,6 +315,10 @@ void px_stat_monitor(int args)
                               rx_iter->data_pkt_cnt
                         : 0,
                     iat_count_iter
+                        ? iat_global_iat_iter /
+                              iat_count_iter
+                        : 0,
+                    iat_count_iter
                         ? iat_burst_iat_iter /
                               iat_count_iter
                         : 0,
@@ -315,12 +331,26 @@ void px_stat_monitor(int args)
                               rx_iter->batch_cnt
                         : 0,
                     rx_iter->batch_cnt
-                        ? (float)rx_iter->active_rxq_cnt /
+                        ? (float)rx_iter->num_pkts_per_rxq /
                               rx_iter->batch_cnt
+                        : 0,
+                    rx_iter->batch_cnt
+                        ? (float)rx_iter->active_rxq_cnt /
+                              rx_iter->batch_cnt /
+                              g_px_dev[0].num_rxq_per_rxq *
+                              100
                         : 0,
                     rx_iter->active_rxq_cnt
                         ? (float)rx_iter->num_flows_per_rxq /
                               rx_iter->active_rxq_cnt
+                        : 0,
+                    rx_iter->active_rxq_cnt
+                        ? (float)rx_iter->num_pkts_per_rxq /
+                              rx_iter->active_rxq_cnt
+                        : 0,
+                    rx_iter->batch_cnt
+                        ? rx_iter->queue_time /
+                              rx_iter->batch_cnt
                         : 0,
                     rx_iter->data_pkt_cnt
                         ? (float)rx_iter->data_pkt_segs_cnt /
@@ -355,12 +385,14 @@ void px_stat_monitor(int args)
             rx_total.pkt_cnt += rx_iter->pkt_cnt;
             rx_total.bytes_cnt += rx_iter->bytes_cnt;
             rx_total.num_flows_per_rxq += rx_iter->num_flows_per_rxq;
+            rx_total.num_pkts_per_rxq += rx_iter->num_pkts_per_rxq;
             rx_total.active_rxq_cnt += rx_iter->active_rxq_cnt;
             rx_total.data_bytes_cnt += rx_iter->data_bytes_cnt;
             rx_total.data_pkt_cnt += rx_iter->data_pkt_cnt;
             rx_total.data_pkt_segs_cnt += rx_iter->data_pkt_segs_cnt;
             rx_total.data_pkt_cnt_in_batch += rx_iter->data_pkt_cnt_in_batch;
             rx_total.batch_cnt += rx_iter->batch_cnt;
+            rx_total.queue_time += rx_iter->queue_time;
 
             tx_total._1_seg_cnt += tx_iter->_1_seg_cnt;
             tx_total._2_seg_cnt += tx_iter->_2_seg_cnt;
@@ -373,6 +405,7 @@ void px_stat_monitor(int args)
             tx_total.delay_ns += tx_iter->delay_ns;
             tx_total.data_pkt_cnt += tx_iter->data_pkt_cnt;
 
+            iat_global_iat_total += iat_global_iat_iter;
             iat_burst_iat_total += iat_burst_iat_iter;
             iat_data_len_total += iat_data_len_iter;
             iat_count_total += iat_count_iter;
@@ -400,8 +433,11 @@ void px_stat_monitor(int args)
     uint32_t yield2_total;
     uint32_t delay_total;
     float num_flows_per_rxq_total;
+    float num_pkts_per_rxq_total;
     float active_rxq_cnt_total;
+    float active_rxq_per_available_rxq_total;
     float num_flows_per_active_rxq_total;
+    float num_pkts_per_active_rxq_total;
 
     /* calculate performance indicators */
     gbps_total = rx_total.bytes_cnt * 8 / E9;
@@ -412,14 +448,15 @@ void px_stat_monitor(int args)
             ? (uint32_t)((float)tx_total.iMTU_cnt /
                          (tx_total.iMTU_cnt + tx_total.under_iMTU_cnt) * 100)
             : 0;
+    (void)yield1_total;
 
     yield2_total =
-        (tx_total._1_seg_cnt * 1 +
-         tx_total._2_seg_cnt * 2 +
-         tx_total._3_seg_cnt * 3 +
-         tx_total._4_seg_cnt * 4 +
-         tx_total._5_seg_cnt * 5 +
-         tx_total.iMTU_cnt * 6)
+        (tx_total._1_seg_cnt ||
+         tx_total._2_seg_cnt ||
+         tx_total._3_seg_cnt ||
+         tx_total._4_seg_cnt ||
+         tx_total._5_seg_cnt ||
+         tx_total.iMTU_cnt)
             ? (uint32_t)((float)tx_total.iMTU_cnt * 6 /
                          (tx_total._1_seg_cnt * 1 +
                           tx_total._2_seg_cnt * 2 +
@@ -429,6 +466,19 @@ void px_stat_monitor(int args)
                           tx_total.iMTU_cnt * 6) *
                          100)
             : 0;
+    // fprintf(stdout,
+    //         "\n_1_seg_cnt: %lu, "
+    //         "_2_seg_cnt: %lu, "
+    //         "_3_seg_cnt: %lu, "
+    //         "_4_seg_cnt: %lu, "
+    //         "_5_seg_cnt: %lu, "
+    //         "iMTU_cnt: %lu\n",
+    //         tx_total._1_seg_cnt,
+    //         tx_total._2_seg_cnt,
+    //         tx_total._3_seg_cnt,
+    //         tx_total._4_seg_cnt,
+    //         tx_total._5_seg_cnt,
+    //         tx_total.iMTU_cnt);
 
     delay_total =
         tx_total.data_pkt_cnt
@@ -440,14 +490,31 @@ void px_stat_monitor(int args)
             ? (float)rx_total.num_flows_per_rxq /
                   rx_total.batch_cnt
             : 0;
+    num_pkts_per_rxq_total =
+        rx_total.batch_cnt
+            ? (float)rx_total.num_pkts_per_rxq /
+                  rx_total.batch_cnt
+            : 0;
     active_rxq_cnt_total =
         rx_total.batch_cnt
             ? (float)rx_total.active_rxq_cnt /
                   rx_total.batch_cnt
             : 0;
+    active_rxq_per_available_rxq_total =
+        rx_total.batch_cnt
+            ? (float)rx_total.active_rxq_cnt /
+                  rx_total.batch_cnt /
+                  g_px_dev[0].num_rxq_per_rxq *
+                  100
+            : 0;
     num_flows_per_active_rxq_total =
         rx_total.active_rxq_cnt
             ? (float)rx_total.num_flows_per_rxq /
+                  rx_total.active_rxq_cnt
+            : 0;
+    num_pkts_per_active_rxq_total =
+        rx_total.active_rxq_cnt
+            ? (float)rx_total.num_pkts_per_rxq /
                   rx_total.active_rxq_cnt
             : 0;
 
@@ -459,14 +526,18 @@ void px_stat_monitor(int args)
             "%4u Gbps "
             "%5u Kpps "
             "delay: %6u ns "
-            //    "yield: %2u%% "
+            "yield: %2u%% "
             "yield: %2u%% "
             "pktsize: %6lu "
-            "IAT: %5lu ns "
-            "LROsize: %6lu "
+            "globalIAT: %5lu ns "
+            "burstIAT: %5lu ns "
+            "LROsize: %6lu \n"
             "flows/rxq: %2.1f "
-            "active_rxq: %2.1f "
+            "pkts/rxq: %2.1f "
+            "active_rxq/available: %2.1f%% "
             "flows/active_rxq: %2.1f "
+            "pkts/active_rxq: %2.1f "
+            "queue_time: %lu ns "
             "bubble: %2.1f%% "
             "segs/pkt: %2.1f "
             "pkts/batch: %2.1f "
@@ -474,11 +545,15 @@ void px_stat_monitor(int args)
             gbps_total,
             kpps_total,
             delay_total,
-            // yield1_total,
+            yield1_total,
             yield2_total,
             rx_total.data_pkt_cnt
                 ? rx_total.data_bytes_cnt /
                       rx_total.data_pkt_cnt
+                : 0,
+            iat_count_total
+                ? iat_global_iat_total /
+                      iat_count_total
                 : 0,
             iat_count_total
                 ? iat_burst_iat_total /
@@ -489,10 +564,16 @@ void px_stat_monitor(int args)
                       iat_count_total
                 : 0,
             num_flows_per_rxq_total,
-            active_rxq_cnt_total,
+            num_pkts_per_rxq_total,
+            active_rxq_per_available_rxq_total,
             num_flows_per_active_rxq_total,
-            (float)bb_tsc_total / NS_PER_S / 
-                g_num_rxqs * 100,
+            num_pkts_per_active_rxq_total,
+            rx_total.batch_cnt
+                ? rx_total.queue_time /
+                      rx_total.batch_cnt
+                : 0,
+            (float)bb_tsc_total / NS_PER_S /
+                g_num_rxqs * 100, // same with divided by num_cores
             rx_total.data_pkt_cnt
                 ? (float)rx_total.data_pkt_segs_cnt /
                       rx_total.data_pkt_cnt
@@ -518,26 +599,27 @@ void px_stat_monitor(int args)
     }
 #endif
     print_cache_stats();
-
-    (void)yield1_total;
     cur.tput = gbps_total;
     cur.yield = yield2_total;
     cur.delay = delay_total;
     cur.num_flows_per_rxq = num_flows_per_rxq_total;
+    cur.num_pkts_per_rxq = num_pkts_per_rxq_total;
     cur.active_rxq_cnt = active_rxq_cnt_total;
+    cur.active_rxq_per_available_rxq = active_rxq_per_available_rxq_total;
     cur.num_flows_per_active_rxq = num_flows_per_active_rxq_total;
+    cur.num_pkts_per_active_rxq = num_pkts_per_active_rxq_total;
 
 #if TEST_RSS_ATOMICITY
     struct px_rx_stat_latent *rx_latent_iter;
     static int stat_cnt = 0;
     static int shifted_down = 0;
     (void)cur;
-    char log_buf[LOG_BUF_SIZE];
+    char log_buf[RSS_ATOMICITY_LOG_BUF_SIZE];
     int offset = 0;
 
     /* fill the buffer */
     ret = snprintf(log_buf + offset,
-                   LOG_BUF_SIZE - offset,
+                   RSS_ATOMICITY_LOG_BUF_SIZE - offset,
                    "%d ", stat_cnt);
     if (ret < 0)
     {
@@ -549,18 +631,18 @@ void px_stat_monitor(int args)
     {
         rx_latent_iter = &g_rx_stat_latent[0][queue_id];
         ret = snprintf(log_buf + offset,
-                       LOG_BUF_SIZE - offset,
+                       RSS_ATOMICITY_LOG_BUF_SIZE - offset,
                        "[%hu] %lu ",
                        queue_id,
                        rx_latent_iter->pkt_cnt);
-        if (ret < 0 || ret >= LOG_BUF_SIZE - offset)
+        if (ret < 0 || ret >= RSS_ATOMICITY_LOG_BUF_SIZE - offset)
         {
             goto Error;
         }
         offset += ret;
     }
-    ret = snprintf(log_buf + offset, LOG_BUF_SIZE - offset, "\n");
-    if (ret < 0 || ret >= LOG_BUF_SIZE - offset)
+    ret = snprintf(log_buf + offset, RSS_ATOMICITY_LOG_BUF_SIZE - offset, "\n");
+    if (ret < 0 || ret >= RSS_ATOMICITY_LOG_BUF_SIZE - offset)
     {
         goto Error;
     }
@@ -617,15 +699,47 @@ int px_stat_start_monitor(unsigned int stat_interval,
                           uint16_t num_rxqs,
                           uint16_t num_txqs,
                           uint16_t imtu_size,
-                          uint16_t emtu_size)
+                          uint16_t emtu_size,
+                          int (*is_uplink)(struct rte_mbuf *pkt),
+                          int (*is_downlink)(struct rte_mbuf *pkt))
 {
     struct sigaction sa_gear_up, sa_gear_down, sa_monitor;
     g_num_ports = num_ports;
     g_num_rxqs = num_rxqs;
     g_max_rxqs = g_px_dev[0].max_rxq;
     g_num_txqs = num_txqs;
-    g_default_imtu = imtu_size;
-    g_default_emtu = emtu_size;
+    if (imtu_size)
+    {
+        g_default_imtu = imtu_size;
+    }
+    else
+    {
+        g_default_imtu = DEFAULT_iMTU;
+    }
+    if (emtu_size)
+    {
+        g_default_emtu = emtu_size;
+    }
+    else
+    {
+        g_default_emtu = DEFAULT_eMTU;
+    }
+    if (is_uplink)
+    {
+        g_is_uplink = is_uplink;
+    }
+    else
+    {
+        g_is_uplink = is_uplink_default;
+    }
+    if (is_downlink)
+    {
+        g_is_downlink = is_downlink;
+    }
+    else
+    {
+        g_is_downlink = is_downlink_default;
+    }
 
     if (!stat_interval)
     {
@@ -639,6 +753,7 @@ int px_stat_start_monitor(unsigned int stat_interval,
         return 0;
     }
 
+#if TEST_RSS_ATOMICITY
     /* open log file for RSS test */
     if (!g_latent_log_fp)
     {
@@ -649,6 +764,7 @@ int px_stat_start_monitor(unsigned int stat_interval,
             return -1;
         }
     }
+#endif
 
     g_stat_interval = stat_interval;
 
@@ -661,14 +777,14 @@ int px_stat_start_monitor(unsigned int stat_interval,
         return -1;
     }
 
-    sa_gear_down.sa_handler = px_latent_static_gear_down;
-    sa_gear_down.sa_flags = 0;
-    sigemptyset(&sa_gear_down.sa_mask);
-    if (sigaction(SIGUSR2, &sa_gear_down, NULL) == -1)
-    {
-        perror("sigaction failed");
-        return -1;
-    }
+    // sa_gear_down.sa_handler = px_latent_static_gear_down;
+    // sa_gear_down.sa_flags = 0;
+    // sigemptyset(&sa_gear_down.sa_mask);
+    // if (sigaction(SIGUSR2, &sa_gear_down, NULL) == -1)
+    // {
+    //     perror("sigaction failed");
+    //     return -1;
+    // }
 
     sa_monitor.sa_handler = px_stat_monitor;
     sa_monitor.sa_flags = 0;
@@ -695,11 +811,13 @@ void px_stat_stop_monitor(void)
         /* already stopped */
         return;
     }
+#if TEST_RSS_ATOMICITY
     if (g_latent_log_fp)
     {
         fclose(g_latent_log_fp);
         g_latent_log_fp = NULL;
     }
+#endif
 
     /* stop alarm */
     alarm(0);

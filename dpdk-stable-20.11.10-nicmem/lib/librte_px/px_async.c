@@ -336,11 +336,12 @@ async_request_get(uint16_t core_id,
     /* check if request queue is initialized */
     if (!req_ring->size)
     {
-        fprintf(stdout,
-                "[%s:%s:%d] [port %d] [core %d] "
-                "Request queue is not initialized\n",
-                __FILE__, __func__, __LINE__,
-                port_id, core_id);
+        /* below is too verbose */
+        // fprintf(stdout,
+        //         "[%s:%s:%d] [port %d] [core %d] "
+        //         "Request queue is not initialized\n",
+        //         __FILE__, __func__, __LINE__,
+        //         port_id, core_id);
         return NULL;
     }
 

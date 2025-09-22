@@ -38,7 +38,7 @@ void px_arp_cleanup(void);
  * If you need to use different ARP tables for different threads, you can
  * make per-thread ARP contexts.
  */
-int px_arp_configure(struct px_arp_entry *arp_string_table,
+int px_arp_configure(const struct px_arp_entry *arp_string_table,
                      uint16_t arp_string_table_size);
 /*----------------------------------------------------------------------------*/
 struct rte_ether_addr *

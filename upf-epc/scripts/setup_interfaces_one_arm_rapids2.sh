@@ -90,3 +90,5 @@ sudo ip neigh add 10.3.90.1 dev eth2 lladdr 58:a2:e1:a7:a8:c6
 
 sudo ip route add 10.4.90.1/32 via 10.4.90.1 dev eth3 metric 100
 sudo ip neigh add 10.4.90.1 dev eth3 lladdr a0:88:c2:d7:81:0e
+
+sudo sysctl net.ipv4.ip_forward=1

@@ -45,7 +45,7 @@ void px_arp_cleanup(void)
     memset(arp_ctx->arp_bin_table, 0, sizeof(arp_ctx->arp_bin_table));
 }
 /*----------------------------------------------------------------------------*/
-int px_arp_configure(struct px_arp_entry *arp_string_table,
+int px_arp_configure(const struct px_arp_entry *arp_string_table,
                      uint16_t arp_string_table_size)
 {
     // struct px_arp_ctx *arp_ctx = &g_arp_ctx[port_id];

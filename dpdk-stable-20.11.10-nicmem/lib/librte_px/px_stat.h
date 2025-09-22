@@ -12,18 +12,11 @@ extern "C"
 #include "px_iat.h"
 /*----------------------------------------------------------------------------*/
 #define STAT_INTERVAL 1
-#define LOG_BUF_SIZE (64 * 1024)
 /*----------------------------------------------------------------------------*/
-/*
- * Ethernet frame overhead
- */
-#ifndef ETHER_CRC_LEN
-#define ETHER_CRC_LEN 4
+#if TEST_RSS_ATOMICITY
+#define RSS_ATOMICITY_LOG_BUF_SIZE (64 * 1024)
 #endif
-#define ETHER_IFG 12
-#define ETHER_PREAMBLE 8
-#define ETHER_OVR (ETHER_CRC_LEN + ETHER_PREAMBLE + ETHER_IFG)
-
+/*----------------------------------------------------------------------------*/
 #define DIST_UNIT (3 * RTE_ETHER_MTU)
 /*----------------------------------------------------------------------------*/
 struct px_tcp_stat
@@ -58,14 +51,16 @@ struct px_rx_stat
     uint64_t data_pkt_cnt_in_batch;
     uint64_t batch_cnt;
 
-    /* number of flows per RXQ */
+    /* stats for working RXQ */
     uint64_t num_flows_per_rxq;
+    uint64_t num_pkts_per_rxq;
     uint64_t active_rxq_cnt;
 
 #if PX_MEASURE_DIST
     /* distribution of packets with payload */
     uint64_t dist[UINT16_MAX / DIST_UNIT + 1];
 #endif
+    uint64_t queue_time;
 };
 struct px_tx_stat
 {
@@ -111,8 +106,10 @@ void px_stat_update_rx(uint16_t port_id,
                        uint16_t queue_id,
                        struct rte_mbuf **pkts,
                        const uint16_t nb_pkts,
-                       uint16_t nb_flows_per_rxq,
-                       uint16_t active_rxq_cnt);
+                       uint16_t num_flows_per_rxq,
+                       uint16_t num_pkts_per_rxq,
+                       uint16_t active_rxq_cnt,
+                       uint64_t queue_time);
 /*----------------------------------------------------------------------------*/
 void px_stat_update_tx(uint16_t port_id,
                        uint16_t queue_id,
@@ -126,7 +123,9 @@ int px_stat_start_monitor(unsigned int stat_interval,
                           uint16_t num_rxqs,
                           uint16_t num_txqs,
                           uint16_t imtu_size,
-                          uint16_t emtu_size);
+                          uint16_t emtu_size,
+                          int (*is_uplink)(struct rte_mbuf *pkt),
+                          int (*is_downlink)(struct rte_mbuf *pkt));
 /*----------------------------------------------------------------------------*/
 void px_stat_stop_monitor(void);
 /*----------------------------------------------------------------------------*/

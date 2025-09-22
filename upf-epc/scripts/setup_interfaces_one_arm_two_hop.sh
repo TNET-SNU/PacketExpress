@@ -81,3 +81,5 @@ for ((i = 0; i < num_nhipddrs; i++)); do
 	lladdr "${nhmacaddrs[$i]}" \
 	dev "${ifaces[$i / 2]}"
 done
+
+sudo sysctl net.ipv4.ip_forward=1

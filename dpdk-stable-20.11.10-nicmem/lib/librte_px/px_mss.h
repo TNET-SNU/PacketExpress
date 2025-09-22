@@ -366,14 +366,15 @@ mss_bloom_search(const atomic_u8_t *filter,
 }
 /*----------------------------------------------------------------------------*/
 void mss_flush_timeout(uint16_t port_id,
-                       uint16_t queue_id);
+                       uint16_t queue_id,
+                       uint64_t now_ns);
 /*----------------------------------------------------------------------------*/
 int mss_search_entry(uint16_t port_id,
                      uint16_t queue_id,
                      uint32_t rss,
                      struct four_tuple *key,
                      uint32_t *mss,
-                     uint64_t now);
+                     uint64_t now_ns);
 /*----------------------------------------------------------------------------*/
 int mss_init_ctx(uint16_t port_id,
                  uint16_t queue_id,
@@ -387,7 +388,7 @@ int mss_insert_entry(uint16_t port_id,
                      uint32_t rss,
                      struct four_tuple *key,
                      uint32_t mss,
-                     uint64_t now);
+                     uint64_t now_ns);
 /*----------------------------------------------------------------------------*/
 int mss_evict_entry(uint16_t port_id,
                     uint16_t queue_id,

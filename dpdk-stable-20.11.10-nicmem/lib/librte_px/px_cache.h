@@ -31,8 +31,8 @@ struct cache_manager
     /* whether this cache manager is initialized */
     int init;
 
-    /* whether optout policy is used */
-    int optout;
+    /* hairpin policy */
+    int hp_policy;
 };
 /*----------------------------------------------------------------------------*/
 int get_nic_cached_size(uint16_t port_id);
@@ -45,7 +45,7 @@ void lru_queue_print_all(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 void lru_queue_init(uint16_t port_id,
                     size_t num,
-                    int optout);
+                    int hp_policy);
 /*----------------------------------------------------------------------------*/
 int lru_queue_insert_and_destroy_evicted(uint16_t port_id,
                                          struct ri_node *node);

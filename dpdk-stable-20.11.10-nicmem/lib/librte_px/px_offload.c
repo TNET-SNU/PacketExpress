@@ -8,6 +8,7 @@ static int g_haripin_manager_core_id = -1;
 static uint16_t g_num_ports = 0;
 static uint16_t g_num_cores = 0;
 static volatile int g_shutdown = 0;
+extern struct px_latent_ctx g_latent_ctx[RTE_MAX_ETHPORTS];
 /*----------------------------------------------------------------------------*/
 int px_flow_create(uint16_t core_id,
                    struct rte_mbuf *pkt)
@@ -337,7 +338,7 @@ px_flow_slave_main(void *arg)
                 if (!node->flow)
                 {
                     /* create flow rule, it takes ~330us */
-                    if (g_hp_ctx[port_id].optout)
+                    if (g_hp_ctx[port_id].hp_policy == 2)
                     {
                         node->flow =
                             px_flow_create_onload_auto(port_id,
@@ -435,7 +436,7 @@ px_flow_slave_main(void *arg)
                 incr_temp_evicted_size(port_id);
 
                 /* create flow rule */
-                if (g_hp_ctx[port_id].optout)
+                if (g_hp_ctx[port_id].hp_policy == 2)
                 {
                     node->flow =
                         px_flow_create_onload_auto(port_id,
@@ -577,12 +578,12 @@ px_flow_slave_main(void *arg)
 /*----------------------------------------------------------------------------*/
 void px_hairpin_configure(uint16_t port_id,
                           uint16_t num_rxq,
-                          uint16_t max_rxq,
                           uint16_t num_txq,
+                          uint16_t max_rxq,
                           uint16_t hp_num_rxq,
                           uint16_t hp_num_txq,
                           struct rte_eth_conf *eth_conf,
-                          int optout)
+                          int hp_policy)
 {
     struct px_hairpin_ctx *hp_ctx = &g_hp_ctx[port_id];
     uint32_t i;
@@ -612,6 +613,9 @@ void px_hairpin_configure(uint16_t port_id,
         hp_ctx->rss_queues[i] = i;
     }
 
+    // /* below is for debugging */
+    // px_dump_rss_queue(hp_ctx->rss_queues, max_rxq);
+
     /* initialize DMA count rule */
     hp_ctx->ctr = (struct rte_flow_action_count){
         .shared = 0,
@@ -633,13 +637,18 @@ void px_hairpin_configure(uint16_t port_id,
         hp_ctx->hp_rss_queues[i] = hp_ctx->max_rxq + i;
     }
 
+    // /* below is for debugging */
+    // px_dump_rss_queue(hp_ctx->hp_rss_queues, hp_num_rxq);
+
     /* initialize hairpin count rule */
     hp_ctx->hp_ctr = (struct rte_flow_action_count){
         .shared = 0,
         .id = 0};
 
     /* mark optout */
-    hp_ctx->optout = optout;
+    hp_ctx->hp_policy = hp_policy;
+
+    hp_ctx->jump = g_latent_ctx[port_id].jump_g1.jump;
 }
 /*----------------------------------------------------------------------------*/
 int px_hairpin_setup(uint16_t port_id,
@@ -712,7 +721,8 @@ int px_hairpin_setup(uint16_t port_id,
                                              hp_rx_conf_ptr);
         if (ret < 0)
         {
-            fprintf(stderr, "rte_eth_rx_hairpin_queue_setup failed\n");
+            fprintf(stderr,
+                    "rte_eth_rx_hairpin_queue_setup failed\n");
             return -1;
         }
     }
@@ -735,10 +745,51 @@ int px_hairpin_setup(uint16_t port_id,
                                              hp_tx_conf_ptr);
         if (ret < 0)
         {
-            fprintf(stderr, "rte_eth_tx_hairpin_queue_setup failed\n");
+            fprintf(stderr,
+                    "rte_eth_tx_hairpin_queue_setup failed\n");
             return -1;
         }
     }
+
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
+int px_hairpin_start(uint16_t port_id)
+{
+    struct px_hairpin_ctx *hp_ctx = &g_hp_ctx[port_id];
+    int ret;
+
+    if (hp_ctx->hairpin_initialized)
+    {
+        /* already initialized */
+        return 0;
+    }
+
+    /**
+     * according to hp_policy
+     * create default offload/onload rule for IPv4
+     */
+    if (hp_ctx->hp_policy == 1)
+    {
+        ret = px_flow_create_optout(port_id);
+        if (ret < 0)
+        {
+            fprintf(stderr,
+                    "px_flow_create_optout() failed for port %d\n", port_id);
+            return ret;
+        }
+    }
+    if (hp_ctx->hp_policy == 2)
+    {
+        ret = px_flow_create_optin(port_id);
+        if (ret < 0)
+        {
+            fprintf(stderr,
+                    "px_flow_create_optin() failed for port %d\n", port_id);
+            return ret;
+        }
+    }
+    hp_ctx->hairpin_initialized = 1;
 
     return 0;
 }
@@ -782,7 +833,7 @@ int px_async_start(uint16_t thread_core_id,
         /* LRU queue for each port */
         lru_queue_init(port_id,
                        per_port_nic_cache_size,
-                       g_hp_ctx[port_id].optout);
+                       g_hp_ctx[port_id].hp_policy);
     }
 
     for (core_id = 0; core_id < g_num_cores; core_id++)

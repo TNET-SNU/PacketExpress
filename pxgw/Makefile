@@ -25,10 +25,10 @@ CFLAGS += -D JUMBO_FRAME=0
 
 # Choose one of below
 
-# 1. Semantic test on
+# 1. Semantic test on (split uplink flows and merge downlink flows)
 # CFLAGS += -D SEMANTIC_TEST=1
 
-# 2. Semantic test off
+# 2. Semantic test off (merge all flows)
 CFLAGS += -D SEMANTIC_TEST=0
 
 ################################################################################
@@ -45,6 +45,26 @@ CFLAGS += -D USE_LRO=1
 
 # Choose one of below
 
+# 1. SGDMA on
+CFLAGS += -D USE_SGDMA=1
+
+# 2. SGDMA off
+# CFLAGS += -D USE_SGDMA=0
+
+################################################################################
+
+# Choose one of below
+
+# 1. Dynamic RXQ scaling on
+CFLAGS += -D USE_DYNRXQ=1
+
+# 2. Dynamic RXQ scaling off
+# CFLAGS += -D USE_DYNRXQ=0
+
+################################################################################
+
+# Choose one of below
+
 # 1. DPDK GRO on
 # CFLAGS += -D USE_GRO=1
 
@@ -53,6 +73,7 @@ CFLAGS += -D USE_LRO=1
 
 # 3. CUSTOM GRO on, delay
 CFLAGS += -D USE_PX=1 -D CUTOFF_NS=120000 -D USE_LINK=0
+# CFLAGS += -D USE_PX=1 -D CUTOFF_NS=800000 -D USE_LINK=0
 
 # 4. CUSTOM GRO on, no delay, linking
 # CFLAGS += -D USE_PX=1 -D CUTOFF_NS=0 -D USE_LINK=1
@@ -71,13 +92,13 @@ CFLAGS += -D NICMEM=1
 # Choose one of below
 
 # 1. Hairpin off
-CFLAGS += -D NUM_HAIRPIN_Q=0
+CFLAGS += -D NUM_HAIRPIN_Q=0 -D HAIRPIN_POLICY=0
 
-# 2. Hairpin on (1 queue)
-# CFLAGS += -D NUM_HAIRPIN_Q=1
+# 2. Hairpin on (1 queue, opt-out mode)
+# CFLAGS += -D NUM_HAIRPIN_Q=1 -D HAIRPIN_POLICY=1
 
-# 3. Hairpin on (1 queue, opt-out mode)
-# CFLAGS += -D NUM_HAIRPIN_Q=1 -D USE_OPTOUT=1
+# 3. Hairpin on (1 queue, opt-in mode)
+# CFLAGS += -D NUM_HAIRPIN_Q=1 -D HAIRPIN_POLICY=2
 
 ################################################################################
 
