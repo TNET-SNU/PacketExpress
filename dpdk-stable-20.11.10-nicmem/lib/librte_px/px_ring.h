@@ -1,26 +1,28 @@
 #ifndef PX_RING_H_
 #define PX_RING_H_
-/*----------------------------------------------------------------------------*/
+
+#include "px_common.h"
+
 #ifdef __cplusplus
 extern "C"
 {
 #endif
-/*----------------------------------------------------------------------------*/
-#include "px_common.h"
+
 /*----------------------------------------------------------------------------*/
 struct px_ring
 {
-    uint16_t head;
-    uint16_t tail;
-    uint16_t size;
-    uint16_t occupied;
-    struct rte_mbuf **queue;
+	uint16_t head;
+	uint16_t tail;
+	uint16_t size;
+	uint16_t used;
+	struct rte_mbuf **queue;
 };
 /*----------------------------------------------------------------------------*/
-int px_ring_init(struct px_ring *ring,
-                 uint16_t size);
-/*----------------------------------------------------------------------------*/
+
+int px_ring_init(struct px_ring *ring, uint16_t size);
+
 void px_ring_deinit(struct px_ring *ring);
+
 /*----------------------------------------------------------------------------*/
 /* enqueue only moves tail */
 static inline uint16_t
@@ -28,64 +30,31 @@ px_ring_enqueue(struct px_ring *ring,
                 struct rte_mbuf **table,
                 uint16_t n)
 {
-    struct rte_mbuf **queue = ring->queue;
     uint16_t head = ring->head;
     uint16_t tail = ring->tail;
     uint16_t size = ring->size;
-    uint16_t diff;
+    uint16_t used = (uint16_t)((tail + size - head) % size);
+    uint16_t free = (uint16_t)(size - used - 1);
 
-    /* forward case */
-    if (tail <= head - 1)
+    if (free == 0 || n == 0)
     {
-        diff = head - 1 - tail;
-        if (n >= diff)
-        {
-            /* enqueue at most */
-            memcpy(queue + tail, table,
-                   diff * sizeof(struct rte_mbuf *));
-            ring->tail = head - 1;
-
-            return diff;
-        }
-        memcpy(queue + tail, table,
-               n * sizeof(struct rte_mbuf *));
-        ring->tail += n;
-        if (tail + n >= size)
-        {
-            ring->tail -= size;
-        }
-
-        return n;
+        return 0;
     }
-    /* reverse case */
-    diff = head - 1 + size - tail;
-    if (n >= diff)
+
+    if (n > free)
     {
-        /* enqueue at most */
-        memcpy(queue + tail, table,
-               (size - tail) * sizeof(struct rte_mbuf *));
-        memcpy(queue, table + size - tail,
-               (head - 1) * sizeof(struct rte_mbuf *));
-        ring->tail = head - 1;
+        n = free;
+    }
 
-        return diff;
-    }
-    if (n > size - tail)
-    {
-        memcpy(queue + tail, table,
-               (size - tail) * sizeof(struct rte_mbuf *));
-        memcpy(queue, table,
-               (n - (size - tail)) * sizeof(struct rte_mbuf *));
-        ring->tail = n - (size - tail);
+    uint16_t first = (uint16_t)RTE_MIN(n, (uint16_t)(size - tail));
+    uint16_t second = (uint16_t)(n - first);
 
-        return n;
-    }
-    memcpy(queue + tail, table, n * sizeof(struct rte_mbuf *));
-    ring->tail += n;
-    if (tail + n >= size)
+    memcpy(ring->queue + tail, table, first * sizeof(struct rte_mbuf *));
+    if (second)
     {
-        ring->tail -= size;
+        memcpy(ring->queue, table + first, second * sizeof(struct rte_mbuf *));
     }
+    ring->tail = (uint16_t)((tail + n) % size);
 
     return n;
 }
@@ -96,70 +65,37 @@ px_ring_dequeue(struct px_ring *ring,
                 struct rte_mbuf **table,
                 uint16_t n)
 {
-    struct rte_mbuf **queue = ring->queue;
     uint16_t head = ring->head;
     uint16_t tail = ring->tail;
     uint16_t size = ring->size;
-    uint16_t diff;
+    uint16_t used = (uint16_t)((tail + size - head) % size);
 
-    /* forward case */
-    if (head <= tail)
+    if (used == 0 || n == 0)
     {
-        diff = tail - head;
-        if (n >= diff)
-        {
-            /* dequeue all */
-            memcpy(table, queue + head,
-                   diff * sizeof(struct rte_mbuf *));
-            ring->head = tail;
-
-            return diff;
-        }
-        memcpy(table, queue + head,
-               n * sizeof(struct rte_mbuf *));
-        ring->head += n;
-        if (head + n >= size)
-        {
-            ring->head -= size;
-        }
-
-        return n;
+        return 0;
     }
-    /* reverse case */
-    diff = tail + size - head;
-    if (n >= diff)
+
+    if (n > used)
     {
-        /* dequeue all */
-        memcpy(table, queue + head,
-               (size - head) * sizeof(struct rte_mbuf *));
-        memcpy(table + size - head, queue,
-               tail * sizeof(struct rte_mbuf *));
-        ring->head = tail;
+        n = used;
+    }
 
-        return diff;
-    }
-    if (n > size - head)
-    {
-        memcpy(table, queue + head,
-               (size - head) * sizeof(struct rte_mbuf *));
-        memcpy(table + size - head, queue,
-               (n - (size - head)) * sizeof(struct rte_mbuf *));
-        ring->head = n - (size - head);
+    uint16_t first = (uint16_t)RTE_MIN(n, (uint16_t)(size - head));
+    uint16_t second = (uint16_t)(n - first);
 
-        return n;
-    }
-    memcpy(table, queue + head, n * sizeof(struct rte_mbuf *));
-    ring->head += n;
-    if (head + n >= size)
+    memcpy(table, ring->queue + head, first * sizeof(struct rte_mbuf *));
+    if (second)
     {
-        ring->head -= size;
+        memcpy(table + first, ring->queue, second * sizeof(struct rte_mbuf *));
     }
+    ring->head = (uint16_t)((head + n) % size);
 
     return n;
 }
 /*----------------------------------------------------------------------------*/
+
 #ifdef __cplusplus
 }
 #endif
-/*----------------------------------------------------------------------------*/
+
 #endif // PX_RING_H_

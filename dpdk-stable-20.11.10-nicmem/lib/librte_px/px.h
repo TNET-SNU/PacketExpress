@@ -810,7 +810,7 @@ px_uso_burst(struct rte_mbuf **pkts,
                 next = pkt->next;
                 pkt->next = NULL;
                 hdr_clone = rte_pktmbuf_copy(pkt,
-                                             pkt->pool,
+                                             clone_pool,
                                              0,
                                              get_hdr_len(pkt));
                 if (!hdr_clone)
@@ -836,7 +836,7 @@ px_uso_burst(struct rte_mbuf **pkts,
                 /* backup next */
                 next = pkt->next;
                 pkt->next = NULL;
-                hdr_clone = rte_pktmbuf_clone(pkt, pkt->pool);
+                hdr_clone = rte_pktmbuf_clone(pkt, clone_pool);
                 if (!hdr_clone)
                 {
                     fprintf(stderr,
@@ -851,7 +851,7 @@ px_uso_burst(struct rte_mbuf **pkts,
             /* backup next */
             next = pkt->next;
             pkt->next = NULL;
-            body_clone = rte_pktmbuf_clone(pkt, pkt->pool);
+            body_clone = rte_pktmbuf_clone(pkt, clone_pool);
             if (!body_clone)
             {
                 fprintf(stderr,

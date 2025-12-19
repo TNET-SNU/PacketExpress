@@ -32,6 +32,6 @@ headers = files(
         'px_cache.h',
         'px_arp.h',
         'px_async.h',
-        'px_offload.h',
+        'px_offload.h'
 )
 deps += ['ethdev', 'hash', 'gro', 'gso']

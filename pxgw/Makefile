@@ -6,9 +6,24 @@ OBJS    := $(SRCS:.c=.o)
 
 CC      := gcc
 CFLAGS  := -O3 -g -Wall -march=native -D_GNU_SOURCE -Wno-deprecated-declarations
-PKGCONF := $(shell which pkg-config)
-DPDK_CFLAGS := $(shell $(PKGCONF) --cflags libdpdk)
-DPDK_LDFLAGS := $(shell $(PKGCONF) --libs libdpdk)
+# PKGCONF := $(shell which pkg-config)
+# DPDK_CFLAGS := $(shell $(PKGCONF) --cflags libdpdk)
+# DPDK_LDFLAGS := $(shell $(PKGCONF) --libs libdpdk)
+
+DPDK_DIR := ../dpdk-stable-20.11.10-nicmem
+DPDK_LIB := $(DPDK_DIR)/build/lib
+DPDK_CFLAGS += -I$(DPDK_DIR)/build/include
+DPDK_LDFLAGS += -L$(DPDK_LIB) -Wl,-rpath=$(DPDK_LIB) \
+                -lrte_node -lrte_graph -lrte_bpf -lrte_flow_classify -lrte_pipeline \
+                -lrte_table -lrte_port -lrte_fib -lrte_ipsec -lrte_vhost -lrte_stack \
+                -lrte_security -lrte_sched -lrte_reorder -lrte_rib -lrte_regexdev \
+                -lrte_rawdev -lrte_pdump -lrte_power -lrte_member -lrte_lpm \
+                -lrte_latencystats -lrte_kni -lrte_jobstats -lrte_ip_frag -lrte_gso \
+                -lrte_px -lrte_gro -lrte_eventdev -lrte_efd -lrte_distributor \
+                -lrte_cryptodev -lrte_compressdev -lrte_cfgfile -lrte_bitratestats \
+                -lrte_bbdev -lrte_acl -lrte_timer -lrte_hash -lrte_metrics -lrte_cmdline \
+                -lrte_pci -lrte_ethdev -lrte_meter -lrte_net -lrte_mbuf -lrte_mempool \
+                -lrte_rcu -lrte_ring -lrte_eal -lrte_telemetry -lrte_kvargs -lbsd
 
 
 ################################################################################
@@ -84,8 +99,8 @@ CFLAGS += -D USE_PX=1 -D CUTOFF_NS=120000 -D USE_LINK=0
 ################################################################################
 
 # To use nicmem, make sure to use DPDK version 20.11
-# CFLAGS += -D NICMEM=0
-CFLAGS += -D NICMEM=1
+CFLAGS += -D NICMEM=0
+# CFLAGS += -D NICMEM=1
 
 ################################################################################
 

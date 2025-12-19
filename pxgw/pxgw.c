@@ -671,9 +671,9 @@ int main(int argc, char **argv)
     optind = 0;
 
     /* choose ARP table */
-    // g_arp_entries = g_arp_entries_normal;
-    // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_normal) /
-    //                      sizeof(struct px_arp_entry);
+    g_arp_entries = g_arp_entries_normal;
+    g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_normal) /
+                         sizeof(struct px_arp_entry);
 
     // g_arp_entries = g_arp_entries_two_hops;
     // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_two_hops) /
@@ -683,9 +683,9 @@ int main(int argc, char **argv)
     // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_two_hops_dpvs) /
     //                      sizeof(struct px_arp_entry);
 
-    g_arp_entries = g_arp_entries_two_hops_for_skew_test;
-    g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_two_hops_for_skew_test) /
-                         sizeof(struct px_arp_entry);
+    // g_arp_entries = g_arp_entries_two_hops_for_skew_test;
+    // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_two_hops_for_skew_test) /
+    //                      sizeof(struct px_arp_entry);
 
     char mem_channels[5];
     char lcores_arg[256];

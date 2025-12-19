@@ -312,11 +312,19 @@ px_unlink_and_uso(struct rte_mbuf **pkts,
                   void (*cb)(struct rte_mbuf *,
                              struct rte_mbuf *))
 {
-    struct rte_mbuf *start, *prev, *pkt, *hdr_clone, *body_clone;
-    uint16_t idx = 0, seglen, segnum, last_seglen, offset = 0;
-    uint16_t *temp16, *iplen, *udplen;
+    struct rte_mbuf *start, *pkt;
+    uint16_t idx = 0;
+    uint16_t *temp16;
     int8_t encap_len = 0;
-    int i, j;
+    int i;
+#if USE_USO
+    struct rte_mbuf *prev, *hdr_clone, *body_clone;
+    uint16_t seglen, segnum, last_seglen, offset = 0;
+    uint16_t *iplen, *udplen;
+    int j;
+#else
+    (void)clone_pool;
+#endif
 
     for (i = 0; i < nb_pkts; i++)
     {

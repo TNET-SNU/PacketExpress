@@ -567,16 +567,19 @@ get_udp_len(struct rte_mbuf *pkt)
     return rte_pktmbuf_mtod_offset(pkt, uint16_t *,
                                    pkt->l2_len +
                                        pkt->l3_len +
-                                       sizeof(uint16_t) * 2); // src/dst port
+                                       sizeof(uint16_t) + // src port
+                                       sizeof(uint16_t)); // dst port
 }
 /*----------------------------------------------------------------------------*/
-static inline uint8_t *
-get_payload(struct rte_mbuf *pkt)
+static inline uint16_t *
+get_udp_cksum(struct rte_mbuf *pkt)
 {
-    return rte_pktmbuf_mtod_offset(pkt, uint8_t *,
+    return rte_pktmbuf_mtod_offset(pkt, uint16_t *,
                                    pkt->l2_len +
                                        pkt->l3_len +
-                                       pkt->l4_len);
+                                       sizeof(uint16_t) + // src port
+                                       sizeof(uint16_t) + // dst port
+                                       sizeof(uint16_t)); // len
 }
 /*----------------------------------------------------------------------------*/
 static inline uint32_t *
@@ -585,7 +588,8 @@ get_tcp_seq(struct rte_mbuf *pkt)
     return rte_pktmbuf_mtod_offset(pkt, uint32_t *,
                                    pkt->l2_len +
                                        pkt->l3_len +
-                                       sizeof(uint16_t) * 2);
+                                       sizeof(uint16_t) + // src port
+                                       sizeof(uint16_t)); // dst port
 }
 /*----------------------------------------------------------------------------*/
 static inline uint32_t *
@@ -594,7 +598,8 @@ get_tcp_ack(struct rte_mbuf *pkt)
     return rte_pktmbuf_mtod_offset(pkt, uint32_t *,
                                    pkt->l2_len +
                                        pkt->l3_len +
-                                       sizeof(uint16_t) * 2 +
+                                       sizeof(uint16_t) + // src port
+                                       sizeof(uint16_t) + // dst port
                                        sizeof(uint32_t));
 }
 /*----------------------------------------------------------------------------*/
@@ -604,9 +609,10 @@ get_tcp_doff(struct rte_mbuf *pkt)
     return rte_pktmbuf_mtod_offset(pkt, uint8_t *,
                                    pkt->l2_len +
                                        pkt->l3_len +
-                                       sizeof(uint16_t) * 2 +
-                                       sizeof(uint32_t) +
-                                       sizeof(uint32_t));
+                                       sizeof(uint16_t) + // src port
+                                       sizeof(uint16_t) + // dst port
+                                       sizeof(uint32_t) + // seq
+                                       sizeof(uint32_t)); // ack
 }
 /*----------------------------------------------------------------------------*/
 static inline uint8_t
@@ -621,10 +627,40 @@ get_tcp_flags(struct rte_mbuf *pkt)
     return rte_pktmbuf_mtod_offset(pkt, uint8_t *,
                                    pkt->l2_len +
                                        pkt->l3_len +
-                                       sizeof(uint16_t) * 2 +
-                                       sizeof(uint32_t) +
-                                       sizeof(uint32_t) +
-                                       sizeof(uint8_t));
+                                       sizeof(uint16_t) + // src port
+                                       sizeof(uint16_t) + // dst port
+                                       sizeof(uint32_t) + // seq
+                                       sizeof(uint32_t) + // ack
+                                       sizeof(uint8_t)); // offset
+}
+/*----------------------------------------------------------------------------*/
+static inline uint16_t *
+get_tcp_advwnd(struct rte_mbuf *pkt)
+{
+    return rte_pktmbuf_mtod_offset(pkt, uint16_t *,
+                                   pkt->l2_len +
+                                       pkt->l3_len +
+                                       sizeof(uint16_t) + // src port
+                                       sizeof(uint16_t) + // dst port
+                                       sizeof(uint32_t) + // seq
+                                       sizeof(uint32_t) + // ack
+                                       sizeof(uint8_t) + // offset
+                                       sizeof(uint8_t)); // flags
+}
+/*----------------------------------------------------------------------------*/
+static inline uint16_t *
+get_tcp_cksum(struct rte_mbuf *pkt)
+{
+    return rte_pktmbuf_mtod_offset(pkt, uint16_t *,
+                                   pkt->l2_len +
+                                       pkt->l3_len +
+                                       sizeof(uint16_t) + // src port
+                                       sizeof(uint16_t) + // dst port
+                                       sizeof(uint32_t) + // seq
+                                       sizeof(uint32_t) + // ack
+                                       sizeof(uint8_t) + // offset
+                                       sizeof(uint8_t) + // flags
+                                       sizeof(uint16_t)); // advwnd
 }
 /*----------------------------------------------------------------------------*/
 static inline uint8_t *
@@ -751,6 +787,18 @@ static inline uint32_t
 get_data_len(struct rte_mbuf *pkt)
 {
     return pkt->pkt_len - get_hdr_len(pkt);
+}
+/*----------------------------------------------------------------------------*/
+static inline uint8_t *
+get_payload(struct rte_mbuf *pkt)
+{
+    /* payload is contiguous to L4 header */
+    if (pkt->data_len >get_hdr_len(pkt))
+    {
+        return rte_pktmbuf_mtod_offset(pkt, uint8_t *, get_hdr_len(pkt));
+    }
+    /* L2/3/4 headers are decapped */
+    return rte_pktmbuf_mtod(pkt->next, uint8_t *);
 }
 /*----------------------------------------------------------------------------*/
 static inline int

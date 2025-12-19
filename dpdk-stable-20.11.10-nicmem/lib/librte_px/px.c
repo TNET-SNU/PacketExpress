@@ -333,7 +333,8 @@ merge_tcp(struct px_item *cur_item,
     }
 
     /* mark as HoL blocked */
-    cur_item->hol_blocked = hol_blocked;
+    // cur_item->hol_blocked = hol_blocked;
+    (void)hol_blocked;
 
     return 1;
 }
@@ -413,7 +414,8 @@ merge_udp(struct px_item *cur_item,
     }
 
     /* mark as HoL blocked */
-    cur_item->hol_blocked = hol_blocked;
+    // cur_item->hol_blocked = hol_blocked;
+    (void)hol_blocked;
 
     return 1;
 }
@@ -854,7 +856,8 @@ insert_item(struct px_ctx *pctx,
     pctx->item_num++;
 
     /* mark as HoL blocked */
-    cur_item->hol_blocked = hol_blocked;
+    // cur_item->hol_blocked = hol_blocked;
+    (void)hol_blocked;
 
     return 0;
 }
@@ -888,7 +891,8 @@ insert_stash(struct px_ctx *pctx,
     cur_stash->timestamp = timestamp;
 
     /* mark as HoL blocked */
-    cur_stash->hol_blocked = hol_blocked;
+    // cur_stash->hol_blocked = hol_blocked;
+    (void)hol_blocked;
 
     return 0;
 }
@@ -1060,7 +1064,6 @@ is_delay_needed(struct px_ctx *pctx,
                 uint32_t target_segsz)
 {
     uint32_t timeout_ns;
-
     /* get stochastic timeout */
     timeout_ns = iat_get_timeout(pctx->port_id,
                                  pctx->queue_id,
@@ -1715,6 +1718,7 @@ Skip_log_rx_hw_timestamp:
         /* mark PX and update IAT for delayed merging */
         if (g_is_semantic_test)
         {
+            /* check if the pkt is incoming */
             if (pctx->is_downlink(pkt) &&
                 pctx->stash_array)
             {
@@ -1947,7 +1951,7 @@ link_and_flush(struct px_ctx *pctx,
     struct rte_mbuf *tmp, *start_pkt, *prev_pkt, *cur_pkt, *edge;
     struct px_flow *cur_flow;
     struct px_item *cur_item;
-    uint16_t item_idx, idx = 0, *start_id, id_diff;
+    uint16_t prev_idx, item_idx, idx = 0, *start_id, id_diff;
     uint32_t saved_segsz, target_segsz, orig_segsz, last_segsz;
     int delay_this_flow, i;
 
@@ -1991,6 +1995,7 @@ link_and_flush(struct px_ctx *pctx,
         while (item_idx != INVALID_INDEX)
         {
             cur_item = &pctx->items[item_idx];
+            prev_idx = item_idx;
             item_idx = cur_item->next_item_idx;
             cur_pkt = cur_item->firstseg;
 
@@ -2031,6 +2036,8 @@ link_and_flush(struct px_ctx *pctx,
                         (pctx->emtu_size -
                          cur_pkt->l3_len -
                          cur_pkt->l4_len);
+                    /* if so, this flow does not need delay */
+                    goto No_delay_tcp;
                 }
                 else
                 {
@@ -2050,12 +2057,6 @@ link_and_flush(struct px_ctx *pctx,
                                cur_pkt->l4_len);
                 }
 
-                /* check if delayed merging needed and if is from outside */
-                if (g_is_semantic_test && pctx->is_uplink(cur_pkt))
-                {
-                    /* if so, this flow does not delay */
-                    goto No_delay_tcp;
-                }
                 /* only for incoming packets when delayed merging enabled */
                 if (pctx->stash_array)
                 {
@@ -2442,6 +2443,7 @@ px_core(struct px_ctx *pctx,
                     /* check SYN/SYNACK */
                     if (tcp_flags & RTE_TCP_SYN_FLAG)
                     {
+                        /* count SYN/SYNACK packets */
                         if (tcp_flags & RTE_TCP_ACK_FLAG)
                         {
                             px_stat_count_synack(pctx->port_id,
@@ -2452,6 +2454,7 @@ px_core(struct px_ctx *pctx,
                             px_stat_count_syn(pctx->port_id,
                                               pctx->queue_id);
                         }
+
                         /* mss parsing */
                         mss_ptr = get_tcp_mss(pkt);
                         if (!mss_ptr)

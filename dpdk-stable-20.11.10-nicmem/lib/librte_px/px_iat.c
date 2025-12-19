@@ -916,7 +916,7 @@ void iat_local_stat(uint16_t port_id,
 #if LOG_IAT_ENTRIES
             fprintf(stdout,
                     "  IAT stats: burst_iat: %9u ns, "
-                    "global_iat: %9lu ns, "
+                    "global_iat: %9u ns, "
                     "data_len: %9u bytes, "
                     "yield: %2.0f%%, "
                     "tput: %9lu Mbps, "
