@@ -103,7 +103,7 @@ extern "C"
 #define LOG_DELAY 0
 #define LOG_BUFFER_SIZE (1024 * 1024)
 /*----------------------------------------------------------------------------*/
-#define FIXED_TIMEOUT 720000 /* 720us */ /* 100Mps */
+// #define FIXED_TIMEOUT 720000 /* 720us */ /* 100Mps */
 // #define FIXED_TIMEOUT 72000 /* 72us */ /* 1Gbps */
 // #define FIXED_TIMEOUT 180000 /* 180us */ /* 400Mbps */
 // #define MULTIPLE_OF_AVG_IAT 1

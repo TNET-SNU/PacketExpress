@@ -86,7 +86,7 @@ compare_option(struct rte_mbuf *pkt1,
  * 3: free latter and choose former
  * 4: free former and choose latter
  */
-static inline uint32_t
+static inline int
 compare_seq(struct rte_mbuf *pkt1,
             struct rte_mbuf *pkt2)
 {
@@ -105,7 +105,7 @@ compare_seq(struct rte_mbuf *pkt1,
 
     if (likely(end2 == seq1))
     {
-        return 2;
+        return -1;
     }
 
     if (likely(MAX(end1, end2) - MIN(seq1, seq2) > datalen1 + datalen2))
@@ -133,7 +133,7 @@ compare_seq(struct rte_mbuf *pkt1,
  * 1: append
  * 2: prepend
  */
-static inline uint32_t
+static inline int
 compare_ipid(struct rte_mbuf *pkt1,
              struct rte_mbuf *pkt2)
 {
@@ -170,7 +170,7 @@ compare_ipid(struct rte_mbuf *pkt1,
     if (likely((id2 + diff2) == id1))
     {
         // printf("compare: 2\n");
-        return 2;
+        return -1;
     }
 
     // printf("id1: %d, id2: %d, "
@@ -224,7 +224,7 @@ check_seq_backup(struct rte_mbuf *pkt1,
 }
 /*----------------------------------------------------------------------------*/
 /* Check if TCP option fields equal and seq fields are continuous. */
-static inline uint32_t
+static inline int
 compare_option_seq(struct rte_mbuf *pkt1,
                    struct rte_mbuf *pkt2)
 {
@@ -250,11 +250,13 @@ merge_tcp(struct px_item *cur_item,
           uint16_t imtu_size,
           uint16_t nb_seg_max,
           uint64_t timestamp,
-          uint32_t cmp,
+          int cmp,
           int sgdma,
           int hol_blocked)
 {
     struct rte_mbuf *pkt_head, *pkt_tail;
+    uint32_t *head_ack, *tail_ack;
+    
     /* Thanks to TSO, we do not need to care about iMTU size */
     (void)imtu_size;
 
@@ -263,7 +265,7 @@ merge_tcp(struct px_item *cur_item,
         pkt_head = cur_item->firstseg;
         pkt_tail = firstseg;
     }
-    else
+    else if (cmp == -1)
     {
         pkt_head = firstseg;
         pkt_tail = cur_item->firstseg;
@@ -275,7 +277,7 @@ merge_tcp(struct px_item *cur_item,
         return 0;
     }
 
-    /* check if the length of merged TCP/IPv4 packet is greater than 65535 */
+    /* check if the length of merged IPv4 packet is greater than 65535 */
     if (!sgdma)
     {
         if (unlikely(pkt_head->pkt_len + get_data_len(pkt_tail) >
@@ -300,6 +302,16 @@ merge_tcp(struct px_item *cur_item,
         }
     }
 
+    /* get ACK pointer before adjusting tail's header */
+    head_ack = get_tcp_ack(pkt_head);
+    tail_ack = get_tcp_ack(pkt_tail);
+
+    /* check if tail's ACK is greater than head's ACK */
+    if (SEQ_LT(ntohl(*head_ack), ntohl(*tail_ack)))
+    {
+        *head_ack = *tail_ack;
+    }
+
     /* remove the packet header of tail packet */
     if (!rte_pktmbuf_adj(pkt_tail, get_hdr_len(pkt_tail)))
     {
@@ -316,11 +328,14 @@ merge_tcp(struct px_item *cur_item,
         cur_item->lastseg->next = firstseg;
         cur_item->lastseg = lastseg;
     }
-    else
+    else if (cmp == -1)
     {
         lastseg->next = cur_item->firstseg;
         cur_item->firstseg = firstseg;
     }
+
+    /* unmark first segment */
+    unmark_decaped(pkt_head);
 
     /* update number of segments for the merged packet */
     pkt_head->nb_segs += pkt_tail->nb_segs;
@@ -346,7 +361,8 @@ merge_udp(struct px_item *cur_item,
           uint16_t imtu_size,
           uint16_t nb_seg_max,
           uint64_t timestamp,
-          uint32_t cmp,
+          int cmp,
+          int sgdma,
           int hol_blocked)
 {
     struct rte_mbuf *pkt_head, *pkt_tail;
@@ -356,7 +372,7 @@ merge_udp(struct px_item *cur_item,
         pkt_head = cur_item->firstseg;
         pkt_tail = firstseg;
     }
-    else
+    else if (cmp == -1)
     {
         pkt_head = firstseg;
         pkt_tail = cur_item->firstseg;
@@ -366,6 +382,31 @@ merge_udp(struct px_item *cur_item,
     if (unlikely(pkt_head->nb_segs + pkt_tail->nb_segs > nb_seg_max))
     {
         return 0;
+    }
+
+    /* check if the length of merged IPv4 packet is greater than 65535 */
+    if (!sgdma)
+    {
+        if (unlikely(pkt_head->pkt_len + get_data_len(pkt_tail) >
+                     UINT16_MAX + sizeof(struct rte_ether_hdr)))
+        {
+            return 0;
+        }
+    }
+    else
+    {
+        /**
+         * if SG DMA is on, we do not need it when no application above cares about it
+         * however, our device rejects packets larger than 1MB
+         *
+         * ToDo: how to know the hardware limit?
+         * For now, we just assume 1MB
+         */
+        if (unlikely(pkt_head->pkt_len + get_data_len(pkt_tail) >
+                     1024 * 1024))
+        {
+            return 0;
+        }
     }
 
     /* check if the IPv4 packet length is greater than imtu_size */
@@ -397,11 +438,14 @@ merge_udp(struct px_item *cur_item,
         cur_item->lastseg->next = firstseg;
         cur_item->lastseg = lastseg;
     }
-    else
+    else if (cmp == -1)
     {
         lastseg->next = cur_item->firstseg;
         cur_item->firstseg = firstseg;
     }
+
+    /* unmark first segment */
+    unmark_decaped(pkt_head);
 
     /* update number of segments for the merged packet */
     pkt_head->nb_segs += pkt_tail->nb_segs;
@@ -1099,7 +1143,7 @@ assemble_udp(struct px_ctx *pctx,
     struct px_item *cur_item, *prev_item, *merged_item;
     struct px_flow *cur_flow;
     uint16_t bucket_idx, start_flow_idx;
-    uint32_t cmp;
+    int cmp;
 
     /* get pointer to key (4-tuple) */
     bucket_idx = get_rss_hash(firstseg) % pctx->bucket_size;
@@ -1146,7 +1190,7 @@ assemble_udp(struct px_ctx *pctx,
     /* found first neighbor item */
     if (!merge_udp(cur_item, firstseg, lastseg,
                    pctx->imtu_size, pctx->nb_seg_max,
-                   timestamp, cmp, hol_blocked))
+                   timestamp, cmp, pctx->sgdma, hol_blocked))
     {
         /* bigger than 9KB; store this packet as a new item in the given flow */
         insert_item(pctx, firstseg, lastseg, cur_item, timestamp, hol_blocked);
@@ -1175,7 +1219,7 @@ assemble_udp(struct px_ctx *pctx,
     /* found second neighbor item */
     if (!merge_udp(merged_item, cur_item->firstseg, cur_item->lastseg,
                    pctx->imtu_size, pctx->nb_seg_max,
-                   cur_item->timestamp, cmp, hol_blocked))
+                   cur_item->timestamp, cmp, pctx->sgdma, hol_blocked))
     {
         /* current item length is bigger than 9KB */
         return;
@@ -1200,7 +1244,7 @@ assemble_tcp(struct px_ctx *pctx,
     struct px_item *cur_item, *prev_item, *merged_item;
     struct px_flow *cur_flow;
     uint16_t bucket_idx, start_flow_idx;
-    uint32_t cmp;
+    int cmp;
 
     bucket_idx = get_rss_hash(firstseg) % pctx->bucket_size;
     // bucket_idx = xor_hash((uint32_t *)get_four_tuple(firstseg)) % pctx->bucket_size;

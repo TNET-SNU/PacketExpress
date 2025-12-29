@@ -63,6 +63,30 @@ const float timeout_factor_naive[] = {
     20.00f, // missing_segs = 20
 };
 /* below is for 95% reception rate */
+const float timeout_factor_90[] = {
+    00.00f, // no need to delay
+    02.30f, // missing_segs = 1
+    03.89f, // missing_segs = 2
+    05.32f, // missing_segs = 3
+    06.68f, // missing_segs = 4
+    07.99f, // missing_segs = 5
+    09.28f, // missing_segs = 6
+    10.53f, // missing_segs = 7
+    11.77f, // missing_segs = 8
+    13.00f, // missing_segs = 9
+    14.21f, // missing_segs = 10
+    15.41f, // missing_segs = 11
+    16.60f, // missing_segs = 12
+    17.78f, // missing_segs = 13
+    18.96f, // missing_segs = 14
+    20.13f, // missing_segs = 15
+    21.29f, // missing_segs = 16
+    22.45f, // missing_segs = 17
+    23.61f, // missing_segs = 18
+    24.76f, // missing_segs = 19
+    25.90f, // missing_segs = 20
+};
+/* below is for 95% reception rate */
 const float timeout_factor_95[] = {
     00.00f, // no need to delay
     03.00f, // missing_segs = 1
@@ -683,7 +707,7 @@ iat_get_timeout(uint16_t port_id,
                 uint64_t now_ns,
                 uint32_t cutoff_ns)
 {
-#if FIXED_TIMEOUT
+#ifdef FIXED_TIMEOUT
     return FIXED_TIMEOUT;
 #endif
     struct px_iat_ctx *ctx = &g_iat_ctx[port_id][queue_id];
@@ -745,15 +769,16 @@ iat_get_timeout(uint16_t port_id,
          * use global average IAT
          */
         avg_iat = global_avg_iat;
-        timeout_factor = timeout_factor_naive;
-    }
-    else
-    {
-        timeout_factor = timeout_factor_999;
     }
 
+    // timeout_factor = timeout_factor_no_delay;
+    timeout_factor = timeout_factor_90;
+    // timeout_factor = timeout_factor_95;
+    // timeout_factor = timeout_factor_99;
+    // timeout_factor = timeout_factor_999;
+
     /* choose one of below */
-#if MULTIPLE_OF_AVG_IAT
+#ifdef MULTIPLE_OF_AVG_IAT
     // timeout_factor = timeout_factor_no_delay;
     timeout_factor = timeout_factor_naive;
 #endif
@@ -858,7 +883,7 @@ void iat_local_stat(uint16_t port_id,
     struct px_iat_ctx *ctx = &g_iat_ctx[port_id][queue_id];
     struct flow_iat_entry *entry;
     uint32_t global_avg_iat, iter = 0;
-    const void *next_key;
+    struct four_tuple *next_key;
     void *next_data;
     uint64_t temp_burst_iat = 0, temp_global_iat = 0;
     uint64_t temp_data_len = 0, temp_count = 0;
@@ -873,7 +898,7 @@ void iat_local_stat(uint16_t port_id,
     }
 
     /* Iterate through the hash table and get global average of iat */
-    while (rte_hash_iterate(ctx->tbl, &next_key, &next_data, &iter) >= 0)
+    while (rte_hash_iterate(ctx->tbl, (const void **)&next_key, &next_data, &iter) >= 0)
     {
         entry = (struct flow_iat_entry *)next_data;
 

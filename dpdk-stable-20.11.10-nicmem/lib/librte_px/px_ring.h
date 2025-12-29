@@ -9,6 +9,7 @@ extern "C"
 #endif
 
 /*----------------------------------------------------------------------------*/
+/* This ring should be accessed by a single thread */
 struct px_ring
 {
 	uint16_t head;
@@ -18,11 +19,9 @@ struct px_ring
 	struct rte_mbuf **queue;
 };
 /*----------------------------------------------------------------------------*/
-
 int px_ring_init(struct px_ring *ring, uint16_t size);
-
+/*----------------------------------------------------------------------------*/
 void px_ring_deinit(struct px_ring *ring);
-
 /*----------------------------------------------------------------------------*/
 /* enqueue only moves tail */
 static inline uint16_t
