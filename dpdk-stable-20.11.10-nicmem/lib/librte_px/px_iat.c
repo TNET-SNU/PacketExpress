@@ -709,7 +709,7 @@ iat_get_timeout(uint16_t port_id,
 {
 #ifdef FIXED_TIMEOUT
     return FIXED_TIMEOUT;
-#endif
+#else
     struct px_iat_ctx *ctx = &g_iat_ctx[port_id][queue_id];
     const float *timeout_factor;
     struct flow_iat_entry *entry;
@@ -771,17 +771,13 @@ iat_get_timeout(uint16_t port_id,
         avg_iat = global_avg_iat;
     }
 
+    /* choose one of below */
     // timeout_factor = timeout_factor_no_delay;
-    timeout_factor = timeout_factor_90;
+    timeout_factor = timeout_factor_naive;
+    // timeout_factor = timeout_factor_90;
     // timeout_factor = timeout_factor_95;
     // timeout_factor = timeout_factor_99;
     // timeout_factor = timeout_factor_999;
-
-    /* choose one of below */
-#ifdef MULTIPLE_OF_AVG_IAT
-    // timeout_factor = timeout_factor_no_delay;
-    timeout_factor = timeout_factor_naive;
-#endif
 
     if (!entry->oscillate && (entry->yield >= PER_FLOW_YIELD_THRESHOLD))
     {
@@ -871,6 +867,7 @@ iat_get_timeout(uint16_t port_id,
 #endif
 
     return timeout_ns;
+#endif
 }
 /*----------------------------------------------------------------------------*/
 void iat_local_stat(uint16_t port_id,

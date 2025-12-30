@@ -106,7 +106,6 @@ extern "C"
 // #define FIXED_TIMEOUT 720000 /* 720us */ /* 100Mps */
 // #define FIXED_TIMEOUT 72000 /* 72us */ /* 1Gbps */
 // #define FIXED_TIMEOUT 180000 /* 180us */ /* 400Mbps */
-// #define MULTIPLE_OF_AVG_IAT 1
 /*----------------------------------------------------------------------------*/
 #define FIX_GEAR 0
 #define TEST_RSS_ATOMICITY 0
@@ -315,6 +314,18 @@ static inline uint32_t
 SEQ_DIFF(uint32_t a, uint32_t b)
 {
     return (uint32_t)((int32_t)(a - b));
+}
+/*----------------------------------------------------------------------------*/
+static inline int
+SEQ_RANGE_OVERLAP(uint32_t s1, uint32_t e1,
+                  uint32_t s2, uint32_t e2)
+{
+    /* s1 < e2 && s2 < e1 */
+    if (SEQ_LT(s1, e2) && SEQ_LT(s2, e1))
+    {
+        return 1;
+    }
+    return 0;
 }
 /*----------------------------------------------------------------------------*/
 static inline bool

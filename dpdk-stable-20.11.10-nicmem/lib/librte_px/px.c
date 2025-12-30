@@ -251,12 +251,11 @@ merge_tcp(struct px_item *cur_item,
           uint16_t nb_seg_max,
           uint64_t timestamp,
           int cmp,
-          int sgdma,
-          int hol_blocked)
+          int sgdma)
 {
     struct rte_mbuf *pkt_head, *pkt_tail;
     uint32_t *head_ack, *tail_ack;
-    
+
     /* Thanks to TSO, we do not need to care about iMTU size */
     (void)imtu_size;
 
@@ -347,10 +346,6 @@ merge_tcp(struct px_item *cur_item,
         cur_item->timestamp = timestamp;
     }
 
-    /* mark as HoL blocked */
-    // cur_item->hol_blocked = hol_blocked;
-    (void)hol_blocked;
-
     return 1;
 }
 /*----------------------------------------------------------------------------*/
@@ -362,8 +357,7 @@ merge_udp(struct px_item *cur_item,
           uint16_t nb_seg_max,
           uint64_t timestamp,
           int cmp,
-          int sgdma,
-          int hol_blocked)
+          int sgdma)
 {
     struct rte_mbuf *pkt_head, *pkt_tail;
 
@@ -456,10 +450,6 @@ merge_udp(struct px_item *cur_item,
     {
         cur_item->timestamp = timestamp;
     }
-
-    /* mark as HoL blocked */
-    // cur_item->hol_blocked = hol_blocked;
-    (void)hol_blocked;
 
     return 1;
 }
@@ -868,8 +858,7 @@ insert_item(struct px_ctx *pctx,
             struct rte_mbuf *firstseg,
             struct rte_mbuf *lastseg,
             struct px_item *prev_item,
-            uint64_t timestamp,
-            int hol_blocked)
+            uint64_t timestamp)
 {
     struct px_item *cur_item;
 
@@ -899,10 +888,6 @@ insert_item(struct px_ctx *pctx,
     /* increment item array index */
     pctx->item_num++;
 
-    /* mark as HoL blocked */
-    // cur_item->hol_blocked = hol_blocked;
-    (void)hol_blocked;
-
     return 0;
 }
 /*----------------------------------------------------------------------------*/
@@ -911,8 +896,7 @@ static inline int
 insert_stash(struct px_ctx *pctx,
              struct rte_mbuf *firstseg,
              struct rte_mbuf *lastseg,
-             uint64_t timestamp,
-             int hol_blocked)
+             uint64_t timestamp)
 {
     struct px_stash *stash;
     struct px_item *cur_stash;
@@ -933,10 +917,6 @@ insert_stash(struct px_ctx *pctx,
 
     /* copy timestamp */
     cur_stash->timestamp = timestamp;
-
-    /* mark as HoL blocked */
-    // cur_stash->hol_blocked = hol_blocked;
-    (void)hol_blocked;
 
     return 0;
 }
@@ -1137,8 +1117,7 @@ static inline void
 assemble_udp(struct px_ctx *pctx,
              struct rte_mbuf *firstseg,
              struct rte_mbuf *lastseg,
-             uint64_t timestamp,
-             int hol_blocked)
+             uint64_t timestamp)
 {
     struct px_item *cur_item, *prev_item, *merged_item;
     struct px_flow *cur_flow;
@@ -1153,7 +1132,7 @@ assemble_udp(struct px_ctx *pctx,
         /* nothing in the bucket; allocate new bucket */
         pctx->buckets[bucket_idx] = pctx->flow_num;
         insert_flow(pctx, firstseg, bucket_idx, NULL);
-        insert_item(pctx, firstseg, lastseg, NULL, timestamp, hol_blocked);
+        insert_item(pctx, firstseg, lastseg, NULL, timestamp);
         return;
     }
 
@@ -1166,7 +1145,7 @@ assemble_udp(struct px_ctx *pctx,
         {
             /* end of flow list; no flow matched */
             insert_flow(pctx, firstseg, INVALID_INDEX, cur_flow);
-            insert_item(pctx, firstseg, lastseg, NULL, timestamp, hol_blocked);
+            insert_item(pctx, firstseg, lastseg, NULL, timestamp);
             return;
         }
         cur_flow = &pctx->flows[cur_flow->next_flow_idx];
@@ -1180,7 +1159,7 @@ assemble_udp(struct px_ctx *pctx,
         if (cur_item->next_item_idx == INVALID_INDEX)
         {
             /* end of item list; no neighbor items matched */
-            insert_item(pctx, firstseg, lastseg, cur_item, timestamp, hol_blocked);
+            insert_item(pctx, firstseg, lastseg, cur_item, timestamp);
             return;
         }
         prev_item = cur_item;
@@ -1190,10 +1169,10 @@ assemble_udp(struct px_ctx *pctx,
     /* found first neighbor item */
     if (!merge_udp(cur_item, firstseg, lastseg,
                    pctx->imtu_size, pctx->nb_seg_max,
-                   timestamp, cmp, pctx->sgdma, hol_blocked))
+                   timestamp, cmp, pctx->sgdma))
     {
         /* bigger than 9KB; store this packet as a new item in the given flow */
-        insert_item(pctx, firstseg, lastseg, cur_item, timestamp, hol_blocked);
+        insert_item(pctx, firstseg, lastseg, cur_item, timestamp);
         return;
     }
 
@@ -1219,7 +1198,7 @@ assemble_udp(struct px_ctx *pctx,
     /* found second neighbor item */
     if (!merge_udp(merged_item, cur_item->firstseg, cur_item->lastseg,
                    pctx->imtu_size, pctx->nb_seg_max,
-                   cur_item->timestamp, cmp, pctx->sgdma, hol_blocked))
+                   cur_item->timestamp, cmp, pctx->sgdma))
     {
         /* current item length is bigger than 9KB */
         return;
@@ -1238,8 +1217,7 @@ static inline void
 assemble_tcp(struct px_ctx *pctx,
              struct rte_mbuf *firstseg,
              struct rte_mbuf *lastseg,
-             uint64_t timestamp,
-             int hol_blocked)
+             uint64_t timestamp)
 {
     struct px_item *cur_item, *prev_item, *merged_item;
     struct px_flow *cur_flow;
@@ -1254,7 +1232,7 @@ assemble_tcp(struct px_ctx *pctx,
         /* nothing in the bucket; allocate new bucket */
         pctx->buckets[bucket_idx] = pctx->flow_num;
         insert_flow(pctx, firstseg, bucket_idx, NULL);
-        insert_item(pctx, firstseg, lastseg, NULL, timestamp, hol_blocked);
+        insert_item(pctx, firstseg, lastseg, NULL, timestamp);
         return;
     }
 
@@ -1267,7 +1245,7 @@ assemble_tcp(struct px_ctx *pctx,
         {
             /* end of flow list; no flow matched */
             insert_flow(pctx, firstseg, INVALID_INDEX, cur_flow);
-            insert_item(pctx, firstseg, lastseg, NULL, timestamp, hol_blocked);
+            insert_item(pctx, firstseg, lastseg, NULL, timestamp);
             return;
         }
         cur_flow = &pctx->flows[cur_flow->next_flow_idx];
@@ -1281,7 +1259,7 @@ assemble_tcp(struct px_ctx *pctx,
         if (cur_item->next_item_idx == INVALID_INDEX)
         {
             /* end of item list; no neighbor items matched */
-            insert_item(pctx, firstseg, lastseg, cur_item, timestamp, hol_blocked);
+            insert_item(pctx, firstseg, lastseg, cur_item, timestamp);
             return;
         }
         prev_item = cur_item;
@@ -1314,10 +1292,10 @@ assemble_tcp(struct px_ctx *pctx,
     // }
     if (!merge_tcp(cur_item, firstseg, lastseg,
                    pctx->imtu_size, pctx->nb_seg_max,
-                   timestamp, cmp, pctx->sgdma, hol_blocked))
+                   timestamp, cmp, pctx->sgdma))
     {
         /* bigger than 64KB; store this packet as a new item in the given flow */
-        insert_item(pctx, firstseg, lastseg, cur_item, timestamp, hol_blocked);
+        insert_item(pctx, firstseg, lastseg, cur_item, timestamp);
         return;
     }
 
@@ -1366,7 +1344,7 @@ assemble_tcp(struct px_ctx *pctx,
     // }
     if (!merge_tcp(merged_item, cur_item->firstseg, cur_item->lastseg,
                    pctx->imtu_size, pctx->nb_seg_max,
-                   cur_item->timestamp, cmp, pctx->sgdma, hol_blocked))
+                   cur_item->timestamp, cmp, pctx->sgdma))
     {
         /* bigger than 64KB; store this packet as a new item in the given flow */
         return;
@@ -1997,13 +1975,12 @@ link_and_flush(struct px_ctx *pctx,
     struct px_item *cur_item;
     uint16_t prev_idx, item_idx, idx = 0, *start_id, id_diff;
     uint32_t saved_segsz, target_segsz, orig_segsz, last_segsz;
-    int delay_this_flow, i;
+    int i;
 
     for (i = 0; i < pctx->flow_num; i++)
     {
         saved_segsz = 0;
         target_segsz = 0;
-        delay_this_flow = 0;
         cur_flow = &pctx->flows[i];
 
         /* remove bucket of this flow */
@@ -2104,24 +2081,6 @@ link_and_flush(struct px_ctx *pctx,
                 /* only for incoming packets when delayed merging enabled */
                 if (pctx->stash_array)
                 {
-                    /* check if previous packet is delayed */
-                    if (delay_this_flow)
-                    {
-                        cur_item->hol_blocked++;
-                        update_tcp(cur_pkt, target_segsz);
-                        /* insert to stash item array */
-                        if (insert_stash(pctx,
-                                         cur_pkt,
-                                         cur_item->lastseg,
-                                         cur_item->timestamp,
-                                         cur_item->hol_blocked) < 0)
-                        {
-                            fprintf(stderr, "stash table overflow\n");
-                            goto No_delay_tcp;
-                        }
-                        continue;
-                    }
-
                     /* check if current packet should be delayed */
                     assert(target_segsz >= orig_segsz);
                     if (get_data_len(cur_pkt) <= target_segsz - orig_segsz)
@@ -2130,8 +2089,9 @@ link_and_flush(struct px_ctx *pctx,
                          * size of this packet is R < 9K
                          * delay current packet (R) to merge more
                          */
-                        /* if delay nsec is marginal */
-                        if (is_delay_needed(pctx,
+                        /* if this item is the last item and delay nsec is marginal */
+                        if ((item_idx == INVALID_INDEX) &&
+                            is_delay_needed(pctx,
                                             get_four_tuple(cur_pkt),
                                             get_data_len(cur_pkt),
                                             cur_item->timestamp,
@@ -2142,20 +2102,17 @@ link_and_flush(struct px_ctx *pctx,
                             if (insert_stash(pctx,
                                              cur_pkt,
                                              cur_item->lastseg,
-                                             cur_item->timestamp,
-                                             cur_item->hol_blocked) < 0)
+                                             cur_item->timestamp) < 0)
                             {
                                 fprintf(stdout, "stash table overflow\n");
                                 goto No_delay_tcp;
                             }
-
-                            delay_this_flow = 1;
                             continue;
                         }
                         goto No_delay_tcp;
                     }
 
-                    /* check if edge duplication is needed */
+                    /* check if edge separation is needed */
                     last_segsz = get_data_len(cur_pkt) % target_segsz;
                     if (last_segsz &&
                         last_segsz <= (target_segsz - orig_segsz))
@@ -2165,7 +2122,9 @@ link_and_flush(struct px_ctx *pctx,
                          * flush complete packets (N)
                          * stash duplicated edge (R) to merge more
                          */
-                        if (is_delay_needed(pctx,
+                        /* if this item is the last item and delay nsec is marginal */
+                        if ((item_idx == INVALID_INDEX) &&
+                            is_delay_needed(pctx,
                                             get_four_tuple(cur_pkt),
                                             last_segsz,
                                             cur_item->timestamp,
@@ -2183,15 +2142,13 @@ link_and_flush(struct px_ctx *pctx,
                             if (insert_stash(pctx,
                                              edge,
                                              rte_pktmbuf_lastseg(edge),
-                                             cur_item->timestamp,
-                                             cur_item->hol_blocked) < 0)
+                                             cur_item->timestamp) < 0)
                             {
                                 /* ToDo: in this case we should merge again... */
                                 /* this should not happen */
                                 rte_exit(EXIT_FAILURE,
                                          "stash table overflow\n");
                             }
-                            delay_this_flow = 1;
                         }
                         goto No_delay_tcp;
                     }
@@ -2244,23 +2201,6 @@ link_and_flush(struct px_ctx *pctx,
                 /* only for incoming packets when delayed merging enabled */
                 if (pctx->stash_array)
                 {
-                    /* check if previous packet is delayed */
-                    if (delay_this_flow)
-                    {
-                        cur_item->hol_blocked++;
-                        /* insert to stash item array */
-                        if (insert_stash(pctx,
-                                         cur_pkt,
-                                         cur_item->lastseg,
-                                         cur_item->timestamp,
-                                         cur_item->hol_blocked) < 0)
-                        {
-                            fprintf(stderr, "stash table overflow\n");
-                            goto No_delay_udp;
-                        }
-                        continue;
-                    }
-
                     /* check if current packet should be delayed */
                     assert(target_segsz >= orig_segsz);
                     if (get_data_len(cur_pkt) <= target_segsz - orig_segsz)
@@ -2269,8 +2209,9 @@ link_and_flush(struct px_ctx *pctx,
                          * size of this packet < 9K
                          * stash current packet to merge more
                          */
-                        /* if delay nsec is marginal */
-                        if (is_delay_needed(pctx,
+                        /* if this item is the last item and delay nsec is marginal */
+                        if ((item_idx == INVALID_INDEX) &&
+                            is_delay_needed(pctx,
                                             get_four_tuple(cur_pkt),
                                             get_data_len(cur_pkt),
                                             cur_item->timestamp,
@@ -2281,14 +2222,11 @@ link_and_flush(struct px_ctx *pctx,
                             if (insert_stash(pctx,
                                              cur_pkt,
                                              cur_item->lastseg,
-                                             cur_item->timestamp,
-                                             cur_item->hol_blocked) < 0)
+                                             cur_item->timestamp) < 0)
                             {
                                 fprintf(stderr, "stash table overflow\n");
                                 goto No_delay_udp;
                             }
-
-                            delay_this_flow = 1;
                             continue;
                         }
                         goto No_delay_udp;
@@ -2451,12 +2389,12 @@ px_core(struct px_ctx *pctx,
             if (is_tcp(item->firstseg))
             {
                 assemble_tcp(pctx, item->firstseg, item->lastseg,
-                             item->timestamp, item->hol_blocked);
+                             item->timestamp);
             }
             else if (is_udp(item->firstseg))
             {
                 assemble_udp(pctx, item->firstseg, item->lastseg,
-                             item->timestamp, item->hol_blocked);
+                             item->timestamp);
             }
         }
         stash->num = 0;
@@ -2766,11 +2704,11 @@ px_core(struct px_ctx *pctx,
         /* try GRO */
         if (is_tcp(pkt))
         {
-            assemble_tcp(pctx, pkt, rte_pktmbuf_lastseg(pkt), pctx->now_ns, 0);
+            assemble_tcp(pctx, pkt, rte_pktmbuf_lastseg(pkt), pctx->now_ns);
         }
         else if (is_udp(pkt))
         {
-            assemble_udp(pctx, pkt, rte_pktmbuf_lastseg(pkt), pctx->now_ns, 0);
+            assemble_udp(pctx, pkt, rte_pktmbuf_lastseg(pkt), pctx->now_ns);
         }
     }
 

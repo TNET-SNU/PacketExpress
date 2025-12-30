@@ -65,9 +65,6 @@ struct px_item
      */
     uint16_t next_item_idx;
 
-    /* whether HOL blocking happened */
-    int hol_blocked;
-
     /* for stash timeout */
     uint64_t timestamp;
 };
