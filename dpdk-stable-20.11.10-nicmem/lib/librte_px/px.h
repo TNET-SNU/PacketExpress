@@ -20,7 +20,6 @@ extern "C"
 #include "px_arp.h"
 #include "rte_gro.h"
 #include "rte_gso.h"
-#include "rte_thash.h"
 /*----------------------------------------------------------------------------*/
 #define INVALID_INDEX UINT16_MAX
 #define MAX_TCP_HLEN 60
@@ -730,7 +729,7 @@ px_uso_burst(struct rte_mbuf **pkts,
     {
         pkt = pkts[i];
 
-        /* pass non USO target packets */
+        /* pass non PX de-tunneling target packets */
 #if USE_USO
         if (!is_uso_needed(pkt))
 #endif

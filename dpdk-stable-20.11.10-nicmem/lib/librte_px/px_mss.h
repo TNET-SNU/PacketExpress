@@ -39,12 +39,18 @@ struct px_mss_ctx
 struct flow_mss_entry
 {
     uint32_t mss;
+    uint32_t rss;
     uint64_t last_update;
 };
 /*----------------------------------------------------------------------------*/
-void update_mss(uint16_t *mss_ptr,
-                uint16_t new_mss,
-                int direction);
+static inline void
+update_mss(uint16_t *mss_ptr,
+           uint16_t new_mss)
+{
+    // fprintf(stdout, "%d -> ", rte_be_to_cpu_16(*mss_ptr));
+    *mss_ptr = rte_cpu_to_be_16(new_mss);
+    // fprintf(stdout, "%d\n", rte_be_to_cpu_16(*mss_ptr));
+}
 /*----------------------------------------------------------------------------*/
 static inline uint16_t
 xor_hash0(uint32_t rss,
@@ -373,8 +379,13 @@ int mss_search_entry(uint16_t port_id,
                      uint16_t queue_id,
                      uint32_t rss,
                      struct four_tuple *key,
-                     uint32_t *mss,
+                     uint16_t *mss,
                      uint64_t now_ns);
+/*----------------------------------------------------------------------------*/
+int mss_search_reverse(uint16_t port_id,
+                       struct four_tuple *key,
+                       uint16_t *mss,
+                       uint64_t now_ns);
 /*----------------------------------------------------------------------------*/
 int mss_init_ctx(uint16_t port_id,
                  uint16_t queue_id,
@@ -387,13 +398,33 @@ int mss_insert_entry(uint16_t port_id,
                      uint16_t queue_id,
                      uint32_t rss,
                      struct four_tuple *key,
-                     uint32_t mss,
+                     uint16_t mss,
                      uint64_t now_ns);
+/*----------------------------------------------------------------------------*/
+int mss_insert_reverse(uint16_t port_id,
+                       struct four_tuple *key,
+                       uint16_t mss,
+                       uint64_t now_ns);
 /*----------------------------------------------------------------------------*/
 int mss_evict_entry(uint16_t port_id,
                     uint16_t queue_id,
                     uint32_t rss,
                     struct four_tuple *key);
+/*----------------------------------------------------------------------------*/
+int mss_evict_reverse(uint16_t port_id,
+                      struct four_tuple *key);
+/*----------------------------------------------------------------------------*/
+int mss_update_entry(uint16_t port_id,
+                     uint16_t queue_id,
+                     uint32_t rss,
+                     struct four_tuple *key,
+                     uint16_t mss,
+                     uint64_t now_ns);
+/*----------------------------------------------------------------------------*/
+int mss_update_reverse(uint16_t port_id,
+                       struct four_tuple *key,
+                       uint16_t mss,
+                       uint64_t now_ns);
 /*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 }

@@ -37,6 +37,9 @@
 /* Make sure you set LARGE_MTU_TWEAK_64 as 1 */
 #define MBUF_DATA_SIZE (65536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
 #define NB_MBUF ((1536 * 1024) - 1)
+#elif JUMBO_FRAME
+#define MBUF_DATA_SIZE 9024
+#define NB_MBUF ((1536 * 1024) - 1)
 #else
 #define MBUF_DATA_SIZE 1536
 #define NB_MBUF ((1536 * 1024) - 1)
@@ -155,21 +158,6 @@ const struct px_arp_entry g_arp_entries_two_hops_for_skew_test[] = {
     {"10.3.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
     {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
 };
-/*----------------------------------------------------------------------------*/
-/* static routing table configuration */
-static int
-is_uplink(struct rte_mbuf *pkt)
-{
-    uint8_t *s = (uint8_t *)get_four_tuple(pkt);
-    return *(s + 2) == 90;
-}
-/*----------------------------------------------------------------------------*/
-static int
-is_downlink(struct rte_mbuf *pkt)
-{
-    uint8_t *s = (uint8_t *)get_four_tuple(pkt);
-    return *(s + 2) == 95;
-}
 /*----------------------------------------------------------------------------*/
 /* global information for port configuration */
 volatile int g_shutdown = 0;
@@ -454,8 +442,8 @@ port_init(uint16_t port_id, uint16_t num_queue)
                   MAX_PKT_BURST,
                   !JUMBO_FRAME ? 16384 : 0,
                   CUTOFF_NS ? 16384 : 0,
-                  is_uplink,
-                  is_downlink,
+                  NULL,
+                  NULL,
                   USE_LINK,
                   SEMANTIC_TEST);
     if (ret < 0)
@@ -528,7 +516,6 @@ int lcore_main(void *args)
                                               qid,
                                               rmbufs[port_id],
                                               MAX_PKT_BURST);
-#if (USE_LRO || USE_GRO)
             px_parse_batch(port_id,
                            qid,
                            rmbufs[port_id],
@@ -536,7 +523,6 @@ int lcore_main(void *args)
                            !JUMBO_FRAME,
                            1, // HW_CSUM
                            SEMANTIC_TEST);
-#endif
 #if USE_GRO
             nb_rx[port_id] =
                 rte_gro_reassemble_burst(rmbufs[port_id],
@@ -829,8 +815,8 @@ int main(int argc, char **argv)
                           g_num_cores,
                           9000,
                           RTE_ETHER_MTU,
-                          is_uplink,
-                          is_downlink);
+                          NULL,
+                          NULL);
 #endif
 
     /* launch lcore main on each worker core */

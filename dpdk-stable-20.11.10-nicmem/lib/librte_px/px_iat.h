@@ -209,9 +209,9 @@ uint32_t
 iat_get_timeout(uint16_t port_id,
                 uint16_t queue_id,
                 struct four_tuple *key,
-                uint32_t data_len,
-                uint32_t orig_segsz,
-                uint32_t target_segsz,
+                uint16_t data_len,
+                uint16_t orig_segsz,
+                uint16_t target_segsz,
                 uint64_t now_ns,
                 uint32_t cutoff_ns);
 /*----------------------------------------------------------------------------*/

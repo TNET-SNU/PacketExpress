@@ -213,6 +213,13 @@ int iat_init_ctx(uint16_t port_id,
         return 0;
     }
 
+    if (num_entry == 0 || imtu_size == 0 || emtu_size == 0 || cutoff_ns == 0)
+    {
+        fprintf(stderr, "num_entry, imtu_size, emtu_size, "
+                        "and cutoff_ns must be non-zero\n");
+        return -1;
+    }
+
     /* setup uplink / downlink classifiers */
     g_is_uplink = is_uplink;
     g_is_downlink = is_downlink;
@@ -306,6 +313,7 @@ int iat_destroy_ctx(uint16_t port_id,
 
     if (!ctx->initialized)
     {
+        printf("IAT context not initialized\n");
         return 0;
     }
 #if LOG_DELAY
@@ -359,7 +367,12 @@ int iat_update_entry(uint16_t port_id,
     if (!ctx->initialized)
     {
         fprintf(stderr, "IAT context not initialized\n");
-        return 0;
+        return -1;
+    }
+
+    if (!data_len)
+    {
+        return 0; // No data to process
     }
 
     nb_segs = data_len / (ctx->emtu_size - pkt->l3_len - pkt->l4_len);
@@ -375,10 +388,6 @@ int iat_update_entry(uint16_t port_id,
         entry->last_update = now_ns;
         entry->l3_len = (uint16_t)pkt->l3_len;
         entry->l4_len = (uint16_t)pkt->l4_len;
-        if (data_len == 0)
-        {
-            return 0; // No data to process
-        }
 
         /* update IAT stats */
         if (entry->last_timestamp)
@@ -484,8 +493,7 @@ int iat_update_entry(uint16_t port_id,
                     entry->pending_cnt = 0;
                 }
                 /* print log for downlink traffic */
-                // if (!g_is_semantic_test ||
-                //     (g_is_semantic_test && g_is_downlink(pkt)))
+                // if (!(g_is_semantic_test && g_is_uplink(pkt)))
                 // {
                 //     if (entry->avg_burst_iat > ctx->cutoff_ns)
                 //     {
@@ -567,7 +575,7 @@ int iat_update_entry_yield(uint16_t port_id,
     /* check initialized */
     if (!ctx->initialized)
     {
-        return 0;
+        return -1;
     }
 
     /* try update first */
@@ -576,23 +584,6 @@ int iat_update_entry_yield(uint16_t port_id,
         entry->last_update = now_ns;
         entry->l3_len = (uint16_t)pkt->l3_len;
         entry->l4_len = (uint16_t)pkt->l4_len;
-        if (data_len == 0)
-        {
-            return 0; // No data to process
-        }
-
-        /* for semantic test, skip uplink flow */
-        if (g_is_semantic_test && g_is_uplink(pkt))
-        {
-            if (is_tcp(pkt))
-            {
-                return 0;
-            }
-            if (is_udp(pkt) && is_single_pkt(pkt))
-            {
-                return 0;
-            }
-        }
 
         /* calculate conversion yield */
         orig_segsz = ctx->emtu_size - pkt->l3_len - pkt->l4_len;
@@ -637,6 +628,13 @@ int iat_update_entry_yield(uint16_t port_id,
 
         return 0;
     }
+    else
+    {
+        if (errno != ENOENT)
+        {
+            return -1;
+        }
+    }
 
     return 0;
 }
@@ -649,22 +647,35 @@ int iat_evict_entry(uint16_t port_id,
     struct flow_iat_entry *entry;
     struct four_tuple *key = get_four_tuple(pkt);
 
+    if (!ctx->initialized)
+    {
+        printf("IAT context not initialized\n");
+        return -1;
+    }
+
     if (rte_hash_lookup_data(ctx->tbl, key, (void **)&entry) >= 0)
     {
         /* Remove the entry from the hash table */
-        rte_hash_del_key(ctx->tbl, key);
+        if (rte_hash_del_key(ctx->tbl, key) < 0)
+        {
+            fprintf(stderr, "Unable to delete existing flow from hash table\n");
+            return -1;
+        }
 
         /* Free the entry back to the mempool */
         rte_mempool_put(ctx->pool, entry);
 
         return 0;
     }
-    if (errno == ENOENT)
+    else
     {
-        return 0;
+        if (errno != ENOENT)
+        {
+            return -1;
+        }
     }
 
-    return -1;
+    return 0;
 }
 /*----------------------------------------------------------------------------*/
 void iat_flush_timeout(uint16_t port_id,
@@ -677,7 +688,7 @@ void iat_flush_timeout(uint16_t port_id,
     void *next_data;
     uint32_t iter = 0;
 
-    if (!ctx->tbl)
+    if (!ctx->initialized)
     {
         return;
     }
@@ -690,8 +701,12 @@ void iat_flush_timeout(uint16_t port_id,
         if ((now_ns - entry->last_update) >
             (uint64_t)IAT_TIMEOUT * NS_PER_S)
         {
-            fprintf(stdout, "Removing flow due to timeout\n");
-            rte_hash_del_key(ctx->tbl, next_key);
+            /* Remove the entry from the hash table */
+            if (rte_hash_del_key(ctx->tbl, next_key) < 0)
+            {
+                fprintf(stderr, "Unable to delete existing flow from hash table\n");
+                continue;
+            }
             rte_mempool_put(ctx->pool, entry);
         }
     }
@@ -701,9 +716,9 @@ uint32_t
 iat_get_timeout(uint16_t port_id,
                 uint16_t queue_id,
                 struct four_tuple *key,
-                uint32_t data_len,
-                uint32_t orig_segsz,
-                uint32_t target_segsz,
+                uint16_t data_len,
+                uint16_t orig_segsz,
+                uint16_t target_segsz,
                 uint64_t now_ns,
                 uint32_t cutoff_ns)
 {
@@ -717,9 +732,15 @@ iat_get_timeout(uint16_t port_id,
     uint32_t avg_iat = 0, avg_data_len = 0;
     uint32_t missing_segs_nb;
     uint32_t timeout_ns;
-    int ret;
 
-    // printf("IAT: data_len=%u, orig_segsz=%u, target_segsz=%u\n",
+    /* check if initialized */
+    if (!ctx->initialized)
+    {
+        fprintf(stderr, "IAT context not initialized\n");
+        return 0;
+    }
+
+    // printf("IAT: data_len=%hu, orig_segsz=%hu, target_segsz=%hu\n",
     //        data_len, orig_segsz, target_segsz);
 
     /*
@@ -731,16 +752,9 @@ iat_get_timeout(uint16_t port_id,
         return 0;
     }
 
-    /* check if initialized */
-    if (!ctx->initialized)
-    {
-        fprintf(stderr, "IAT context not initialized\n");
-        return 0;
-    }
-
     /* try update first */
-    ret = rte_hash_lookup_data(ctx->tbl, key, (void **)&entry);
-    if (ret < 0 && errno == ENOENT)
+    if (rte_hash_lookup_data(ctx->tbl, key, (void **)&entry) < 0 &&
+        errno == ENOENT)
     {
         fprintf(stderr, "iat table search failed\n");
         avg_data_len = 0;
@@ -829,7 +843,7 @@ iat_get_timeout(uint16_t port_id,
                    LOG_BUFFER_SIZE - g_delay_log_offset[queue_id],
                    "%d.%d.%d.%d:%d -> %d.%d.%d.%d:%d "
                    "max_seg_nb: %1u, missing_segs_nb: %1u, "
-                   "orig_segsz: %5u, target_segsz: %5u, cur_segsz: %5u"
+                   "orig_segsz: %5hu, target_segsz: %5hu, cur_segsz: %5hu"
                    "diff_ns: %5ld, avg_iat: %5u, "
                    "timeout_ns: %6u\n",
                    *(uint8_t *)&key->src_ip, *((uint8_t *)&key->src_ip + 1),
@@ -935,7 +949,7 @@ void iat_local_stat(uint16_t port_id,
             temp_data_len += entry->avg_data_len;
             temp_count++;
 
-#if LOG_IAT_ENTRIES
+#ifdef LOG_IAT_ENTRIES
             fprintf(stdout,
                     "  IAT stats: burst_iat: %9u ns, "
                     "global_iat: %9u ns, "

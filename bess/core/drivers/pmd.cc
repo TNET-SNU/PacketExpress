@@ -755,11 +755,9 @@ int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
 #else
   uint16_t recv = rte_eth_rx_burst(dpdk_port_id_, qid,
                                    reinterpret_cast<rte_mbuf **>(pkts), cnt);
-#if (USE_LRO || USE_GRO || NUM_HAIRPIN_Q)
   px_parse_batch(dpdk_port_id_, qid,
                  reinterpret_cast<rte_mbuf **>(pkts),
                  recv, !JUMBO_FRAME, 1, SEMANTIC_TEST);
-#endif
 #if USE_GRO
   struct rte_gro_param gro_param = {
     .gro_types = RTE_GRO_TCP_IPV4,

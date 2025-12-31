@@ -110,6 +110,7 @@ void px_stat_update_tx(uint16_t port_id,
                        struct rte_mbuf **pkts,
                        const uint16_t nb_pkts)
 {
+    struct px_dev *px_dev = &g_px_dev[port_id];
     struct px_tx_stat *tx_stat;
     struct rte_mbuf *pkt;
     uint32_t leftover = 0;
@@ -143,16 +144,30 @@ void px_stat_update_tx(uint16_t port_id,
             continue;
         }
 
-        iat_update_entry_yield(port_id, queue_id, pkt, now_ns);
-
         tx_stat->data_pkt_cnt++;
 
         /* measure delay */
         tx_stat->delay_ns += now_ns - get_sw_timestamp(pkt);
 
+        /* skip if PX is not initialized for this port */
+        if (!px_dev->initialized_px)
+        {
+            continue;
+        }
+
         /* for semantic test, skip uplink flow */
         if (g_is_semantic_test && g_is_uplink(pkt))
         {
+            continue;
+        }
+        
+        /* update IAT entry */
+        if (iat_update_entry_yield(port_id, queue_id, pkt, now_ns) < 0)
+        {
+            fprintf(stderr,
+                    "iat_update_entry_yield failed for port %u queue %u\n",
+                    port_id,
+                    queue_id);
             continue;
         }
 

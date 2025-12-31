@@ -53,6 +53,7 @@ extern "C"
 #include <rte_hash_crc.h>
 #include <rte_hash.h>
 #include <rte_jhash.h>
+#include <rte_thash.h>
 #include <rte_malloc.h>
 #include <rte_mempool.h>
 #include <rte_bitops.h>
@@ -83,6 +84,13 @@ extern "C"
 // #define FALLBACK_eMTU 576
 #define FALLBACK_eMTU 1240
 /*----------------------------------------------------------------------------*/
+#define NVME_TCP_PX 0
+#define TLS_PX 0
+#define L5_DEBUG 0
+#ifndef PAGE_SIZE
+#define PAGE_SIZE 4096
+#endif
+/*----------------------------------------------------------------------------*/
 /*
  * Ethernet frame overhead
  */
@@ -109,7 +117,7 @@ extern "C"
 /*----------------------------------------------------------------------------*/
 #define FIX_GEAR 0
 #define TEST_RSS_ATOMICITY 0
-#define LOG_IAT_ENTRIES 1
+// #define LOG_IAT_ENTRIES 1
 #define USE_JUMP_RULE 0
 /*----------------------------------------------------------------------------*/
 #define USE_USO 0
@@ -186,6 +194,9 @@ struct px_dev
     uint16_t nb_rx_desc[RTE_MAX_QUEUES_PER_PORT];
     uint16_t nb_tx_desc[RTE_MAX_QUEUES_PER_PORT];
 
+    /* whether PX is initialized */
+    uint8_t initialized_px : 1;
+
     /* whether ReTa entry initialized */
     uint8_t initialized_latent : 1;
 
@@ -207,10 +218,12 @@ struct px_dev
     /* whether dynamic RXQ scaling is enabled or not */
     uint8_t dyn_rxq : 1;
 
-    uint8_t unused : 1;
-
     /* hairpin polic */
     int hp_policy;
+
+    /* rss configuration */
+    uint8_t *rss_key;
+    int rss_key_len;
 };
 /*----------------------------------------------------------------------------*/
 struct px_caravan_hdr

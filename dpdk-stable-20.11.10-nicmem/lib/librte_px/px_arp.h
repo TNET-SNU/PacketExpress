@@ -28,6 +28,41 @@ struct px_arp_ctx
     uint16_t table_size;
 };
 /*----------------------------------------------------------------------------*/
+static inline int
+ip_str_to_bin(const char *ip_str,
+              uint32_t *ip)
+{
+    struct in_addr addr;
+    if (inet_pton(AF_INET, ip_str, &addr) != 1)
+    {
+        fprintf(stdout, "Invalid IP format: %s\n", ip_str);
+        return -1;
+    }
+    *ip = addr.s_addr;
+
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline int
+mac_str_to_bin(const char *mac_str,
+               struct rte_ether_addr *mac)
+{
+    int values[RTE_ETHER_ADDR_LEN];
+    if (sscanf(mac_str, "%x:%x:%x:%x:%x:%x",
+               &values[0], &values[1], &values[2],
+               &values[3], &values[4], &values[5]) != RTE_ETHER_ADDR_LEN)
+    {
+        fprintf(stdout, "Invalid MAC format: %s\n", mac_str);
+        return -1;
+    }
+    for (int i = 0; i < RTE_ETHER_ADDR_LEN; i++)
+    {
+        mac->addr_bytes[i] = (uint8_t)values[i];
+    }
+
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
 void px_arp_cleanup(void);
 /*----------------------------------------------------------------------------*/
 /**
