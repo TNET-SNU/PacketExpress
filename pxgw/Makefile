@@ -30,11 +30,21 @@ DPDK_LDFLAGS += -L$(DPDK_LIB) -Wl,-rpath=$(DPDK_LIB) \
 
 # Choose one of below
 
-# 1. Using 1500B MTU for incoming packets
+# 1. Using 1500B MTU to 9000B MTU translation
 CFLAGS += -D JUMBO_FRAME=0
 
-# 2. Using 9000B MTU for incoming packets
+# 2. Using 9000B MTU by default
 # CFLAGS += -D JUMBO_FRAME=1
+
+################################################################################
+
+# Choose one of below
+
+# 1. HW checksum on
+CFLAGS += -D HW_CSUM=1
+
+# 2. HW checksum off
+# CFLAGS += -D HW_CSUM=0
 
 ################################################################################
 
@@ -50,6 +60,16 @@ CFLAGS += -D SEMANTIC_TEST=0
 
 # Choose one of below
 
+# 1. DPDK GRO on
+# CFLAGS += -D USE_GRO=1
+
+# 2. DPDK GRO off
+CFLAGS += -D USE_GRO=0
+
+################################################################################
+
+# Choose one of below
+
 # 1. LRO on
 CFLAGS += -D USE_LRO=1
 
@@ -60,11 +80,21 @@ CFLAGS += -D USE_LRO=1
 
 # Choose one of below
 
-# 1. SGDMA on
+# 1. Using 1500B MTU for incoming packets
+# CFLAGS += -D USE_SGDMA=0
+
+# 2. Using 9000B MTU for incoming packets
 CFLAGS += -D USE_SGDMA=1
 
-# 2. SGDMA off
-# CFLAGS += -D USE_SGDMA=0
+################################################################################
+
+# Choose one of below
+
+# 1. PX on
+CFLAGS += -D USE_PX=1
+
+# 2. PX off
+# CFLAGS += -D USE_PX=0
 
 ################################################################################
 
@@ -80,27 +110,31 @@ CFLAGS += -D USE_DYNRXQ=1
 
 # Choose one of below
 
-# 1. DPDK GRO on
-# CFLAGS += -D USE_GRO=1
+# 1. delayed-merging on
+CFLAGS += -D CUTOFF_NS=120000
 
-# 2. CUSTOM GRO on, no delay
-# CFLAGS += -D USE_PX=1 -D CUTOFF_NS=0 -D USE_LINK=0
-
-# 3. CUSTOM GRO on, delay
-CFLAGS += -D USE_PX=1 -D CUTOFF_NS=120000 -D USE_LINK=0
-# CFLAGS += -D USE_PX=1 -D CUTOFF_NS=800000 -D USE_LINK=0
-
-# 4. CUSTOM GRO on, no delay, linking
-# CFLAGS += -D USE_PX=1 -D CUTOFF_NS=0 -D USE_LINK=1
-
-# 5. CUSTOM GRO on, delay, linking
-# CFLAGS += -D USE_PX=1 -D CUTOFF_NS=120000 -D USE_LINK=1
+# 2. delayed-merging off
+# CFLAGS += -D CUTOFF_NS=0
 
 ################################################################################
 
-# To use nicmem, make sure to use DPDK version 20.11
-CFLAGS += -D NICMEM=0
-# CFLAGS += -D NICMEM=1
+# Choose one of below
+
+# 1. NICMEM on (To use nicmem, make sure to use DPDK version 20.11)
+CFLAGS += -D NICMEM=1
+
+# 2. NICMEM off
+# CFLAGS += -D NICMEM=0
+
+################################################################################
+
+# Choose one of below
+
+# 1. Linking on
+# CFLAGS += -D USE_LINK=1
+
+# 2. Linking off
+CFLAGS += -D USE_LINK=0
 
 ################################################################################
 
