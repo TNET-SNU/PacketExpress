@@ -1782,7 +1782,12 @@ Skip_log_rx_hw_timestamp:
     return ret;
 }
 /*----------------------------------------------------------------------------*/
-/* Update mbuf fields of packets in a batch */
+/**
+ * Update mbuf fields of packets in a batch.
+ *
+ * This functions is not used in PX.
+ * Just for baselines like only GRO/LRO merging.
+ */
 void px_parse_batch(uint16_t port_id,
                     uint16_t queue_id,
                     struct rte_mbuf **pkts,
@@ -1794,7 +1799,7 @@ void px_parse_batch(uint16_t port_id,
     uint64_t now_ns = px_gettime(TIME_FLAG);
     struct px_ctx *pctx = &g_pctx[port_id][queue_id];
     struct rte_mbuf *pkt;
-    uint16_t *mss_ptr;
+    uint16_t *mss_ptr, old_mss;
     uint8_t tcp_flags = 0;
     int i, ret;
 
@@ -1822,19 +1827,55 @@ void px_parse_batch(uint16_t port_id,
                 }
 
                 /* update MSS */
-                if (is_semantic_test && is_uplink_default(pkt))
+                if (!is_semantic_test)
                 {
-                    update_mss(mss_ptr, DEFAULT_eMSS);
+                    /*
+                     * to make endpoints use eMSS,
+                     * update MSS field to eMSS
+                     */
+                    if (!hwcsum)
+                    {
+                        old_mss = *mss_ptr;
+                        update_mss(mss_ptr, DEFAULT_eMSS);
+                        inc_update_tcp_cksum(pkt,
+                                             old_mss,
+                                             rte_cpu_to_be_16(DEFAULT_eMSS));
+                    }
+                    else
+                    {
+                        update_mss(mss_ptr, DEFAULT_eMSS);
+                    }
                 }
-                else
+                else if (is_downlink_default(pkt))
                 {
-                    update_mss(mss_ptr, DEFAULT_iMSS);
+                    /*
+                     * if this flow need delayed merging,
+                     * update MSS field to iMSS
+                     */
+                    if (!hwcsum)
+                    {
+                        old_mss = *mss_ptr;
+                        update_mss(mss_ptr, DEFAULT_iMSS);
+                        inc_update_tcp_cksum(pkt,
+                                             old_mss,
+                                             rte_cpu_to_be_16(DEFAULT_iMSS));
+                    }
+                    else
+                    {
+                        update_mss(mss_ptr, DEFAULT_iMSS);
+                    }
                 }
             }
         }
     }
 }
 /*----------------------------------------------------------------------------*/
+/**
+ * Update tso related fields of packets in a batch.
+ *
+ * This functions is not used in PX.
+ * Just for baselines like only GRO/LRO merging.
+ */
 void px_setup_tso_burst(uint16_t port_id,
                         uint16_t queue_id,
                         struct rte_mbuf **pkts,
@@ -2718,7 +2759,7 @@ int px_init(uint16_t port_id,
         return -1;
     }
 
-    if (!px_dev->dyn_rxq)
+    if (!px_dev->initialized_dyn_rxq)
     {
         px_dev->gear_val = px_dev->max_rxq;
     }
@@ -2786,6 +2827,7 @@ px_eth_conf(uint16_t port_id,
             uint8_t *rss_key,
             int rss_key_len,
             int pkt_size,
+            int is_hwcsum,
             int is_lro,
             int is_sgdma,
             int is_delayed,
@@ -2811,46 +2853,10 @@ px_eth_conf(uint16_t port_id,
 
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
     conf->link_speeds = ETH_LINK_SPEED_AUTONEG;
+
+    /* 0. flags for RSS */
     conf->rxmode.mq_mode = ETH_MQ_RX_RSS;
-    conf->rxmode.offloads |= DEV_RX_OFFLOAD_IPV4_CKSUM |
-                             DEV_RX_OFFLOAD_UDP_CKSUM |
-                             DEV_RX_OFFLOAD_RSS_HASH |
-                             DEV_RX_OFFLOAD_TCP_CKSUM;
-    conf->txmode.offloads |= DEV_TX_OFFLOAD_IPV4_CKSUM |
-                             DEV_TX_OFFLOAD_TCP_CKSUM |
-                             DEV_TX_OFFLOAD_UDP_CKSUM |
-                             DEV_TX_OFFLOAD_TCP_TSO;
-
-    conf->rxmode.max_rx_pkt_len = RTE_ETHER_MAX_LEN;
-    conf->rxmode.split_hdr_size = 0;
-
-    if (is_lro)
-    {
-        conf->rxmode.offloads |= DEV_RX_OFFLOAD_TCP_LRO;
-    }
-    conf->rxmode.max_lro_pkt_size = pkt_size;
-
-    if (is_sgdma)
-    {
-        conf->txmode.offloads |= DEV_TX_OFFLOAD_MULTI_SEGS;
-    }
-
-    if (is_nicmem)
-    {
-#if RTE_VERSION < RTE_VERSION_NUM(20, 11, 10, 99)
-        conf->rxmode.offloads |= DEV_RX_OFFLOAD_BUFFER_SPLIT |
-                                 DEV_RX_OFFLOAD_SCATTER;
-#else
-        conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT |
-                                 DEV_RX_OFFLOAD_SCATTER;
-#endif
-    }
-
-    if (is_delayed)
-    {
-        conf->rxmode.offloads |= DEV_RX_OFFLOAD_TIMESTAMP;
-    }
-
+    conf->rxmode.offloads |= DEV_RX_OFFLOAD_RSS_HASH;
     if (rss_key)
     {
         conf->rx_adv_conf.rss_conf.rss_key = rss_key;
@@ -2860,40 +2866,58 @@ px_eth_conf(uint16_t port_id,
              ETH_RSS_TCP | ETH_RSS_SCTP) &
             dev_info.flow_type_rss_offloads;
     }
-#else
-    conf->link_speeds = RTE_ETH_LINK_SPEED_AUTONEG;
-    conf->rxmode.mq_mode = RTE_ETH_MQ_RX_RSS;
-    conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_RSS_HASH |
-                             RTE_ETH_RX_OFFLOAD_IPV4_CKSUM |
-                             RTE_ETH_RX_OFFLOAD_UDP_CKSUM |
-                             RTE_ETH_RX_OFFLOAD_TCP_CKSUM;
-    conf->txmode.offloads |= RTE_ETH_TX_OFFLOAD_IPV4_CKSUM |
-                             RTE_ETH_TX_OFFLOAD_TCP_CKSUM |
-                             RTE_ETH_TX_OFFLOAD_UDP_CKSUM |
-                             RTE_ETH_TX_OFFLOAD_TCP_TSO;
 
+    /* 1. flags for HW checksum */
+    if (is_hwcsum)
+    {
+        conf->rxmode.offloads |= DEV_RX_OFFLOAD_IPV4_CKSUM |
+                                 DEV_RX_OFFLOAD_TCP_CKSUM |
+                                 DEV_RX_OFFLOAD_UDP_CKSUM;
+        conf->txmode.offloads |= DEV_TX_OFFLOAD_IPV4_CKSUM |
+                                 DEV_TX_OFFLOAD_TCP_CKSUM |
+                                 DEV_TX_OFFLOAD_UDP_CKSUM;
+    }
+
+    conf->rxmode.max_rx_pkt_len = RTE_ETHER_MAX_LEN;
+    conf->rxmode.split_hdr_size = 0;
+
+    /* 2. flags for LRO/TSO */
     if (is_lro)
     {
-        conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_TCP_LRO;
+        conf->rxmode.offloads |= DEV_RX_OFFLOAD_TCP_LRO;
+        conf->txmode.offloads |= DEV_TX_OFFLOAD_TCP_TSO;
+        conf->rxmode.max_lro_pkt_size = pkt_size;
     }
-    conf->rxmode.max_lro_pkt_size = pkt_size;
 
+    /* 3. flags for LRO/SGDMA */
     if (is_sgdma)
     {
-        conf->txmode.offloads |= RTE_ETH_TX_OFFLOAD_MULTI_SEGS;
+        conf->txmode.offloads |= DEV_TX_OFFLOAD_MULTI_SEGS;
+        conf->txmode.offloads |= DEV_TX_OFFLOAD_TCP_TSO;
     }
 
-    if (is_nicmem)
-    {
-        conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT |
-                                 RTE_ETH_RX_OFFLOAD_SCATTER;
-    }
-
+    /* 4. flags for delayed merging */
     if (is_delayed)
     {
-        conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_TIMESTAMP;
+        conf->rxmode.offloads |= DEV_RX_OFFLOAD_TIMESTAMP;
     }
 
+    /* 5. flags for NICMEM */
+    if (is_nicmem)
+    {
+#if RTE_VERSION >= RTE_VERSION_NUM(20, 11, 10, 99)
+        conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT |
+#else
+        conf->rxmode.offloads |= DEV_RX_OFFLOAD_BUFFER_SPLIT |
+#endif
+                                 DEV_RX_OFFLOAD_SCATTER;
+    }
+#else
+    conf->link_speeds = RTE_ETH_LINK_SPEED_AUTONEG;
+
+    /* 0. flags for RSS */
+    conf->rxmode.mq_mode = RTE_ETH_MQ_RX_RSS;
+    conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_RSS_HASH;
     if (rss_key)
     {
         conf->rx_adv_conf.rss_conf.rss_key = rss_key;
@@ -2902,6 +2926,46 @@ px_eth_conf(uint16_t port_id,
             (RTE_ETH_RSS_IP | RTE_ETH_RSS_UDP |
              RTE_ETH_RSS_TCP | RTE_ETH_RSS_SCTP) &
             dev_info.flow_type_rss_offloads;
+    }
+
+    /* 1. flags for HW checksum */
+    if (is_hwcsum)
+    {
+        conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_IPV4_CKSUM |
+                                 RTE_ETH_RX_OFFLOAD_TCP_CKSUM |
+                                 RTE_ETH_RX_OFFLOAD_UDP_CKSUM |
+            ;
+        conf->txmode.offloads |= RTE_ETH_TX_OFFLOAD_IPV4_CKSUM |
+                                 RTE_ETH_TX_OFFLOAD_TCP_CKSUM |
+                                 RTE_ETH_TX_OFFLOAD_UDP_CKSUM;
+    }
+
+    /* 2. flags for LRO/TSO */
+    if (is_lro)
+    {
+        conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_TCP_LRO;
+        conf->txmode.offloads |= RTE_ETH_TX_OFFLOAD_TCP_TSO;
+        conf->rxmode.max_lro_pkt_size = pkt_size;
+    }
+
+    /* 3. flags for LRO/SGDMA */
+    if (is_sgdma)
+    {
+        conf->txmode.offloads |= RTE_ETH_TX_OFFLOAD_MULTI_SEGS;
+        conf->txmode.offloads |= RTE_ETH_TX_OFFLOAD_TCP_TSO;
+    }
+
+    /* 4. flags for delayed merging */
+    if (is_delayed)
+    {
+        conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_TIMESTAMP;
+    }
+
+    /* 5. flags for NICMEM */
+    if (is_nicmem)
+    {
+        conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT |
+                                 RTE_ETH_RX_OFFLOAD_SCATTER;
     }
 #endif
 
@@ -2947,8 +3011,8 @@ int px_eth_dev_configure(uint16_t port_id,
     fprintf(stdout, "min_mtu: %d, max_mtu: %d\n",
             px_dev->dev_info.min_mtu, px_dev->dev_info.max_mtu);
 
-    px_dev->dyn_rxq = dyn_rxq;
-    if (!px_dev->dyn_rxq)
+    px_dev->initialized_dyn_rxq = dyn_rxq;
+    if (!px_dev->initialized_dyn_rxq)
     {
         /* use below when evaluating PX without dynamic RXQ scaling */
         max_rxq = num_rxq;
@@ -3540,7 +3604,8 @@ px_eth_tx_burst0(uint16_t port_id,
         px_stat_update_tx(port_id,
                           queue_id,
                           out_batch,
-                          read_px_tx_ring);
+                          read_px_tx_ring,
+                          1);
 
         offset +=
             rte_eth_tx_burst(port_id,
@@ -3617,7 +3682,8 @@ px_eth_tx_burst(uint16_t port_id,
     px_stat_update_tx(port_id,
                       queue_id,
                       temp_batch,
-                      nb_pkts_after_uso);
+                      nb_pkts_after_uso,
+                      1);
 
     /* TX */
     offset +=
@@ -3653,7 +3719,8 @@ px_eth_tx_burst(uint16_t port_id,
         px_stat_update_tx(port_id,
                           queue_id,
                           temp_batch,
-                          read_px_tx_ring);
+                          read_px_tx_ring,
+                          1);
 
         /* TX */
         offset += rte_eth_tx_burst(port_id,

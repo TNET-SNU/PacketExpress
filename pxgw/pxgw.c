@@ -37,7 +37,7 @@
 /* Make sure you set LARGE_MTU_TWEAK_64 as 1 */
 #define MBUF_DATA_SIZE (65536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
 #define NB_MBUF ((1536 * 1024) - 1)
-#elif JUMBO_FRAME
+#elif JUMBO_FRAME || USE_GRO
 #define MBUF_DATA_SIZE 9024
 #define NB_MBUF ((1536 * 1024) - 1)
 #else
@@ -293,29 +293,9 @@ port_init(uint16_t port_id, uint16_t num_queue)
     printf("tx_queue_offload_capa: 0x%08lx\n",
            g_dev_info[port_id].tx_queue_offload_capa);
 
-    /* re-adjust rss_hf */
+    /* configure port */
     port_conf = px_eth_conf(port_id, NULL, NULL, 0, MBUF_DATA_SIZE,
-#if USE_LRO
-                            1,
-#else
-                            0,
-#endif
-#if USE_SGDMA
-                            1,
-#else
-                            0,
-#endif
-#if CUTOFF_NS
-                            1,
-#else
-                            0,
-#endif
-#if NICMEM
-                            1
-#else
-                            0
-#endif
-    );
+                            HW_CSUM, USE_LRO, USE_SGDMA, CUTOFF_NS, NICMEM);
 
     /* init port */
     printf("[port %u] Initializing port... \n", (unsigned)port_id);
@@ -324,39 +304,18 @@ port_init(uint16_t port_id, uint16_t num_queue)
     ret = px_eth_dev_configure(port_id,
                                num_queue,
                                num_queue,
-                               9000,
-                               RTE_ETHER_MTU,
-#if NICMEM
-                               nb_rxd,
-#else
                                0,
-#endif
-#if USE_PX
-                               CUTOFF_NS,
-#else
                                0,
-#endif
+                               NICMEM ? nb_rxd : 0,
+                               USE_PX ? CUTOFF_NS : 0,
                                NUM_HAIRPIN_Q,
                                NUM_HAIRPIN_Q,
                                &port_conf,
                                g_arp_entries,
                                g_arp_entries_size,
-#if USE_SGDMA
-                               1,
-#else
-                               0,
-#endif
-#if USE_DYNRXQ
-                               1,
-#else
-                               0,
-#endif
-#if NUM_HAIRPIN_Q
-                               HAIRPIN_POLICY
-#else
-                               0
-#endif
-    );
+                               USE_SGDMA,
+                               USE_DYNRXQ,
+                               NUM_HAIRPIN_Q ? HAIRPIN_POLICY : 0);
     if (ret < 0)
     {
         rte_exit(EXIT_FAILURE, "Cannot configure device:"
@@ -375,11 +334,14 @@ port_init(uint16_t port_id, uint16_t num_queue)
                  ret, (unsigned)port_id);
     }
 
-    /* Explicitly configure ARP table */
-    ret = px_arp_configure(g_arp_entries, g_arp_entries_size);
-    if (ret < 0)
+    if (g_arp_entries && g_arp_entries_size > 0)
     {
-        rte_exit(EXIT_FAILURE, "Failed to configure ARP table\n");
+        /* Explicitly configure ARP table */
+        ret = px_arp_configure(g_arp_entries, g_arp_entries_size);
+        if (ret < 0)
+        {
+            rte_exit(EXIT_FAILURE, "Failed to configure ARP table\n");
+        }
     }
 #endif
 
@@ -451,7 +413,6 @@ port_init(uint16_t port_id, uint16_t num_queue)
         rte_exit(EXIT_FAILURE, "px_init failed\n");
     }
 #endif
-    printf("done: \n");
 
     /* retrieve current flow control settings per port */
     memset(&fc_conf, 0, sizeof(fc_conf));
@@ -493,13 +454,6 @@ int lcore_main(void *args)
     uint16_t nb_rx[RTE_MAX_ETHPORTS] = {0};
     uint16_t nb_tx[RTE_MAX_ETHPORTS] = {0};
     int ret, i;
-#if USE_GRO
-    struct rte_gro_param gro_param = {
-        .gro_types = RTE_GRO_TCP_IPV4,
-        .max_flow_num = MAX_PKT_BURST,
-        .max_item_per_flow = MAX_PKT_BURST,
-        .socket_id = rte_lcore_to_socket_id(qid)};
-#endif
 
     while (!g_shutdown)
     {
@@ -521,9 +475,14 @@ int lcore_main(void *args)
                            rmbufs[port_id],
                            nb_rx[port_id],
                            !JUMBO_FRAME,
-                           1, // HW_CSUM
+                           HW_CSUM,
                            SEMANTIC_TEST);
 #if USE_GRO
+            struct rte_gro_param gro_param = {
+                .gro_types = RTE_GRO_TCP_IPV4,
+                .max_flow_num = MAX_PKT_BURST,
+                .max_item_per_flow = MAX_PKT_BURST,
+                .socket_id = rte_lcore_to_socket_id(port_id)};
             nb_rx[port_id] =
                 rte_gro_reassemble_burst(rmbufs[port_id],
                                          nb_rx[port_id],
@@ -541,7 +500,8 @@ int lcore_main(void *args)
             for (i = 0; i < nb_rx[port_id]; i++)
             {
                 m = rmbufs[port_id][i];
-#if !USE_SGDMA
+
+#if !USE_PX && (USE_LRO || USE_GRO) && !USE_SGDMA
                 /* make chained segments into one large segment */
                 ret = rte_pktmbuf_linearize(m);
                 if (ret < 0)
@@ -575,6 +535,18 @@ int lcore_main(void *args)
                 /* modify SRC MAC */
                 eth_hdr->s_addr = port_mac[port_id];
 
+#if !USE_PX && (USE_LRO || USE_GRO)
+                /* fill checksum */
+                if (px_fill_ipv4_l4_cksum(m, HW_CSUM) < 0)
+                {
+                    fprintf(stdout,
+                            "Port %d: Failed to fill checksum for mbuf %d\n",
+                            port_id, i);
+                    rte_pktmbuf_free(m);
+                    continue;
+                }
+#endif
+
                 /* insert to send buffer */
                 wmbufs[port_id][nb_tx[port_id]++] = m;
             }
@@ -603,7 +575,8 @@ int lcore_main(void *args)
             px_stat_update_tx(port_id,
                               qid,
                               wmbufs[port_id],
-                              nb_tx[port_id]);
+                              nb_tx[port_id],
+                              USE_LRO || USE_GRO);
             ret = rte_eth_tx_burst(port_id,
                                    qid,
                                    wmbufs[port_id],
@@ -809,12 +782,13 @@ int main(int argc, char **argv)
     sigaction(SIGINT, &sa, NULL);
 
 #if !USE_PX
+    /* thread for stat printing */
     px_stat_start_monitor(1,
                           g_num_ports,
                           g_num_cores,
                           g_num_cores,
-                          9000,
-                          RTE_ETHER_MTU,
+                          0,
+                          0,
                           NULL,
                           NULL);
 #endif

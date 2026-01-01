@@ -313,7 +313,7 @@ int iat_destroy_ctx(uint16_t port_id,
 
     if (!ctx->initialized)
     {
-        printf("IAT context not initialized\n");
+        /* already destroyed or not initialized */
         return 0;
     }
 #if LOG_DELAY
@@ -649,7 +649,7 @@ int iat_evict_entry(uint16_t port_id,
 
     if (!ctx->initialized)
     {
-        printf("IAT context not initialized\n");
+        fprintf(stderr, "IAT context not initialized\n");
         return -1;
     }
 
@@ -737,7 +737,7 @@ iat_get_timeout(uint16_t port_id,
     if (!ctx->initialized)
     {
         fprintf(stderr, "IAT context not initialized\n");
-        return 0;
+        return -1;
     }
 
     // printf("IAT: data_len=%hu, orig_segsz=%hu, target_segsz=%hu\n",

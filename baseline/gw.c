@@ -487,7 +487,8 @@ int lcore_main(void *args)
             px_stat_update_tx(port_id,
                               qid,
                               wmbufs[port_id],
-                              nb_tx[port_id]);
+                              nb_tx[port_id],
+                              USE_LRO || USE_GRO);
 
             /* Forward to same port (L2 forward) */
             ret = rte_eth_tx_burst(port_id,

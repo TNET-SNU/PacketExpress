@@ -245,6 +245,7 @@ px_flow_slave_main(void *arg)
     struct response resp;
     struct ri_node *node;
     struct px_latent_gear *gear;
+    struct rte_flow_error error;
     cpu_set_t set;
     uint16_t core_id, port_id = *(uint16_t *)arg;
     int ret;
@@ -542,13 +543,16 @@ px_flow_slave_main(void *arg)
                     px_flow_create_static(port_id,
                                           &gear->attr,
                                           gear->patterns,
-                                          gear->actions);
+                                          gear->actions,
+                                          &error);
                 if (!gear->flow)
                 {
                     fprintf(stderr,
                             "px_flow_create_static failed "
-                            "for gear %d (val %d)\n",
-                            gear->index, gear->gear_val);
+                            "for gear %d (val %d). "
+                            "Error type: %d, Error msg: %s\n",
+                            gear->index, gear->gear_val,
+                            error.type, error.message);
                 }
                 px_latent_gear_notify(port_id);
 #if USE_CQ

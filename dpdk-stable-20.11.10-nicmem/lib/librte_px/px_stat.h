@@ -114,7 +114,8 @@ void px_stat_update_rx(uint16_t port_id,
 void px_stat_update_tx(uint16_t port_id,
                        uint16_t queue_id,
                        struct rte_mbuf **pkts,
-                       const uint16_t nb_pkts);
+                       const uint16_t nb_pkts,
+                       int measure_yield);
 /*----------------------------------------------------------------------------*/
 void px_stat_monitor(int args);
 /*----------------------------------------------------------------------------*/

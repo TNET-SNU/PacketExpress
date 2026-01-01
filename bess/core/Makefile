@@ -115,21 +115,31 @@ CXXFLAGS += -std=c++17 -g3 -ggdb3 -march=$(CPU) \
 
 # Choose one of below
 
-# 1. Using 1500B MTU for incoming packets
+# 1. Using 1500B MTU to 9000B MTU translation
 CXXFLAGS += -D JUMBO_FRAME=0
 
-# 2. Using 9000B MTU for incoming packets
+# 2. Using 9000B MTU by default
 # CXXFLAGS += -D JUMBO_FRAME=1
 
 ################################################################################
 
 # Choose one of below
 
-# 1. Semantic test on
+# 1. Semantic test on (split uplink flows and merge downlink flows)
 # CXXFLAGS += -D SEMANTIC_TEST=1
 
-# 2. Semantic test off
+# 2. Semantic test off (merge all flows)
 CXXFLAGS += -D SEMANTIC_TEST=0
+
+################################################################################
+
+# Choose one of below
+
+# 1. DPDK GRO on
+CXXFLAGS += -D USE_GRO=1
+
+# 2. DPDK GRO off
+# CXXFLAGS += -D USE_GRO=0
 
 ################################################################################
 
@@ -145,39 +155,64 @@ CXXFLAGS += -D USE_LRO=1
 
 # Choose one of below
 
-# 1. DPDK GRO on
-# CXXFLAGS += -D USE_GRO=1
+# 1. PX on
+# CXXFLAGS += -D USE_PX=1
 
-# 2. CUSTOM GRO on, no delay
-# CXXFLAGS += -D USE_PX=1 -D CUTOFF_NS=0 -D USE_LINK=0
-
-# 3. CUSTOM GRO on, delay
-CXXFLAGS += -D USE_PX=1 -D CUTOFF_NS=120000 -D USE_LINK=0
-
-# 4. CUSTOM GRO + LINKING
-# CXXFLAGS += -D USE_PX=1 -D CUTOFF_NS=0 -D USE_LINK=1
-
-# 5. CUSTOM GRO + LINKING, delay
-# CXXFLAGS += -D USE_PX=1 -D CUTOFF_NS=120000 -D USE_LINK=1
+# 2. PX off
+CXXFLAGS += -D USE_PX=0
 
 ################################################################################
 
-# To use nicmem, make sure to use DPDK version 20.11
-# CXXFLAGS += -D NICMEM=0
-CXXFLAGS += -D NICMEM=1
+# Choose one of below
+
+# 1. Dynamic RXQ scaling on
+# CXXFLAGS += -D USE_DYNRXQ=1
+
+# 2. Dynamic RXQ scaling off
+CXXFLAGS += -D USE_DYNRXQ=0
+
+################################################################################
+
+# Choose one of below
+
+# 1. delayed-merging off
+CXXFLAGS += -D CUTOFF_NS=0
+
+# 2. delayed-merging on
+# CXXFLAGS += -D CUTOFF_NS=120000
+
+################################################################################
+
+# Choose one of below
+
+# 1. NICMEM on (To use nicmem, make sure to use DPDK version 20.11)
+# CXXFLAGS += -D NICMEM=1
+
+# 2. NICMEM off
+CXXFLAGS += -D NICMEM=0
+
+################################################################################
+
+# Choose one of below
+
+# 1. Linking on
+# CXXFLAGS += -D USE_LINK=1
+
+# 2. Linking off
+CXXFLAGS += -D USE_LINK=0
 
 ################################################################################
 
 # Choose one of below
 
 # 1. Hairpin off
-CXXFLAGS += -D NUM_HAIRPIN_Q=0
+CXXFLAGS += -D NUM_HAIRPIN_Q=0 -D HAIRPIN_POLICY=0
 
-# 2. Hairpin on (1 queue)
-# CXXFLAGS += -D NUM_HAIRPIN_Q=1
-
-# 3. Hairpin on (1 queue, opt-out mode)
+# 2. Hairpin on (1 queue, opt-out mode)
 # CXXFLAGS += -D NUM_HAIRPIN_Q=1 -D HAIRPIN_POLICY=1
+
+# 3. Hairpin on (1 queue, opt-in mode)
+# CXXFLAGS += -D NUM_HAIRPIN_Q=1 -D HAIRPIN_POLICY=2
 
 ################################################################################
 

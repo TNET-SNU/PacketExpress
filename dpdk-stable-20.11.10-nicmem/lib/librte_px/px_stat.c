@@ -108,7 +108,8 @@ void px_stat_update_rx(uint16_t port_id,
 void px_stat_update_tx(uint16_t port_id,
                        uint16_t queue_id,
                        struct rte_mbuf **pkts,
-                       const uint16_t nb_pkts)
+                       const uint16_t nb_pkts,
+                       int measure_yield)
 {
     struct px_dev *px_dev = &g_px_dev[port_id];
     struct px_tx_stat *tx_stat;
@@ -149,8 +150,8 @@ void px_stat_update_tx(uint16_t port_id,
         /* measure delay */
         tx_stat->delay_ns += now_ns - get_sw_timestamp(pkt);
 
-        /* skip if PX is not initialized for this port */
-        if (!px_dev->initialized_px)
+        /* skip if PX or G/LRO is not initialized for this port */
+        if (!px_dev->initialized_px && !measure_yield)
         {
             continue;
         }
@@ -160,10 +161,12 @@ void px_stat_update_tx(uint16_t port_id,
         {
             continue;
         }
-        
-        /* update IAT entry */
-        if (iat_update_entry_yield(port_id, queue_id, pkt, now_ns) < 0)
+
+        /* if PX is used, update per-flow yield */
+        if (px_dev->initialized_px && px_dev->cutoff_ns &&
+            iat_update_entry_yield(port_id, queue_id, pkt, now_ns) < 0)
         {
+            /* PX is used but no IAT entry, then it is error */
             fprintf(stderr,
                     "iat_update_entry_yield failed for port %u queue %u\n",
                     port_id,
@@ -222,6 +225,7 @@ void px_stat_update_tx(uint16_t port_id,
 void px_stat_monitor(int args)
 {
     (void)args;
+    struct px_dev *px_dev = &g_px_dev[0];
     struct px_tcp_stat *tcp_iter, tcp_total = {0};
     struct px_rx_stat *rx_iter, rx_total = {0};
     struct px_tx_stat *tx_iter, tx_total = {0};
@@ -234,9 +238,12 @@ void px_stat_monitor(int args)
     uint16_t port_id, queue_id;
     int ret;
 
-    /* usually main core */
+    /* monitoring thread is on usually main core */
+
+    /* aggregate per port stats */
     for (port_id = 0; port_id < g_num_ports; port_id++)
     {
+        /* aggregate per queue stats */
         for (queue_id = 0; queue_id < MAX(g_num_rxqs, g_num_txqs); queue_id++)
         {
             /* get IAT stat */
@@ -352,7 +359,7 @@ void px_stat_monitor(int args)
                     rx_iter->batch_cnt
                         ? (float)rx_iter->active_rxq_cnt /
                               rx_iter->batch_cnt /
-                              g_px_dev[0].num_rxq_per_rxq *
+                              px_dev->num_rxq_per_rxq *
                               100
                         : 0,
                     rx_iter->active_rxq_cnt
@@ -519,7 +526,7 @@ void px_stat_monitor(int args)
         rx_total.batch_cnt
             ? (float)rx_total.active_rxq_cnt /
                   rx_total.batch_cnt /
-                  g_px_dev[0].num_rxq_per_rxq *
+                  px_dev->num_rxq_per_rxq *
                   100
             : 0;
     num_flows_per_active_rxq_total =
@@ -685,11 +692,14 @@ void px_stat_monitor(int args)
         shifted_down = 1;
     }
 #else
-    ret = px_latent_gear_shift_auto(&cur);
-    if (ret < 0)
+    if (px_dev->initialized_dyn_rxq)
     {
-        fprintf(stdout, "Failed to control gear\n");
-        goto Error;
+        ret = px_latent_gear_shift_auto(&cur);
+        if (ret < 0)
+        {
+            fprintf(stdout, "Failed to control gear\n");
+            goto Error;
+        }
     }
 #endif
 
@@ -721,7 +731,6 @@ int px_stat_start_monitor(unsigned int stat_interval,
     struct sigaction sa_gear_up, sa_gear_down, sa_monitor;
     g_num_ports = num_ports;
     g_num_rxqs = num_rxqs;
-    g_max_rxqs = g_px_dev[0].max_rxq;
     g_num_txqs = num_txqs;
     if (imtu_size)
     {

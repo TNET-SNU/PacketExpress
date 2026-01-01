@@ -373,27 +373,7 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
   rte_eth_dev_info_get(ret_port_id, &dev_info);
 
   eth_conf = px_eth_conf(ret_port_id, NULL, rss_key, sizeof(rss_key), SNBUF_DATA,
-#if USE_LRO
-                         1,
-#else
-                         0,
-#endif
-#if USE_PX || USE_GRO
-                         1,
-#else
-                         0,
-#endif
-#if CUTOFF_NS
-                         1,
-#else
-                         0,
-#endif
-#if NICMEM
-                         1
-#else
-                         0
-#endif
-                         );
+                         1, USE_LRO, 1, CUTOFF_NS, NICMEM);
   if (arg.loopback()) {
     eth_conf.lpbk_mode = 1;
   }
@@ -403,16 +383,8 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
                              num_txq,
                              0,
                              0,
-#if NICMEM
-                             queue_size[PACKET_DIR_INC],
-#else
-                             0,
-#endif
-#if USE_PX
-                             CUTOFF_NS,
-#else
-                             0,
-#endif
+                             NICMEM ? nb_rxd : 0,
+                             USE_PX ? CUTOFF_NS : 0,
                              NUM_HAIRPIN_Q,
                              NUM_HAIRPIN_Q,
                              &eth_conf,
@@ -420,12 +392,7 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
                              0,
                              1,
                              1,
-#if NUM_HAIRPIN_Q
-                             HAIRPIN_POLICY
-#else
-                             0
-#endif
-                             );
+                             NUM_HAIRPIN_Q ? HAIRPIN_POLICY : 0);
 #else
   ret = rte_eth_dev_configure(ret_port_id,
                               num_rxq,
@@ -560,7 +527,7 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
   }
 #else
   /* thread for stat printing */
-  ret = px_stat_start_monitor(STAT_INTERVAL,
+  ret = px_stat_start_monitor(1,
                               rte_eth_dev_count_avail(),
                               num_rxq,
                               num_txq,
@@ -782,12 +749,12 @@ int PMDPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   px_setup_tso_burst(dpdk_port_id_, qid,
                      reinterpret_cast<rte_mbuf **>(pkts), cnt,
                      SEMANTIC_TEST);
-  px_stat_update_tx(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), cnt);
 #endif
 #if NUM_HAIRPIN_Q
   px_flow_create_burst(dpdk_port_id_, qid,
                        reinterpret_cast<rte_mbuf **>(pkts), cnt);
 #endif
+  px_stat_update_tx(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), cnt, USE_LRO || USE_GRO);
   int sent = rte_eth_tx_burst(dpdk_port_id_, qid,
                               reinterpret_cast<rte_mbuf **>(pkts), cnt);
 #endif

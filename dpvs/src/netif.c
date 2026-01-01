@@ -2149,12 +2149,17 @@ static inline void netif_tx_burst(lcoreid_t cid, portid_t pid, queueid_t qindex)
                 kni_ingress(mbuf_copied, dev);
         }
     }
-#if USE_LINK
-    px_unlink_and_uso(txq->mbufs, txq->len, NULL);
-#endif
-#if USE_PX || USE_LRO || USE_GRO
+#if USE_PX
+    ntx = rte_eth_tx_burst(pid, txq->id, txq->mbufs, txq->len);
+    lcore_stats[cid].opackets += ntx;
+#else
+#if (USE_LRO || USE_GRO)
     px_setup_tso_burst(pid, txq->id, txq->mbufs, txq->len, SEMANTIC_TEST);
 #endif
+#if NUM_HAIRPIN_Q
+    px_flow_create_burst(pid, txq->id, txq->mbufs, txq->len);
+#endif
+    px_stat_update_tx(pid, txq->id, txq->mbufs, txq->len, USE_LRO || USE_GRO);
     ntx = rte_eth_tx_burst(pid, txq->id, txq->mbufs, txq->len);
     lcore_stats[cid].opackets += ntx;
     /* do not calculate obytes here in consideration of efficency */
@@ -2166,6 +2171,7 @@ static inline void netif_tx_burst(lcoreid_t cid, portid_t pid, queueid_t qindex)
             rte_pktmbuf_free(txq->mbufs[ntx]);
         } while (++ntx < txq->len);
     }
+#endif
 }
 
 /* Call me on MASTER lcore */
@@ -4006,43 +4012,15 @@ int netif_port_start(struct netif_port *port)
             &port->dev_conf.rxmode.offloads, &port->dev_conf.txmode.offloads);
 
     port->dev_conf = px_eth_conf(port->id, &port->dev_conf, NULL, 0, MBUF_DATA_SIZE,
-#if USE_LRO
-                                 1,
-#else
-                                 0,
-#endif
-#if USE_PX || USE_GRO
-                                 1,
-#else
-                                 0,
-#endif
-#if CUTOFF_NS
-                                 1,
-#else
-                                 0,
-#endif
-#if NICMEM
-                                 1
-#else
-                                 0
-#endif
-                                 );
+                                 1, USE_LRO, 1, CUTOFF_NS, NICMEM);
 #if (USE_PX || NICMEM || NUM_HAIRPIN_Q)
     ret = px_eth_dev_configure(port->id,
                                port->nrxq,
                                port->ntxq,
                                0,
                                0,
-#if NICMEM
-                               port->rxq_desc_nb,
-#else
-                               0,
-#endif
-#if USE_PX
-                               CUTOFF_NS,
-#else
-                               0,
-#endif
+                               NICMEM ? port->rxq_desc_nb : 0,
+                               USE_PX ? CUTOFF_NS : 0,
                                NUM_HAIRPIN_Q,
                                NUM_HAIRPIN_Q,
                                &port->dev_conf,
@@ -4050,10 +4028,7 @@ int netif_port_start(struct netif_port *port)
                                0,
                                1,
                                1,
-#if NUM_HAIRPIN_Q
-                               HAIRPIN_POLICY
-#endif
-                               );
+                               NUM_HAIRPIN_Q ? HAIRPIN_POLICY : 0);
 #else
     ret = rte_eth_dev_configure(port->id,
                                 port->nrxq,
@@ -4068,7 +4043,7 @@ int netif_port_start(struct netif_port *port)
     // setup rx queues
     if (port->nrxq > 0) {
         for (qid = 0; qid < port->nrxq; qid++) {
-#if USE_PX || NICMEM
+#if (USE_PX || NICMEM || NUM_HAIRPIN_Q)
             ret = px_eth_rx_queue_setup(port->id, qid, port->rxq_desc_nb,
                                         port->socket, NULL,
                                         pktmbuf_pool[port->socket]);
@@ -4097,8 +4072,13 @@ int netif_port_start(struct netif_port *port)
                 txconf.txq_flags = 0;
 #endif
             txconf.offloads = port->dev_conf.txmode.offloads;
+#if (USE_PX || NICMEM || NUM_HAIRPIN_Q)
+            ret = px_eth_tx_queue_setup(port->id, qid, port->txq_desc_nb,
+                    port->socket, &txconf);
+#else
             ret = rte_eth_tx_queue_setup(port->id, qid, port->txq_desc_nb,
                     port->socket, &txconf);
+#endif
             if (ret < 0) {
                 RTE_LOG(ERR, NETIF, "%s: fail to config %s:tx-queue-%d\n",
                         __func__, port->name, qid);

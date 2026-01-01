@@ -216,7 +216,7 @@ struct px_dev
     uint8_t sgdma : 1;
 
     /* whether dynamic RXQ scaling is enabled or not */
-    uint8_t dyn_rxq : 1;
+    uint8_t initialized_dyn_rxq : 1;
 
     /* hairpin polic */
     int hp_policy;

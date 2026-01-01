@@ -574,6 +574,53 @@ px_fill_ipv4_l4_cksum(struct rte_mbuf *m,
     return 0;
 }
 /*----------------------------------------------------------------------------*/
+/**
+ * Update TCP checksum incrementally using RFC 1624 logic.
+ * * Formula: HC' = ~(~HC + ~m + m')
+ * HC  : old checksum in the header
+ * HC' : new checksum
+ * m   : old value of the modified field
+ * m'  : new value of the modified field
+ *
+ * @param tcp_hdr
+ * Pointer to the TCP header.
+ * @param old_val
+ * The 16-bit value before modification (Network Byte Order).
+ * @param new_val
+ * The 16-bit value after modification (Network Byte Order).
+ */
+static inline void
+inc_update_tcp_cksum(struct rte_mbuf *m,
+                     uint16_t old_val,
+                     uint16_t new_val)
+{
+    struct rte_tcp_hdr *tcp_hdr =
+        rte_pktmbuf_mtod_offset(m,
+                                struct rte_tcp_hdr *,
+                                m->l2_len + m->l3_len);
+    /**
+     * 1. Unfold the current checksum
+     * (convert from 1's complement to 2's complement)
+     */
+    uint32_t cksum = ~rte_be_to_cpu_16(tcp_hdr->cksum) & 0xFFFF;
+
+    /* 2. Subtract the old value by adding its 1's complement */
+    cksum += ~rte_be_to_cpu_16(old_val) & 0xFFFF;
+
+    /* 3. Add the new value */
+    cksum += rte_be_to_cpu_16(new_val);
+
+    /**
+     * 4. Handle carries (End-around carry)
+     * If the sum exceeds 16 bits, add the carry back to the LSB
+     */
+    cksum = (cksum >> 16) + (cksum & 0xFFFF);
+    cksum += (cksum >> 16);
+
+    /* 5. Fold back to 16 bits and take 1's complement (Final Checksum) */
+    tcp_hdr->cksum = rte_cpu_to_be_16(~(uint16_t)cksum);
+}
+/*----------------------------------------------------------------------------*/
 static inline uint16_t
 px_uso_burst0(struct rte_mbuf **pkts,
               uint16_t nb_pkts,
@@ -890,7 +937,7 @@ px_uso_burst(struct rte_mbuf **pkts,
             body_clone = NULL;
         }
 
-Free_pkt:
+    Free_pkt:
         rte_pktmbuf_free(pkt);
         pkt = NULL;
         if (hdr_clone)
@@ -925,6 +972,7 @@ px_eth_conf(uint16_t port_id,
             uint8_t *rss_key,
             int rss_key_len,
             int pkt_size,
+            int is_hwcsum,
             int is_lro,
             int is_sgdma,
             int is_delayed,

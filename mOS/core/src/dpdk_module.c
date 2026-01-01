@@ -230,12 +230,27 @@ dpdk_send_pkts(struct mtcp_thread_context *ctxt, int nif)
 		UNUSED(mtcp);
 #endif
 
-#if !USE_PX && (USE_LRO || USE_GRO)
+#if USE_PX
+        ret = px_eth_tx_burst(nif, qid,
+                              dpc->wmbufs[nif].m_table,
+                              dpc->wmbufs[nif].len);
+        (void)ret;
+#else
+#if (USE_LRO || USE_GRO)
 		px_setup_tso_burst(nif, qid,
 						   dpc->wmbufs[nif].m_table,
 						   dpc->wmbufs[nif].len,
 						   SEMANTIC_TEST);
 #endif
+#if NUM_HAIRPIN_Q
+		px_flow_create_burst(nif, qid,
+							 dpc->wmbufs[nif].m_table,
+							 dpc->wmbufs[nif].len);
+#endif
+		px_stat_update_tx(nif, qid,
+						  dpc->wmbufs[nif].m_table,
+						  dpc->wmbufs[nif].len,
+						  USE_LRO || USE_GRO);
 		ret = rte_eth_tx_burst(nif, qid,
 							   dpc->wmbufs[nif].m_table,
 							   dpc->wmbufs[nif].len);
@@ -243,6 +258,7 @@ dpdk_send_pkts(struct mtcp_thread_context *ctxt, int nif)
 			rte_pktmbuf_free_bulk(dpc->wmbufs[nif].m_table + ret,
 								  dpc->wmbufs[nif].len - ret);
 		dpc->wmbufs[nif].len = 0;
+#endif
 	}
 
 	return ret;
@@ -559,27 +575,7 @@ dpdk_load_module_lower_half(void)
 
 			/* re-adjust rss_hf */
 			port_conf = px_eth_conf(portid, NULL, g_key, sizeof(g_key), MBUF_DATA_SIZE,
-#if USE_LRO
-                        			1,
-#else
-                        			0,
-#endif
-#if USE_PX || USE_GRO
-									1,
-#else
-									0,
-#endif
-#if CUTOFF_NS
-                        			1,
-#else
-                        			0,
-#endif
-#if NICMEM
-									1
-#else
-									0
-#endif
-									);
+									1, USE_LRO, 1, CUTOFF_NS, NICMEM);
 			assert(num_queue == g_config.mos->num_cores);
 			/* set 'num_queues' (used for GetRSSCPUCore() in util.c) */
 			num_queues = num_queue;
@@ -593,16 +589,8 @@ dpdk_load_module_lower_half(void)
 									   num_queue,
 									   0,
 									   0,
-#if NICMEM
-									   nb_rxd,
-#else
-									   0,
-#endif
-#if USE_PX
-									   CUTOFF_NS,
-#else
-									   0,
-#endif
+									   NICMEM ? nb_rxd : 0,
+									   USE_PX ? CUTOFF_NS : 0,
 									   NUM_HAIRPIN_Q,
 									   NUM_HAIRPIN_Q,
 									   &port_conf,
@@ -610,10 +598,7 @@ dpdk_load_module_lower_half(void)
 									   0,
 									   1,
 									   1,
-#if NUM_HAIRPIN_Q
-                            		   HAIRPIN_POLICY
-#endif
-									   );
+									   NUM_HAIRPIN_Q ? HAIRPIN_POLICY : 0);
 #else
 			ret = rte_eth_dev_configure(portid,
 										num_queue,
@@ -662,9 +647,15 @@ dpdk_load_module_lower_half(void)
 			for (rxlcore_id = 0; rxlcore_id < g_config.mos->num_cores; rxlcore_id++) {
 				if (!(g_config.mos->netdev_table->ent[eth_idx]->cpu_mask & (1L << rxlcore_id)))
 					continue;
+#if (USE_PX || NICMEM || NUM_HAIRPIN_Q)
+				if ((ret = px_eth_tx_queue_setup(portid, queue_id, nb_txd,
+												 rte_eth_dev_socket_id(portid),
+												 &dev_info[portid].default_txconf)) < 0)
+#else
 				if ((ret = rte_eth_tx_queue_setup(portid, queue_id, nb_txd,
 												  rte_eth_dev_socket_id(portid),
 												  &dev_info[portid].default_txconf)) < 0)
+#endif
 					rte_exit(EXIT_FAILURE, "rte_eth_tx_queue_setup: "
 										   "err=%d, port=%u, queue_id: %d\n",
 										   ret, (unsigned) portid, rxlcore_id);

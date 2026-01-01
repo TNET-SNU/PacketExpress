@@ -55,7 +55,8 @@ struct rte_flow *
 px_flow_create_static(uint16_t port_id,
                       const struct rte_flow_attr *attr,
                       const struct rte_flow_item pattern[],
-                      const struct rte_flow_action actions[]);
+                      const struct rte_flow_action actions[],
+                      struct rte_flow_error *error);
 /*----------------------------------------------------------------------------*/
 struct rte_flow *
 px_flow_create_offload_auto(uint16_t port_id,

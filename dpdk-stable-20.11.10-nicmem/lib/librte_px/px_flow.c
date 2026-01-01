@@ -474,9 +474,9 @@ struct rte_flow *
 px_flow_create_static(uint16_t port_id,
                       const struct rte_flow_attr *attr,
                       const struct rte_flow_item patterns[],
-                      const struct rte_flow_action actions[])
+                      const struct rte_flow_action actions[],
+                      struct rte_flow_error *error)
 {
-    struct rte_flow_error error;
     struct rte_flow *flow = NULL;
 
 #if VALIDATE_FLOW_RULE
@@ -484,12 +484,12 @@ px_flow_create_static(uint16_t port_id,
                                 attr,
                                 patterns,
                                 actions,
-                                &error) < 0)
+                                error) < 0)
     {
         fprintf(stderr,
                 "[port %d] px_latent_flow_validate() failed. "
                 "Error type: %d, Error msg: %s\n",
-                port_id, error.type, error.message);
+                port_id, error->type, error->message);
         return NULL;
     }
 #endif
@@ -500,13 +500,13 @@ px_flow_create_static(uint16_t port_id,
                                      attr,
                                      patterns,
                                      actions,
-                                     &error);
+                                     error);
         if (!flow) {
             fprintf(stderr,
                     "[%s:%s:%d] [port %d] px_latent_flow_create() failed. "
                     "Error type: %d, Error msg: %s\n",
                     __FILE__, __func__, __LINE__,
-                    port_id, error.type, error.message);
+                    port_id, error->type, error->message);
         })
 
     return flow;
