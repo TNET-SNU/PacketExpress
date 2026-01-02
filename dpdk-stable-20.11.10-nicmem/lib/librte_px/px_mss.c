@@ -182,10 +182,12 @@ get_reverse_queue(uint16_t port_id, uint32_t reverse_rss)
 
     /* ToDo: we should consider ReTa */
     inner_qid = reverse_rss % px_dev->max_rxq;
-    outer_qid = inner_qid / px_dev->max_rxq_per_rxq;
+    outer_qid = inner_qid / px_dev->max_lxq_per_rxq;
 
-    printf("inner_qid=%u, outer_qid=%u. px_dev->num_rxq=%u, px_dev->num_rxq_per_rxq=%u\n",
-           inner_qid, outer_qid, px_dev->num_rxq, px_dev->num_rxq_per_rxq);
+    // printf("inner_qid=%u, outer_qid=%u. "
+    //        "px_dev->num_rxq=%u, px_dev->num_lxq_per_rxq=%u\n",
+    //        inner_qid, outer_qid,
+    //        px_dev->num_rxq, px_dev->num_lxq_per_rxq);
 
     return outer_qid;
 }

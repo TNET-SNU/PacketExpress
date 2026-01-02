@@ -57,6 +57,8 @@ extern "C"
 #include <rte_malloc.h>
 #include <rte_mempool.h>
 #include <rte_bitops.h>
+#include <rte_gro.h>
+#include <rte_gso.h>
 /*----------------------------------------------------------------------------*/
 /* Below are to control PX behaviors */
 #define MAX_NAME_SIZE 32
@@ -115,7 +117,6 @@ extern "C"
 // #define FIXED_TIMEOUT 72000 /* 72us */ /* 1Gbps */
 // #define FIXED_TIMEOUT 180000 /* 180us */ /* 400Mbps */
 /*----------------------------------------------------------------------------*/
-#define FIX_GEAR 0
 #define TEST_RSS_ATOMICITY 0
 // #define LOG_IAT_ENTRIES 1
 #define USE_JUMP_RULE 0
@@ -166,22 +167,71 @@ extern "C"
 /*----------------------------------------------------------------------------*/
 struct px_dev
 {
-    uint16_t num_rxq;
-    uint16_t max_rxq;
-    uint16_t max_rxq_per_rxq;
+    /* LXQ means Latent RXQ */
 
-    uint16_t num_rxq_per_rxq;
-    uint16_t prev_num_rxq_per_rxq;
+    /**
+     * if DynRXQ enabled, maximum number of RXQs supported by the device
+     * else, same as num_rxq
+     */
+    uint16_t max_rxq; // always constant
 
-    uint16_t gear_val;
-    uint16_t prev_gear_val;
+    /**
+     * requested number of RXQs from app via rte_eth_dev_configure
+     * usually same as number of cores used by app
+     */
+    uint16_t num_rxq; // constant after configured
 
-    uint16_t num_txq;
+    /**
+     * if DynRXQ enabled, maximum number of LXQs per RXQ (max_rxq / num_rxq)
+     * else, 1
+     */
+    uint16_t max_lxq_per_rxq; // constant after configured
+
+    /**
+     * if DynRXQ enabled, current number of LXQs
+     * else, same as num_rxq
+     */
+    uint16_t num_lxq;
+
+    /**
+     * if DynRXQ enabled, current number of LXQs per RXQ (num_lxq / num_rxq)
+     * else, 1
+     */
+    uint16_t num_lxq_per_rxq;
+
+    /**
+     * if DynRXQ enabled, previous number of LXQs
+     * else, same as num_rxq
+     * used for draining packets upon LXQ scaling down
+     */
+    uint16_t prev_num_lxq;
+
+    /**
+     * if DynRXQ enabled, previous number of LXQs per RXQ (prev_num_lxq / num_rxq)
+     * else, 1
+     * used for draining packets upon LXQ scaling down
+     */
+    uint16_t prev_num_lxq_per_rxq;
+
+    /* used to note whether LXQ scaled down */
+    uint16_t num_lxq_scaled_down;
+
+    /**
+     * if DynRXQ enabled, maximum number of RXQs supported by the device
+     * else, same as num_txq
+     */
+    uint16_t max_txq; // always constant
+
+    /**
+     * requested number of TXQs from app via rte_eth_dev_configure
+     * usually same as number of cores used by app
+     */
+    uint16_t num_txq; // constant after configured
+
+    /**/
     uint16_t imtu_size;
     uint16_t emtu_size;
     uint16_t reta_size;
-
-    int rxq_decreased;
 
     /* for packet delaying */
     uint32_t cutoff_ns;
@@ -197,31 +247,31 @@ struct px_dev
     /* whether PX is initialized */
     uint8_t initialized_px : 1;
 
-    /* whether ReTa entry initialized */
-    uint8_t initialized_latent : 1;
-
     /* whether ARP table context initialized */
     uint8_t initialized_arp : 1;
+
+    /* whether ReTa entry initialized */
+    uint8_t initialized_latent : 1;
 
     /* whether nicmem context initialized */
     uint8_t initialized_nicmem : 1;
 
-    /* whether hairpin context configured */
+    /* whether dynamic RXQ scaling is initialized */
+    uint8_t initialized_dyn_rxq : 1;
+
+    /* whether hairpin context is configured */
     uint8_t configured_hairpin : 1;
 
-    /* whether hairpin context initialized */
+    /* whether hairpin is initialized */
     uint8_t initialized_hairpin : 1;
 
     /* whether SGDMA is enabled or not */
     uint8_t sgdma : 1;
 
-    /* whether dynamic RXQ scaling is enabled or not */
-    uint8_t initialized_dyn_rxq : 1;
-
-    /* hairpin polic */
+    /* hairpin policy */
     int hp_policy;
 
-    /* rss configuration */
+    /* per-port RSS configuration */
     uint8_t *rss_key;
     int rss_key_len;
 };

@@ -18,8 +18,7 @@ extern "C"
 #include "px_flow.h"
 #include "px_offload.h"
 #include "px_arp.h"
-#include "rte_gro.h"
-#include "rte_gso.h"
+#include "px_l5_flow.h"
 /*----------------------------------------------------------------------------*/
 #define INVALID_INDEX UINT16_MAX
 #define MAX_TCP_HLEN 60

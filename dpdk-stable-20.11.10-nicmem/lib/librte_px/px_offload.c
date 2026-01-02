@@ -549,9 +549,9 @@ px_flow_slave_main(void *arg)
                 {
                     fprintf(stderr,
                             "px_flow_create_static failed "
-                            "for gear %d (val %d). "
+                            "for gear %d (num_lxq %d). "
                             "Error type: %d, Error msg: %s\n",
-                            gear->index, gear->gear_val,
+                            gear->index, gear->num_lxq,
                             error.type, error.message);
                 }
                 px_latent_gear_notify(port_id);

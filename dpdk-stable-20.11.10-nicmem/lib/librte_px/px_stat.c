@@ -10,10 +10,15 @@ extern struct px_dev g_px_dev[RTE_MAX_ETHPORTS];
 extern uint64_t g_bubble_tsc[RTE_MAX_QUEUES_PER_PORT];
 static uint16_t g_num_ports = 4;
 static uint16_t g_num_rxqs = 1;
-static uint16_t g_max_rxqs = 512;
 static uint16_t g_num_txqs = 1;
 uint16_t g_default_imtu;
 uint16_t g_default_emtu;
+/*----------------------------------------------------------------------------*/
+/* for handling manual gear shifts */
+volatile sig_atomic_t g_shift_up_requested = 0;
+volatile sig_atomic_t g_shift_down_requested = 0;
+volatile int g_shift_manual = 0;
+/*----------------------------------------------------------------------------*/
 #if TEST_RSS_ATOMICITY
 FILE *g_latent_log_fp = NULL;
 #endif
@@ -222,9 +227,20 @@ void px_stat_update_tx(uint16_t port_id,
     }
 }
 /*----------------------------------------------------------------------------*/
-void px_stat_monitor(int args)
+static void px_stat_shift_up_handler(int signum)
 {
-    (void)args;
+    (void)signum;
+    g_shift_up_requested = 1;
+}
+/*----------------------------------------------------------------------------*/
+static void px_stat_shift_down_handler(int signum)
+{
+    (void)signum;
+    g_shift_down_requested = 1;
+}
+/*----------------------------------------------------------------------------*/
+void px_stat_monitor(uint16_t main_core_id)
+{
     struct px_dev *px_dev = &g_px_dev[0];
     struct px_tcp_stat *tcp_iter, tcp_total = {0};
     struct px_rx_stat *rx_iter, rx_total = {0};
@@ -238,7 +254,7 @@ void px_stat_monitor(int args)
     uint16_t port_id, queue_id;
     int ret;
 
-    /* monitoring thread is on usually main core */
+    /* monitoring is usually done by main core */
 
     /* aggregate per port stats */
     for (port_id = 0; port_id < g_num_ports; port_id++)
@@ -359,7 +375,7 @@ void px_stat_monitor(int args)
                     rx_iter->batch_cnt
                         ? (float)rx_iter->active_rxq_cnt /
                               rx_iter->batch_cnt /
-                              px_dev->num_rxq_per_rxq *
+                              px_dev->num_lxq_per_rxq *
                               100
                         : 0,
                     rx_iter->active_rxq_cnt
@@ -526,7 +542,7 @@ void px_stat_monitor(int args)
         rx_total.batch_cnt
             ? (float)rx_total.active_rxq_cnt /
                   rx_total.batch_cnt /
-                  px_dev->num_rxq_per_rxq *
+                  px_dev->num_lxq_per_rxq *
                   100
             : 0;
     num_flows_per_active_rxq_total =
@@ -631,92 +647,44 @@ void px_stat_monitor(int args)
     cur.num_flows_per_active_rxq = num_flows_per_active_rxq_total;
     cur.num_pkts_per_active_rxq = num_pkts_per_active_rxq_total;
 
-#if TEST_RSS_ATOMICITY
-    struct px_rx_stat_latent *rx_latent_iter;
-    static int stat_cnt = 0;
-    static int shifted_down = 0;
-    (void)cur;
-    char log_buf[RSS_ATOMICITY_LOG_BUF_SIZE];
-    int offset = 0;
-
-    /* fill the buffer */
-    ret = snprintf(log_buf + offset,
-                   RSS_ATOMICITY_LOG_BUF_SIZE - offset,
-                   "%d ", stat_cnt);
-    if (ret < 0)
-    {
-        fprintf(stderr, "snprintf failed\n");
-        goto Error;
-    }
-    offset += ret;
-    for (queue_id = 0; queue_id < g_max_rxqs; queue_id++)
-    {
-        rx_latent_iter = &g_rx_stat_latent[0][queue_id];
-        ret = snprintf(log_buf + offset,
-                       RSS_ATOMICITY_LOG_BUF_SIZE - offset,
-                       "[%hu] %lu ",
-                       queue_id,
-                       rx_latent_iter->pkt_cnt);
-        if (ret < 0 || ret >= RSS_ATOMICITY_LOG_BUF_SIZE - offset)
-        {
-            goto Error;
-        }
-        offset += ret;
-    }
-    ret = snprintf(log_buf + offset, RSS_ATOMICITY_LOG_BUF_SIZE - offset, "\n");
-    if (ret < 0 || ret >= RSS_ATOMICITY_LOG_BUF_SIZE - offset)
-    {
-        goto Error;
-    }
-    offset += ret;
-
-    /* flush buffer to log file */
-    fprintf(g_latent_log_fp, "%s", log_buf);
-    fflush(g_latent_log_fp);
-    stat_cnt++;
-
-    (void)cur;
-    if (!shifted_down && stat_cnt > 10)
-    {
-        for (port_id = 0; port_id < g_num_ports; port_id++)
-        {
-            ret = px_latent_gear_shift_down(rte_lcore_id(), port_id);
-            if (ret < 0)
-            {
-                fprintf(stdout,
-                        "Failed to shift down gear for port %d\n",
-                        port_id);
-                goto Error;
-            }
-        }
-        shifted_down = 1;
-    }
-#else
+    /* handling gear using current stats */
     if (px_dev->initialized_dyn_rxq)
     {
-        ret = px_latent_gear_shift_auto(&cur);
-        if (ret < 0)
+        if (g_shift_up_requested)
         {
-            fprintf(stdout, "Failed to control gear\n");
-            goto Error;
+            ret = px_latent_gear_shift(&cur, main_core_id, SHIFT_UP);
+            if (ret < 0)
+            {
+                fprintf(stdout, "Failed to manual gear up\n");
+                return;
+            }
+            g_shift_up_requested = 0;
+            /* once manually shifted, mark manual mode */
+            g_shift_manual = 1;
+        }
+        else if (g_shift_down_requested)
+        {
+            ret = px_latent_gear_shift(&cur, main_core_id, SHIFT_DOWN);
+            if (ret < 0)
+            {
+                fprintf(stdout, "Failed to manual gear down\n");
+                return;
+            }
+            g_shift_down_requested = 0;
+            /* once manually shifted, mark manual mode */
+            g_shift_manual = 1;
+        }
+        else if (!g_shift_manual)
+        {
+            // ret = px_latent_gear_shift(&cur, main_core_id, STATE_MACHINE);
+            ret = px_latent_gear_shift(&cur, main_core_id, RXQ_UTIL);
+            if (ret < 0)
+            {
+                fprintf(stdout, "Failed to automatic gear shift\n");
+                return;
+            }
         }
     }
-#endif
-
-    // for (port_id = 0; port_id < g_num_ports; port_id++)
-    // {
-    //     ret = px_latent_gear_shift_up(rte_lcore_id(), port_id);
-    //     if (ret < 0)
-    //     {
-    //         fprintf(stdout,
-    //                 "Failed to shift up gear for port %d\n",
-    //                 port_id);
-    //         goto Error;
-    //     }
-    // }
-
-Error:
-    alarm(g_stat_interval);
 }
 /*----------------------------------------------------------------------------*/
 int px_stat_start_monitor(unsigned int stat_interval,
@@ -728,10 +696,24 @@ int px_stat_start_monitor(unsigned int stat_interval,
                           int (*is_uplink)(struct rte_mbuf *pkt),
                           int (*is_downlink)(struct rte_mbuf *pkt))
 {
-    struct sigaction sa_gear_up, sa_gear_down, sa_monitor;
+    struct sigaction sa_gear_up, sa_gear_down;
     g_num_ports = num_ports;
     g_num_rxqs = num_rxqs;
     g_num_txqs = num_txqs;
+
+    if (!stat_interval)
+    {
+        /* monitor off */
+        return 0;
+    }
+
+    if (g_stat_interval)
+    {
+        /* already started */
+        return 0;
+    }
+
+    /* configure */
     if (imtu_size)
     {
         g_default_imtu = imtu_size;
@@ -765,18 +747,6 @@ int px_stat_start_monitor(unsigned int stat_interval,
         g_is_downlink = is_downlink_default;
     }
 
-    if (!stat_interval)
-    {
-        /* thread off */
-        return 0;
-    }
-
-    if (g_stat_interval)
-    {
-        /* already started */
-        return 0;
-    }
-
 #if TEST_RSS_ATOMICITY
     /* open log file for RSS test */
     if (!g_latent_log_fp)
@@ -790,9 +760,8 @@ int px_stat_start_monitor(unsigned int stat_interval,
     }
 #endif
 
-    g_stat_interval = stat_interval;
-
-    sa_gear_up.sa_handler = px_latent_static_gear_up;
+    /* register manual gear shift up handler */
+    sa_gear_up.sa_handler = px_stat_shift_up_handler;
     sa_gear_up.sa_flags = 0;
     sigemptyset(&sa_gear_up.sa_mask);
     if (sigaction(SIGUSR1, &sa_gear_up, NULL) == -1)
@@ -801,7 +770,8 @@ int px_stat_start_monitor(unsigned int stat_interval,
         return -1;
     }
 
-    // sa_gear_down.sa_handler = px_latent_static_gear_down;
+    /* register manual gear shift down handler */
+    // sa_gear_down.sa_handler = px_stat_shift_down_handler;
     // sa_gear_down.sa_flags = 0;
     // sigemptyset(&sa_gear_down.sa_mask);
     // if (sigaction(SIGUSR2, &sa_gear_down, NULL) == -1)
@@ -809,20 +779,14 @@ int px_stat_start_monitor(unsigned int stat_interval,
     //     perror("sigaction failed");
     //     return -1;
     // }
+    (void)sa_gear_down;
+    (void)px_stat_shift_down_handler;
 
-    sa_monitor.sa_handler = px_stat_monitor;
-    sa_monitor.sa_flags = 0;
-    sigemptyset(&sa_monitor.sa_mask);
-    if (sigaction(SIGALRM, &sa_monitor, NULL) == -1)
-    {
-        perror("sigaction failed");
-        return -1;
-    }
-
-    alarm(5);
+    /* mark as initialized */
+    g_stat_interval = stat_interval;
 
     fprintf(stdout,
-            "Stat print thread started with interval %d seconds\n",
+            "PX stat monitor started with interval of %ds\n",
             g_stat_interval);
 
     return 0;

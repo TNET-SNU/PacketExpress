@@ -13,11 +13,20 @@ extern "C"
 #define PX_FLOW_MAX_ACTIONS 10
 #define RETA_CONF_SIZE (ETH_RSS_RETA_SIZE_512 / RTE_RETA_GROUP_SIZE)
 #define CRUISE_PERIOD 0
-#define STEADY_RXQ 0.1
 #define STEADY_THRESHOLD 0.05
 #define FLUCTUATE_THRESHOLD 0.1
-#define BETTER_THRESHOLD 0
+#define BETTER_THRESHOLD 0.05
 #define YIELD_THRESHOLD 90
+/*----------------------------------------------------------------------------*/
+enum gear_controller
+{
+    /* below two are or manual shifting */
+    SHIFT_UP,
+    SHIFT_DOWN,
+    /* below two are for automatic shifting */
+    RXQ_UTIL,
+    STATE_MACHINE,
+};
 /*----------------------------------------------------------------------------*/
 enum gear_state
 {
@@ -45,7 +54,7 @@ struct px_latent_gear
 {
     int index;
     int valid;
-    int gear_val;
+    int num_lxq;
     struct rte_flow_attr attr;
 
     struct rte_flow_item patterns[2];
@@ -93,8 +102,9 @@ struct px_latent_ctx
     uint16_t min_gear_idx;
     uint16_t num_gears;
     uint16_t max_rxq;
+    uint16_t max_txq;
 
-    uint16_t gear_val;
+    uint16_t num_lxq;
     uint16_t gear_idx;
     struct px_latent_gear gears[PX_MAX_GEAR_NUM];
     struct px_latent_jump_g1 jump_g1;
@@ -124,6 +134,10 @@ px_dump_rss_queue(uint16_t *rss_queues, uint16_t rss_len)
     fprintf(stdout, "\n");
 }
 /*----------------------------------------------------------------------------*/
+/**
+ * Check (active RXQ / available RXQ),
+ * (num flows / active RXQ), or (num pkts / active RXQ)
+ */
 static inline int
 px_latent_is_hard_to_merge(struct perf_metric *cur)
 {
@@ -134,6 +148,10 @@ px_latent_is_hard_to_merge(struct perf_metric *cur)
     return (cur->active_rxq_per_available_rxq > 40);
 }
 /*----------------------------------------------------------------------------*/
+/**
+ * Check (active RXQ / available RXQ),
+ * (num flows / active RXQ), or (num pkts / active RXQ)
+ */
 static inline int
 px_latent_is_easy_to_merge(struct perf_metric *cur)
 {
@@ -144,59 +162,60 @@ px_latent_is_easy_to_merge(struct perf_metric *cur)
 }
 /*----------------------------------------------------------------------------*/
 /**
- * Priority: throughput > yield > delay
+ * Priority: (active RXQ / available RXQ) >
+ * (num flows / active RXQ) > (num pkts / active RXQ)
  */
 static inline int
-px_latent_is_steady(struct perf_metric *cur,
-                    struct perf_metric *prev)
+px_latent_is_rxq_steady(struct perf_metric *cur,
+                        struct perf_metric *prev)
 {
-    // if (cur->active_rxq_per_available_rxq > 
-    //     prev->active_rxq_per_available_rxq * (1 + STEADY_RXQ) ||
-    //     cur->active_rxq_per_available_rxq < 
-    //     prev->active_rxq_per_available_rxq * (1 - STEADY_RXQ))
-    if (cur->active_rxq_per_available_rxq > 
-        prev->active_rxq_per_available_rxq * (1 + STEADY_RXQ))
+    if (cur->active_rxq_per_available_rxq >
+            prev->active_rxq_per_available_rxq * (1 + STEADY_THRESHOLD) ||
+        cur->active_rxq_per_available_rxq <
+            prev->active_rxq_per_available_rxq * (1 - STEADY_THRESHOLD))
     {
         return 0;
     }
-    // if (cur->num_flows_per_active_rxq > 
-    //     prev->num_flows_per_active_rxq * (1 + STEADY_RXQ) ||
-    //     cur->num_flows_per_active_rxq < 
-    //     prev->num_flows_per_active_rxq * (1 - STEADY_RXQ))
-    // if (cur->num_flows_per_active_rxq > 
-    //     prev->num_flows_per_active_rxq * (1 + STEADY_RXQ) ||
-    //     cur->num_flows_per_active_rxq < 
-    //     prev->num_flows_per_active_rxq * (1 - STEADY_RXQ))
+    // if (cur->num_flows_per_active_rxq >
+    //     prev->num_flows_per_active_rxq * (1 + STEADY_THRESHOLD) ||
+    //     cur->num_flows_per_active_rxq <
+    //     prev->num_flows_per_active_rxq * (1 - STEADY_THRESHOLD))
     // {
     //     return 0;
     // }
-    // if (cur->num_pkts_per_active_rxq > 
-    //     prev->num_pkts_per_active_rxq * (1 + STEADY_RXQ) ||
-    //     cur->num_pkts_per_active_rxq < 
-    //     prev->num_pkts_per_active_rxq * (1 - STEADY_RXQ))
+    // if (cur->num_pkts_per_active_rxq >
+    //     prev->num_pkts_per_active_rxq * (1 + STEADY_THRESHOLD) ||
+    //     cur->num_pkts_per_active_rxq <
+    //     prev->num_pkts_per_active_rxq * (1 - STEADY_THRESHOLD))
     // {
     //     return 0;
     // }
-    // if (cur->delay > prev->delay * (1 + STEADY_THRESHOLD) ||
-    //     cur->delay < prev->delay * (1 - STEADY_THRESHOLD))
-    // {
-    //     return 0;
-    // }
-    // if (cur->tput > prev->tput * (1 + STEADY_THRESHOLD) ||
-    //     cur->tput < prev->tput * (1 - STEADY_THRESHOLD))
-    // {
-    //     return 0;
-    // }
-    // if (cur->yield > prev->yield * (1 + STEADY_THRESHOLD) ||
-    //     cur->yield < prev->yield * (1 - STEADY_THRESHOLD))
-    // {
-    //     return 0;
-    // }
-    // if (cur->delay > prev->delay * (1 + STEADY_THRESHOLD) ||
-    //     cur->delay < prev->delay * (1 - STEADY_THRESHOLD))
-    // {
-    //     return 0;
-    // }
+
+    return 1;
+}
+/*----------------------------------------------------------------------------*/
+/**
+ * Priority: throughput > yield > delay
+ */
+static inline int
+px_latent_is_perf_steady(struct perf_metric *cur,
+                         struct perf_metric *prev)
+{
+    if (cur->tput > prev->tput * (1 + STEADY_THRESHOLD) ||
+        cur->tput < prev->tput * (1 - STEADY_THRESHOLD))
+    {
+        return 0;
+    }
+    if (cur->yield > prev->yield * (1 + STEADY_THRESHOLD) ||
+        cur->yield < prev->yield * (1 - STEADY_THRESHOLD))
+    {
+        return 0;
+    }
+    if (cur->delay > prev->delay * (1 + STEADY_THRESHOLD) ||
+        cur->delay < prev->delay * (1 - STEADY_THRESHOLD))
+    {
+        return 0;
+    }
 
     return 1;
 }
@@ -280,8 +299,8 @@ px_latent_is_yield_enough(struct perf_metric *steady)
  * Priority: throughput > yield > delay
  */
 static inline int
-px_latent_is_better(struct perf_metric *steady,
-                    struct perf_metric *prev_steady)
+px_latent_is_perf_better(struct perf_metric *steady,
+                         struct perf_metric *prev_steady)
 {
     /* stage 1: first compare throughput */
 
@@ -332,33 +351,39 @@ px_latent_is_better(struct perf_metric *steady,
 }
 /*----------------------------------------------------------------------------*/
 /**
- * This function store notify field to notify worker thread
- * that gear has changed.
+ * This function set notify field to 1 to notify worker thread
+ * that gear has changed
  */
 void px_latent_gear_notify(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
+/**
+ * This function set notify field to 0 to reset notication
+ */
 void px_latent_gear_reset_notify(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 /**
  * This function load notify field to check whether the manager thread
- * has changed the gear.
+ * has changed the gear
  */
 uint32_t px_latent_gear_check_notify(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 /**
- * This function store ack field to notify manager thread
- * that worker thread has acked the change.
+ * This function set ack field to 1 to notify manager thread
+ * that worker thread has acked the change
  */
 void px_latent_gear_ack(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 void px_latent_gear_ack_per_thread(uint16_t port_id,
                                    uint16_t queue_id);
 /*----------------------------------------------------------------------------*/
+/**
+ * This function set ack field to 0 to reset ack
+ */
 void px_latent_gear_reset_ack(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 /**
  * This function load ack field to check whether the worker thread
- * has acked the change.
+ * has acked the change
  */
 uint32_t px_latent_gear_check_ack(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
@@ -373,10 +398,10 @@ px_dump_gear(struct px_latent_gear *gear)
     uint32_t i;
     fprintf(stdout,
             "[%s:%s:%d] [gear %d] "
-            "gear_val: %d\n",
+            "num_lxq: %d\n",
             __FILE__, __func__, __LINE__,
             gear->index,
-            gear->gear_val);
+            gear->num_lxq);
     fprintf(stdout,
             "  attr: group %d, priority %d, "
             "ingress %d, egress %d, transfer %d\n",
@@ -488,65 +513,64 @@ int px_latent_flow_validate(uint16_t port_id,
                             const struct rte_flow_action actions[],
                             struct rte_flow_error *error);
 /*----------------------------------------------------------------------------*/
-uint16_t px_latent_gear_val(uint16_t port_id);
-/*----------------------------------------------------------------------------*/
 /**
- * Call this function after rte_eth_dev_start().
+ * Call below functions after rte_eth_dev_start().
  */
+uint16_t px_latent_num_lxq(uint16_t port_id);
+/*----------------------------------------------------------------------------*/
 uint16_t px_latent_gear(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 uint16_t px_latent_max_gear_idx(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
-/**
- * Call this function after rte_eth_dev_start().
- */
 uint16_t px_latent_min_gear_idx(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
+/**
+ * This function uses synchronous rte_flow APIs.
+ * Do not call in the main loop.
+ */
 int px_latent_gear_jump(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 /**
- * Call this function after rte_eth_dev_start().
+ * This function uses synchronous rte_flow APIs.
+ * Do not call in the main loop.
  */
 int px_latent_gear_init(uint16_t port_id,
                         uint16_t gear_idx);
 /*----------------------------------------------------------------------------*/
+/**
+ * This function uses synchronous rte_flow APIs.
+ * Do not call in the main loop.
+ */
 static inline int
 px_latent_gear_to_min(uint16_t port_id)
 {
     return px_latent_gear_init(port_id, px_latent_min_gear_idx(port_id));
 }
 /*----------------------------------------------------------------------------*/
+/**
+ * This function uses synchronous rte_flow APIs.
+ * Do not call in the main loop.
+ */
 static inline int
 px_latent_gear_to_max(uint16_t port_id)
 {
     return px_latent_gear_init(port_id, px_latent_max_gear_idx(port_id));
 }
 /*----------------------------------------------------------------------------*/
-/**
- * Call this function after rte_eth_dev_start().
- */
 int px_latent_gear_shift_up(uint16_t core_id,
                             uint16_t port_id);
 /*----------------------------------------------------------------------------*/
-/**
- * Call this function after rte_eth_dev_start().
- */
 int px_latent_gear_shift_down(uint16_t core_id,
                               uint16_t port_id);
 /*----------------------------------------------------------------------------*/
-void px_latent_static_gear_up(int args);
+void px_latent_gear_shift_up_static(uint16_t core_id);
 /*----------------------------------------------------------------------------*/
-void px_latent_static_gear_down(int args);
+void px_latent_gear_shift_down_static(uint16_t core_id);
 /*----------------------------------------------------------------------------*/
-/**
- * Call this function after rte_eth_dev_start().
- * This function automatically discovery optimal gear based on current stats.
- */
-int px_latent_gear_shift_auto(struct perf_metric *cur);
+int px_latent_gear_shift(struct perf_metric *cur,
+                         uint16_t core_id,
+                         enum gear_controller mode);
 /*----------------------------------------------------------------------------*/
-/**
- * Call this function after rte_eth_dev_start().
- */
 struct rte_flow *
 px_latent_flow_create(uint16_t port_id,
                       const struct rte_flow_attr *attr,
@@ -554,16 +578,10 @@ px_latent_flow_create(uint16_t port_id,
                       const struct rte_flow_action actions[],
                       struct rte_flow_error *error);
 /*----------------------------------------------------------------------------*/
-/**
- * Call this function after rte_eth_dev_start().
- */
 int px_eth_dev_rss_reta_update(uint16_t port_id,
                                struct rte_eth_rss_reta_entry64 *reta_conf,
                                uint16_t reta_size);
 /*----------------------------------------------------------------------------*/
-/**
- * Call this function after rte_eth_dev_start().
- */
 int reta_runtime_update(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 int px_eth_dump_reta(uint16_t port_id);

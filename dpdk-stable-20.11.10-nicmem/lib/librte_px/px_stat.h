@@ -12,6 +12,7 @@ extern "C"
 #include "px_iat.h"
 /*----------------------------------------------------------------------------*/
 #define STAT_INTERVAL 1
+#define STAT_MONITOR_CORE_ID 0
 /*----------------------------------------------------------------------------*/
 #if TEST_RSS_ATOMICITY
 #define RSS_ATOMICITY_LOG_BUF_SIZE (64 * 1024)
@@ -117,7 +118,7 @@ void px_stat_update_tx(uint16_t port_id,
                        const uint16_t nb_pkts,
                        int measure_yield);
 /*----------------------------------------------------------------------------*/
-void px_stat_monitor(int args);
+void px_stat_monitor(uint16_t main_core_id);
 /*----------------------------------------------------------------------------*/
 int px_stat_start_monitor(unsigned int stat_interval,
                           uint16_t num_ports,
