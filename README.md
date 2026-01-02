@@ -56,26 +56,6 @@ Clients and servers' ARP tables should be set up correctly.
    ```
    You can configure the number of worker cores using -c option.
 
-## Configuring and building baseline GW
-
-For naïve implementation, go to $rootdir/gw and do the same thing.
-1. Move to gw directory and build gw.
-   ```Bash
-   cd $rootdir/gw
-   ```
-2. Modify the ARP table in gw.c to make it fit to your environment.
-3. Modify Makefile to choose build options.
-4. Build gw
-   ```Bash
-   make -j
-   ```
-
-## Running GW
-   ```Bash
-   sudo ./gw -c 32
-   ```
-   You can configure the number of worker cores using -c option.
-
 ## Configuring and building PX UPF
 Our prototype UPF is implemented as modular network functions on BESS. So, build BESS first.
 1. Configure bess/core/Makefile to turn on LRO and GRO.
