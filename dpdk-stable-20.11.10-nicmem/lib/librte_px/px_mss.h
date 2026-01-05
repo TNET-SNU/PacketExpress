@@ -47,9 +47,9 @@ static inline void
 update_mss(uint16_t *mss_ptr,
            uint16_t new_mss)
 {
-    // fprintf(stdout, "%d -> ", rte_be_to_cpu_16(*mss_ptr));
+    fprintf(stdout, "%d -> ", rte_be_to_cpu_16(*mss_ptr));
     *mss_ptr = rte_cpu_to_be_16(new_mss);
-    // fprintf(stdout, "%d\n", rte_be_to_cpu_16(*mss_ptr));
+    fprintf(stdout, "%d\n", rte_be_to_cpu_16(*mss_ptr));
 }
 /*----------------------------------------------------------------------------*/
 static inline uint16_t

@@ -4118,7 +4118,22 @@ int netif_port_start(struct netif_port *port)
                   USE_LINK,
                   SEMANTIC_TEST);
     if (ret < 0) {
-        RTE_LOG(ERR, NETIF, "%s: fail to start PX on %s\n",
+        RTE_LOG(ERR, NETIF, "%s: px_init failed on %s\n",
+                __func__, port->name);
+        return EDPVS_DPDKAPIFAIL;
+    }
+#else
+    // start stat monitor
+    ret = px_stat_start_monitor(1,
+                                rte_eth_dev_count_avail(),
+                                port->nrxq,
+                                port->ntxq,
+                                0,
+                                0,
+                                NULL,
+                                NULL);
+    if (ret < 0) {
+        RTE_LOG(ERR, NETIF, "%s: px_stat_start_monitor failed on %s\n",
                 __func__, port->name);
         return EDPVS_DPDKAPIFAIL;
     }

@@ -412,6 +412,20 @@ port_init(uint16_t port_id, uint16_t num_queue)
     {
         rte_exit(EXIT_FAILURE, "px_init failed\n");
     }
+#else
+    /* Start stat printing */
+    ret = px_stat_start_monitor(1,
+                                g_num_ports,
+                                g_num_cores,
+                                g_num_cores,
+                                0,
+                                0,
+                                NULL,
+                                NULL);
+    if (ret < 0)
+    {
+        rte_exit(EXIT_FAILURE, "px_stat_start_monitor failed\n");
+    }
 #endif
 
     /* retrieve current flow control settings per port */
@@ -780,18 +794,6 @@ int main(int argc, char **argv)
     sa.sa_flags = 0;
     sigemptyset(&sa.sa_mask);
     sigaction(SIGINT, &sa, NULL);
-
-#if !USE_PX
-    /* thread for stat printing */
-    px_stat_start_monitor(1,
-                          g_num_ports,
-                          g_num_cores,
-                          g_num_cores,
-                          0,
-                          0,
-                          NULL,
-                          NULL);
-#endif
 
     /* launch lcore main on each worker core */
     g_shutdown = 0;

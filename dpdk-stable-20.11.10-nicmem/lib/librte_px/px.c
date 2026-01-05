@@ -2759,14 +2759,15 @@ int px_init(uint16_t port_id,
         return -1;
     }
 
+    /* after async API initialization, initialize dynamic RX queues */
     if (!px_dev->initialized_dyn_rxq)
     {
         px_dev->num_lxq = px_dev->max_rxq;
     }
     else
     {
-        /* start from min gear */
-        ret = px_latent_gear_to_min(port_id);
+        /* initialize gears and start from the minimum gear */
+        ret = px_latent_gear_init(port_id);
         if (ret < 0)
         {
             rte_exit(EXIT_FAILURE,
@@ -2797,7 +2798,7 @@ int px_init(uint16_t port_id,
     //     return -1;
     // }
 
-    /* thread for stat printing */
+    /* start stat printing */
     ret = px_stat_start_monitor(STAT_INTERVAL,
                                 rte_eth_dev_count_avail(),
                                 px_dev->num_rxq,
@@ -3520,7 +3521,7 @@ px_eth_rx_burst(uint16_t port_id,
         px_dev->num_lxq = px_latent_num_lxq(port_id);
         px_latent_gear_ack_per_thread(port_id, queue_id);
 
-        /* check whether gear value decreased */
+        /* check whether num_lxq decreased */
         if (px_dev->num_lxq < px_dev->prev_num_lxq)
         {
             // fprintf(stdout,

@@ -1,9 +1,13 @@
 #include "px_stat.h"
 /*----------------------------------------------------------------------------*/
-static struct px_tcp_stat g_tcp_stat[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
-static struct px_rx_stat_latent g_rx_stat_latent[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
-static struct px_rx_stat g_rx_stat[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
-static struct px_tx_stat g_tx_stat[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
+static struct px_tcp_stat
+    g_tcp_stat[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
+static struct px_rx_stat_latent
+    g_rx_stat_latent[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
+static struct px_rx_stat
+    g_rx_stat[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
+static struct px_tx_stat
+    g_tx_stat[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
 static volatile int g_stat_interval = 0;
 extern int g_is_semantic_test;
 extern struct px_dev g_px_dev[RTE_MAX_ETHPORTS];
@@ -769,6 +773,8 @@ int px_stat_start_monitor(unsigned int stat_interval,
         perror("sigaction failed");
         return -1;
     }
+    (void)sa_gear_up;
+    (void)px_stat_shift_up_handler;
 
     /* register manual gear shift down handler */
     // sa_gear_down.sa_handler = px_stat_shift_down_handler;

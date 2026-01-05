@@ -674,6 +674,7 @@ dpdk_load_module_lower_half(void)
 			rte_eth_promiscuous_enable(portid);
 
 #if USE_PX
+			/* Start PX */
 			ret = px_init(portid,
 						  MAX_PKT_BURST,
 						  !JUMBO_FRAME ? 16384 : 0,
@@ -684,6 +685,18 @@ dpdk_load_module_lower_half(void)
 						  SEMANTIC_TEST);
 			if (ret < 0)
 				rte_exit(EXIT_FAILURE, "px_init failed\n");
+#else
+			/* Start stat printing */
+			ret = px_stat_start_monitor(1,
+										rte_eth_dev_count_avail(),
+										g_config.mos->num_cores,
+										g_config.mos->num_cores,
+										0,
+										0,
+										NULL,
+										NULL);
+			if (ret < 0)
+				rte_exit(EXIT_FAILURE, "px_stat_start_monitor failed\n");
 #endif
 
 			/* retrieve current flow control settings per port */

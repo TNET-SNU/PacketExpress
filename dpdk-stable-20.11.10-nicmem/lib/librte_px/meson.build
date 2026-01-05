@@ -16,7 +16,7 @@ sources = files(
         'px_arp.c',
         'px_async.c',
         'px_offload.c',
-        #'px_l5_flow.c',
+        'px_l5_flow.c',
 )
 headers = files(
         'px_common.h',
@@ -34,6 +34,6 @@ headers = files(
         'px_arp.h',
         'px_async.h',
         'px_offload.h',
-        #'px_l5_flow.h',
+        'px_l5_flow.h',
 )
 deps += ['ethdev', 'hash', 'gro', 'gso']

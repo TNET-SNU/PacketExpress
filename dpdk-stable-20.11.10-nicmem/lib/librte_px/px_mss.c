@@ -1,6 +1,7 @@
 #include "px_mss.h"
 /*----------------------------------------------------------------------------*/
-static struct px_mss_ctx g_mss_ctx[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
+static struct px_mss_ctx
+    g_mss_ctx[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
 static uint16_t g_num_cores = 0;
 static pthread_t g_mss_tid = 0;
 static volatile int g_mss_shutdown = 0;

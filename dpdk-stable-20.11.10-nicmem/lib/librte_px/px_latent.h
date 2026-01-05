@@ -531,30 +531,46 @@ uint16_t px_latent_min_gear_idx(uint16_t port_id);
 int px_latent_gear_jump(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 /**
+ * Initialize gears and set to the minimum gear.
  * This function uses synchronous rte_flow APIs.
  * Do not call in the main loop.
  */
-int px_latent_gear_init(uint16_t port_id,
-                        uint16_t gear_idx);
+int px_latent_gear_init(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 /**
- * This function uses synchronous rte_flow APIs.
+ * Manually set gear to the target gear.
+ * Since this function uses synchronous rte_flow APIs,
  * Do not call in the main loop.
  */
-static inline int
-px_latent_gear_to_min(uint16_t port_id)
+int px_latent_gear_to_target(uint16_t core_id,
+                             uint16_t port_id,
+                             uint16_t gear_idx);
+/*----------------------------------------------------------------------------*/
+/**
+ * Manually seg gear to the minimum gear.
+ * Since this function uses synchronous rte_flow APIs,
+ * Do not call in the main loop.
+ */
+static inline int px_latent_gear_to_min(uint16_t core_id,
+                                        uint16_t port_id)
 {
-    return px_latent_gear_init(port_id, px_latent_min_gear_idx(port_id));
+    return px_latent_gear_to_target(core_id,
+                                    port_id,
+                                    px_latent_min_gear_idx(port_id));
 }
 /*----------------------------------------------------------------------------*/
 /**
- * This function uses synchronous rte_flow APIs.
+ * Manually seg gear to the maximum gear.
+ * Since this function uses synchronous rte_flow APIs,
  * Do not call in the main loop.
  */
 static inline int
-px_latent_gear_to_max(uint16_t port_id)
+px_latent_gear_to_max(uint16_t core_id,
+                      uint16_t port_id)
 {
-    return px_latent_gear_init(port_id, px_latent_max_gear_idx(port_id));
+    return px_latent_gear_to_target(core_id,
+                                    port_id,
+                                    px_latent_max_gear_idx(port_id));
 }
 /*----------------------------------------------------------------------------*/
 int px_latent_gear_shift_up(uint16_t core_id,

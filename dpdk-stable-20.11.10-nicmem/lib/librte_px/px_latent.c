@@ -236,8 +236,7 @@ int px_latent_gear_jump(uint16_t port_id)
 }
 /*----------------------------------------------------------------------------*/
 /* Since we call this at initial time, we do not need to use px_flow APIs */
-int px_latent_gear_init(uint16_t port_id,
-                        uint16_t gear_idx)
+int px_latent_gear_init(uint16_t port_id)
 {
     struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
     struct px_latent_gear *gear;
@@ -252,9 +251,11 @@ int px_latent_gear_init(uint16_t port_id,
     }
 
     /* create rule from the highest gear */
-    for (i = latent_ctx->num_gears - 1; i >= gear_idx; i--)
+    for (i = latent_ctx->num_gears - 1; i >= 0; i--)
     {
         gear = &latent_ctx->gears[i];
+
+        /* get minimum gear index during initializing */
         if (gear->num_lxq < latent_ctx->num_rxq)
         {
             if (i < latent_ctx->num_gears - 1)
@@ -301,8 +302,119 @@ int px_latent_gear_init(uint16_t port_id,
         }
     }
 
-    /* notify to worker threads */
-    px_latent_gear_notify(port_id);
+    /**
+     * since we used synchronous rte_flow APIs,
+     * do not need to notify to worker threads
+     */
+
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
+/* Since it should be done atomically, we do not use px_flow APIs here */
+int px_latent_gear_to_target(uint16_t core_id,
+                             uint16_t port_id,
+                             uint16_t gear_idx)
+{
+    struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
+    struct px_latent_gear *gear;
+    struct rte_flow_error error;
+    uint16_t cur_gear_idx;
+    int i, ret;
+
+    if (!latent_ctx->flow_initialized || !latent_ctx->num_gears)
+    {
+        fprintf(stdout,
+                "flow not initialized\n");
+        return -1;
+    }
+
+    /* check if current gear is the target gear */
+    cur_gear_idx = px_latent_gear(port_id);
+    if (cur_gear_idx == gear_idx)
+    {
+        /* already in the target gear */
+        return 0;
+    }
+
+    /* check if current gear is lower than the target gear */
+    if (cur_gear_idx < gear_idx)
+    {
+        /* destroy rule from current gear to the target gear */
+        for (i = cur_gear_idx; i < gear_idx; i++)
+        {
+            gear = &latent_ctx->gears[i];
+
+            MEASURE("rte_flow_destroy",
+                    ret =
+                        rte_flow_destroy(port_id,
+                                         gear->flow,
+                                         &error);)
+            if (ret < 0)
+            {
+                fprintf(stderr,
+                        "rte_flow_destroy failed "
+                        "for gear %d (num_lxq %d), "
+                        "error: %s",
+                        gear->index, gear->num_lxq,
+                        error.message);
+                return -1;
+            }
+        }
+
+        /**
+         * since we used synchronous rte_flow APIs,
+         * do not need to notify to worker threads
+         */
+
+        return 0;
+    }
+
+    /* create rule from the current gear to the target gear */
+    for (i = cur_gear_idx - 1; i >= gear_idx; i--)
+    {
+        gear = &latent_ctx->gears[i];
+
+        MEASURE("rte_flow_validate",
+                ret =
+                    rte_flow_validate(port_id,
+                                      &gear->attr,
+                                      gear->patterns,
+                                      gear->actions,
+                                      &error);)
+        if (ret < 0)
+        {
+            fprintf(stderr,
+                    "rte_flow_validate failed "
+                    "for gear %d (num_lxq %d), "
+                    "error: %s",
+                    gear->index, gear->num_lxq,
+                    error.message);
+            return -1;
+        }
+
+        MEASURE("rte_flow_create",
+                gear->flow =
+                    rte_flow_create(port_id,
+                                    &gear->attr,
+                                    gear->patterns,
+                                    gear->actions,
+                                    &error);)
+        if (!gear->flow)
+        {
+            fprintf(stderr,
+                    "rte_flow_create failed "
+                    "for gear %d (num_lxq %d), "
+                    "error: %s",
+                    gear->index, gear->num_lxq,
+                    error.message);
+            return -1;
+        }
+    }
+
+    /**
+     * since we used synchronous rte_flow APIs,
+     * do not need to notify to worker threads
+     */
 
     return 0;
 }
@@ -492,11 +604,11 @@ void px_latent_gear_shift_up_static(uint16_t core_id)
              * if already in the highest gear,
              * try to go back to the minimum gear
              */
-            ret = px_latent_gear_to_min(port_id);
+            ret = px_latent_gear_to_min(core_id, port_id);
             if (ret < 0)
             {
                 rte_exit(EXIT_FAILURE,
-                         "[port %d] px_latent_gear_init failed\n",
+                         "[port %d] px_latent_gear_to_min failed\n",
                          port_id);
             }
         }
@@ -537,11 +649,11 @@ void px_latent_gear_shift_down_static(uint16_t core_id)
         if (ret == -3)
         {
             /* if already in the highest gear, try to go back to the minimum gear */
-            ret = px_latent_gear_to_max(port_id);
+            ret = px_latent_gear_to_max(core_id, port_id);
             if (ret < 0)
             {
                 rte_exit(EXIT_FAILURE,
-                         "[port %d] px_latent_gear_init failed\n",
+                         "[port %d] px_latent_gear_to_max failed\n",
                          port_id);
             }
         }
@@ -801,7 +913,7 @@ uint16_t px_latent_num_lxq(uint16_t port_id)
     }
 
     /**
-     * discover gear value
+     * discover num_lxq
      * from high priority gear (low gear)
      * to low priority gear (high gear)
      */
@@ -936,10 +1048,11 @@ int px_latent_gear_shift(struct perf_metric *cur,
     /* check ack from worker cores */
     if (!prev_port)
     {
-        /* check acked by worker thread for each port */
+        /* if notified, check whether they are acked by worker thread for each port */
         for (port_id = 0; port_id < g_num_ports; port_id++)
         {
-            if (!px_latent_gear_check_ack(port_id))
+            if (px_latent_gear_check_notify(port_id) &&
+                !px_latent_gear_check_ack(port_id))
             {
                 /* previous shifting is not acked by worker threads */
                 return -1;
@@ -1045,7 +1158,7 @@ int px_latent_gear_shift(struct perf_metric *cur,
         {
             for (port_id = prev_port; port_id < g_num_ports; port_id++)
             {
-                ret = px_latent_gear_to_min(port_id);
+                ret = px_latent_gear_to_min(core_id, port_id);
                 if (ret < 0)
                 {
                     fprintf(stderr,

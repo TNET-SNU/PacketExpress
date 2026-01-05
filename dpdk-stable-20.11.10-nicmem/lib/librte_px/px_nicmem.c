@@ -1,7 +1,8 @@
 #include "px_nicmem.h"
 /*----------------------------------------------------------------------------*/
 static struct px_nicmem_ctx g_nicmem_ctx[RTE_MAX_ETHPORTS] = {0};
-static struct rte_mempool *g_ext_pool[RTE_MAX_NUMA_NODES][RTE_MAX_ETHPORTS] = {NULL};
+static struct rte_mempool *
+    g_ext_pool[RTE_MAX_NUMA_NODES][RTE_MAX_ETHPORTS] = {NULL};
 /*----------------------------------------------------------------------------*/
 int px_nicmem_free(uint16_t port_id)
 {

@@ -515,6 +515,7 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
   dpdk_port_id_ = ret_port_id;
 
 #if USE_PX
+  /* Start PX */
   if (px_init(dpdk_port_id_,
               bess::PacketBatch::kMaxBurst,
               !JUMBO_FRAME ? 16384 : 0,
@@ -526,15 +527,17 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
     return CommandFailure(ENOMEM, "px_init failed");
   }
 #else
-  /* thread for stat printing */
-  ret = px_stat_start_monitor(1,
-                              rte_eth_dev_count_avail(),
-                              num_rxq,
-                              num_txq,
-                              0,
-                              0,
-                              NULL,
-                              NULL);
+  /* Start stat printing */
+  if (px_stat_start_monitor(1,
+                            rte_eth_dev_count_avail(),
+                            num_rxq,
+                            num_txq,
+                            0,
+                            0,
+                            NULL,
+                            NULL) < 0) {
+    return CommandFailure(errno, "px_stat_start_monitor failed");
+  }
 #endif
 
   int numa_node = arg.socket_case() == bess::pb::PMDPortArg::kSocketId ?
