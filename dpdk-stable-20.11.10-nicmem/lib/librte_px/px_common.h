@@ -444,6 +444,57 @@ px_hexdump(const char *title,
     fprintf(stdout, "\n");
 }
 /*----------------------------------------------------------------------------*/
+static inline int
+px_chained_trim(struct rte_mbuf *pkt, uint32_t len)
+{
+    uint32_t target_size = pkt->pkt_len - len;
+    struct rte_mbuf *edge = pkt;
+    uint32_t acc = 0;
+    uint32_t trim_size = 0;
+    uint16_t seg_idx;
+
+    if (!pkt || !len || len >= pkt->pkt_len)
+    {
+        /* invalid parameters */
+        return -1;
+    }
+
+    /* find edge segment (the last segment to keep) */
+    for (seg_idx = 0; seg_idx < pkt->nb_segs; seg_idx++)
+    {
+        acc += edge->data_len;
+        if (acc >= target_size)
+        {
+            /* bytes to trim from edge tail */
+            trim_size = acc - target_size;
+            break;
+        }
+        edge = edge->next;
+    }
+
+    if (seg_idx >= pkt->nb_segs || trim_size > edge->data_len)
+    {
+        /* should not happen */
+        return -1;
+    }
+
+    /* free from edge->next */
+    if (edge->next)
+    {
+        rte_pktmbuf_free(edge->next);
+        edge->next = NULL;
+    }
+
+    /* trim edge segment */
+    edge->data_len -= trim_size;
+
+    /* update head */
+    pkt->pkt_len = target_size;
+    pkt->nb_segs = seg_idx + 1;
+
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
 static inline void
 busy_wait_for(unsigned int ns)
 {
@@ -513,27 +564,34 @@ get_eth_type(struct rte_mbuf *pkt)
                                    RTE_ETHER_ADDR_LEN * 2);
 }
 /*----------------------------------------------------------------------------*/
+static inline struct rte_ipv4_hdr *
+get_ipv4_hdr(struct rte_mbuf *pkt)
+{
+    return rte_pktmbuf_mtod_offset(pkt, struct rte_ipv4_hdr *,
+                                   pkt->l2_len);
+}
+/*----------------------------------------------------------------------------*/
 static inline uint8_t *
-get_ip_ver_ihlen(struct rte_mbuf *pkt)
+get_ipv4_ver_ihlen(struct rte_mbuf *pkt)
 {
     return rte_pktmbuf_mtod_offset(pkt, uint8_t *,
                                    pkt->l2_len);
 }
 /*----------------------------------------------------------------------------*/
 static inline uint8_t
-get_ip_version(struct rte_mbuf *pkt)
+get_ipv4_version(struct rte_mbuf *pkt)
 {
-    return *get_ip_ver_ihlen(pkt) & 0xf0;
+    return *get_ipv4_ver_ihlen(pkt) & 0xf0;
 }
 /*----------------------------------------------------------------------------*/
 static inline uint8_t
-get_ip_ihlen(struct rte_mbuf *pkt)
+get_ipv4_ihlen(struct rte_mbuf *pkt)
 {
-    return (*get_ip_ver_ihlen(pkt) & 0x0f) << 2; // ihlen in bytes
+    return (*get_ipv4_ver_ihlen(pkt) & 0x0f) << 2; // ihlen in bytes
 }
 /*----------------------------------------------------------------------------*/
 static inline uint8_t *
-get_ip_tos(struct rte_mbuf *pkt)
+get_ipv4_tos(struct rte_mbuf *pkt)
 {
     return rte_pktmbuf_mtod_offset(pkt, uint8_t *,
                                    pkt->l2_len +
@@ -541,7 +599,7 @@ get_ip_tos(struct rte_mbuf *pkt)
 }
 /*----------------------------------------------------------------------------*/
 static inline uint16_t *
-get_ip_len(struct rte_mbuf *pkt)
+get_ipv4_len(struct rte_mbuf *pkt)
 {
     return rte_pktmbuf_mtod_offset(pkt, uint16_t *,
                                    pkt->l2_len +
@@ -549,7 +607,7 @@ get_ip_len(struct rte_mbuf *pkt)
 }
 /*----------------------------------------------------------------------------*/
 static inline uint16_t *
-get_ip_id(struct rte_mbuf *pkt)
+get_ipv4_id(struct rte_mbuf *pkt)
 {
     return rte_pktmbuf_mtod_offset(pkt, uint16_t *,
                                    pkt->l2_len +
@@ -557,7 +615,7 @@ get_ip_id(struct rte_mbuf *pkt)
 }
 /*----------------------------------------------------------------------------*/
 static inline uint8_t *
-get_ip_protoid(struct rte_mbuf *pkt)
+get_ipv4_protoid(struct rte_mbuf *pkt)
 {
     return rte_pktmbuf_mtod_offset(pkt, uint8_t *,
                                    pkt->l2_len +
@@ -616,6 +674,22 @@ get_dst_ip(struct rte_mbuf *pkt)
     return rte_pktmbuf_mtod_offset(pkt, uint32_t *,
                                    pkt->l2_len +
                                        4 * sizeof(uint32_t)); // Ver ~ src_ip
+}
+/*----------------------------------------------------------------------------*/
+static inline struct rte_tcp_hdr *
+get_tcp_hdr(struct rte_mbuf *pkt)
+{
+    return rte_pktmbuf_mtod_offset(pkt, struct rte_tcp_hdr *,
+                                   pkt->l2_len +
+                                       pkt->l3_len);
+}
+/*----------------------------------------------------------------------------*/
+static inline struct rte_udp_hdr *
+get_udp_hdr(struct rte_mbuf *pkt)
+{
+    return rte_pktmbuf_mtod_offset(pkt, struct rte_udp_hdr *,
+                                   pkt->l2_len +
+                                       pkt->l3_len);
 }
 /*----------------------------------------------------------------------------*/
 static inline uint16_t *
@@ -705,7 +779,7 @@ get_tcp_flags(struct rte_mbuf *pkt)
                                        sizeof(uint16_t) + // dst port
                                        sizeof(uint32_t) + // seq
                                        sizeof(uint32_t) + // ack
-                                       sizeof(uint8_t)); // offset
+                                       sizeof(uint8_t));  // offset
 }
 /*----------------------------------------------------------------------------*/
 static inline uint16_t *
@@ -718,8 +792,8 @@ get_tcp_advwnd(struct rte_mbuf *pkt)
                                        sizeof(uint16_t) + // dst port
                                        sizeof(uint32_t) + // seq
                                        sizeof(uint32_t) + // ack
-                                       sizeof(uint8_t) + // offset
-                                       sizeof(uint8_t)); // flags
+                                       sizeof(uint8_t) +  // offset
+                                       sizeof(uint8_t));  // flags
 }
 /*----------------------------------------------------------------------------*/
 static inline uint16_t *
@@ -732,8 +806,8 @@ get_tcp_cksum(struct rte_mbuf *pkt)
                                        sizeof(uint16_t) + // dst port
                                        sizeof(uint32_t) + // seq
                                        sizeof(uint32_t) + // ack
-                                       sizeof(uint8_t) + // offset
-                                       sizeof(uint8_t) + // flags
+                                       sizeof(uint8_t) +  // offset
+                                       sizeof(uint8_t) +  // flags
                                        sizeof(uint16_t)); // advwnd
 }
 /*----------------------------------------------------------------------------*/
@@ -867,12 +941,42 @@ static inline uint8_t *
 get_payload(struct rte_mbuf *pkt)
 {
     /* payload is contiguous to L4 header */
-    if (pkt->data_len >get_hdr_len(pkt))
+    if (pkt->data_len > get_hdr_len(pkt))
     {
         return rte_pktmbuf_mtod_offset(pkt, uint8_t *, get_hdr_len(pkt));
     }
     /* L2/3/4 headers are decapped */
     return rte_pktmbuf_mtod(pkt->next, uint8_t *);
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+fill_l2_len(struct rte_mbuf *pkt)
+{
+    pkt->l2_len = sizeof(struct rte_ether_hdr);
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+fill_ipv4_l3_len(struct rte_mbuf *pkt)
+{
+    struct rte_ipv4_hdr *ipv4_hdr = get_ipv4_hdr(pkt);
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    pkt->l3_len = (ipv4_hdr->version_ihl & 0x0f) << 2;
+#else
+    pkt->l3_len = ipv4_hdr->ihl << 2;
+#endif
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+fill_tcp_l4_len(struct rte_mbuf *pkt)
+{
+    struct rte_tcp_hdr *tcp_hdr = get_tcp_hdr(pkt);
+    pkt->l4_len = tcp_hdr->data_off >> 4 << 2;
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+fill_udp_l4_len(struct rte_mbuf *pkt)
+{
+    pkt->l4_len = sizeof(struct rte_udp_hdr);
 }
 /*----------------------------------------------------------------------------*/
 static inline int
@@ -883,21 +987,6 @@ is_ipv4(struct rte_mbuf *pkt)
 #else
     return pkt->packet_type & RTE_PTYPE_L3_IPV4;
 #endif
-}
-/*----------------------------------------------------------------------------*/
-static inline int
-is_dtb(struct rte_mbuf *pkt)
-{
-    struct rte_icmp_hdr *icmp_hdr;
-    icmp_hdr = rte_pktmbuf_mtod_offset(pkt,
-                                       struct rte_icmp_hdr *,
-                                       pkt->l2_len + pkt->l3_len);
-    if ((icmp_hdr->icmp_type == 3) && (icmp_hdr->icmp_code == 4))
-    {
-        return 1;
-    }
-
-    return 0;
 }
 /*----------------------------------------------------------------------------*/
 static inline int
@@ -914,7 +1003,7 @@ static inline int
 is_tcp(struct rte_mbuf *pkt)
 {
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
-    return *get_ip_protoid(pkt) == IPPROTO_TCP;
+    return *get_ipv4_protoid(pkt) == IPPROTO_TCP;
 #else
     return pkt->packet_type & RTE_PTYPE_L4_TCP;
 #endif
@@ -924,7 +1013,7 @@ static inline int
 is_udp(struct rte_mbuf *pkt)
 {
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
-    return *get_ip_protoid(pkt) == IPPROTO_UDP;
+    return *get_ipv4_protoid(pkt) == IPPROTO_UDP;
 #else
     return pkt->packet_type & RTE_PTYPE_L4_UDP;
 #endif
@@ -934,7 +1023,7 @@ static inline int
 is_icmp(struct rte_mbuf *pkt)
 {
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
-    return *get_ip_protoid(pkt) == IPPROTO_ICMP;
+    return *get_ipv4_protoid(pkt) == IPPROTO_ICMP;
 #else
     return pkt->packet_type & RTE_PTYPE_L4_ICMP;
 #endif
@@ -944,9 +1033,63 @@ static inline int
 is_sctp(struct rte_mbuf *pkt)
 {
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
-    return *get_ip_protoid(pkt) == IPPROTO_SCTP;
+    return *get_ipv4_protoid(pkt) == IPPROTO_SCTP;
 #else
     return pkt->packet_type & RTE_PTYPE_L4_SCTP;
+#endif
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+setup_ipv4_tx_cksum(struct rte_mbuf *pkt)
+{
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    pkt->ol_flags |= PKT_TX_IPV4 |
+                     PKT_TX_IP_CKSUM;
+#else
+    pkt->ol_flags |= RTE_MBUF_F_TX_IPV4 |
+                     RTE_MBUF_F_TX_IP_CKSUM;
+#endif
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+setup_ipv6_tx_cksum(struct rte_mbuf *pkt)
+{
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    pkt->ol_flags |= PKT_TX_IPV6 |
+                     PKT_TX_IP_CKSUM;
+#else
+    pkt->ol_flags |= RTE_MBUF_F_TX_IPV6 |
+                     RTE_MBUF_F_TX_IP_CKSUM;
+#endif
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+setup_tcp_tx_cksum(struct rte_mbuf *pkt)
+{
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    pkt->ol_flags |= PKT_TX_TCP_CKSUM;
+#else
+    pkt->ol_flags |= RTE_MBUF_F_TX_TCP_CKSUM;
+#endif
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+setup_udp_tx_cksum(struct rte_mbuf *pkt)
+{
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    pkt->ol_flags |= PKT_TX_UDP_CKSUM;
+#else
+    pkt->ol_flags |= RTE_MBUF_F_TX_UDP_CKSUM;
+#endif
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+setup_sctp_tx_cksum(struct rte_mbuf *pkt)
+{
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    pkt->ol_flags |= PKT_TX_SCTP_CKSUM;
+#else
+    pkt->ol_flags |= RTE_MBUF_F_TX_SCTP_CKSUM;
 #endif
 }
 /*----------------------------------------------------------------------------*/
@@ -989,21 +1132,36 @@ is_tso(struct rte_mbuf *pkt)
 static inline int
 is_px(struct rte_mbuf *pkt)
 {
-    return *get_ip_tos(pkt) & PX_MARK_ON_TOS;
+    return *get_ipv4_tos(pkt) & PX_MARK_ON_TOS;
 }
 /*----------------------------------------------------------------------------*/
 static inline int
 mark_px(struct rte_mbuf *pkt)
 {
-    uint8_t *tos = get_ip_tos(pkt);
+    uint8_t *tos = get_ipv4_tos(pkt);
     return *tos |= PX_MARK_ON_TOS;
 }
 /*----------------------------------------------------------------------------*/
 static inline int
 unmark_px(struct rte_mbuf *pkt)
 {
-    uint8_t *tos = get_ip_tos(pkt);
+    uint8_t *tos = get_ipv4_tos(pkt);
     return *tos &= ~PX_MARK_ON_TOS;
+}
+/*----------------------------------------------------------------------------*/
+static inline int
+is_dtb(struct rte_mbuf *pkt)
+{
+    struct rte_icmp_hdr *icmp_hdr;
+    icmp_hdr = rte_pktmbuf_mtod_offset(pkt,
+                                       struct rte_icmp_hdr *,
+                                       pkt->l2_len + pkt->l3_len);
+    if ((icmp_hdr->icmp_type == 3) && (icmp_hdr->icmp_code == 4))
+    {
+        return 1;
+    }
+
+    return 0;
 }
 /*----------------------------------------------------------------------------*/
 static inline int
@@ -1064,7 +1222,7 @@ is_downlink_default(struct rte_mbuf *pkt)
 static inline void
 update_iplen(struct rte_mbuf *pkt)
 {
-    uint16_t *iplen = get_ip_len(pkt);
+    uint16_t *iplen = get_ipv4_len(pkt);
     *iplen = rte_cpu_to_be_16(pkt->pkt_len - pkt->l2_len);
 }
 /*----------------------------------------------------------------------------*/
@@ -1072,7 +1230,7 @@ static inline void
 update_ipid(struct rte_mbuf *pkt,
             uint16_t new_id)
 {
-    uint16_t *ip_id = get_ip_id(pkt);
+    uint16_t *ip_id = get_ipv4_id(pkt);
     *ip_id = rte_cpu_to_be_16(new_id);
 }
 /*----------------------------------------------------------------------------*/
@@ -1082,6 +1240,31 @@ update_udplen(struct rte_mbuf *pkt)
     uint16_t *udplen;
     udplen = get_udp_len(pkt);
     *udplen = rte_cpu_to_be_16(pkt->pkt_len - pkt->l2_len - pkt->l3_len);
+}
+/*----------------------------------------------------------------------------*/
+/*
+ * if a TCP packet is seperated, update seq of second TCP packet
+ */
+static inline void
+update_tcpseq(struct rte_mbuf *pkt,
+              uint32_t diff)
+{
+    uint32_t *seq = get_tcp_seq(pkt);
+    *seq = rte_cpu_to_be_32(rte_be_to_cpu_32(*seq) + diff);
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+update_tso(struct rte_mbuf *pkt,
+           uint16_t segsz)
+{
+    if (get_data_len(pkt) > segsz)
+    {
+        setup_tso(pkt, segsz);
+    }
+    else
+    {
+        unset_tso(pkt);
+    }
 }
 /*----------------------------------------------------------------------------*/
 static inline void

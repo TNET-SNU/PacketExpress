@@ -108,7 +108,7 @@ void ht_destroy(uint16_t core_id)
 int ht_is_same_pattern(struct ri_node *node1,
                        struct ri_node *node2)
 {
-    if (*get_ip_protoid(node1->pkt) != *get_ip_protoid(node2->pkt))
+    if (*get_ipv4_protoid(node1->pkt) != *get_ipv4_protoid(node2->pkt))
     {
         return 0;
     }

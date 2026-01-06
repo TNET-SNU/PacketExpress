@@ -94,11 +94,14 @@ compare_option(struct rte_mbuf *pkt1,
 /*----------------------------------------------------------------------------*/
 /* Check if two TCP/IPv4 packets are neighbors. */
 /*
- * 0: not related
- * 1: append
- * 2: prepend
- * 3: free latter and choose former
- * 4: free former and choose latter
+ * 1: append pkt2
+ * -1: prepend pkt2
+ * 3: pkt1 includes pkt2, so free pkt2
+ * -3: pkt2 includes pkt1, so free pkt1
+ * 4: append pkt2 after trim pkt1
+ * -4: prepend pkt2 after trim pkt1
+ * 2: not neighbor, and forward order
+ * -2: not neighbor, and reverse order
  */
 static inline int
 compare_seq(struct rte_mbuf *pkt1,
@@ -111,41 +114,77 @@ compare_seq(struct rte_mbuf *pkt1,
     uint32_t datalen2 = get_data_len(pkt2);
     uint32_t end2 = seq2 + datalen2;
 
-    /* append or pre-pend the new packet */
+    /* append the latter */
     if (likely(end1 == seq2))
     {
         return 1;
     }
 
+    /* prepend the latter */
     if (end2 == seq1)
     {
         return -1;
     }
 
-    if ((MAX(end1, end2) - MIN(seq1, seq2)) > (datalen1 + datalen2))
+    /* forward order */
+    if (SEQ_LT(end1, seq2))
     {
-        return 0;
+        return 2;
     }
 
-    /* ToDo: explore overlap case further */
-    // if (seq1 == seq2)
-    // {
-    //     if (datalen1 >= datalen2)
-    //     {
-    //         return 3;
-    //     }
+    /* reverse order */
+    if (SEQ_LT(end2, seq1))
+    {
+        return -2;
+    }
 
-    //     return 4;
-    // }
+    /* overlap case with same edge */
+    if ((seq1 == seq2) || (end1 == end2))
+    {
+        if (datalen1 >= datalen2)
+        {
+            return 3; // free latter
+        }
 
-    return 0;
+        return -3; // free former
+    }
+
+    /* overlap case without any matched edge */
+    if (SEQ_LT(seq1, seq2))
+    {
+        if (SEQ_LT(end2, end1))
+        {
+            return 3; // free latter
+        }
+
+        if (px_chained_trim(pkt1, SEQ_DIFF(end1, seq2)) < 0)
+        {
+            printf("2 cannot trim, treat as not related\n");
+            return 2; // cannot trim, treat as not related
+        }
+
+        return 4;
+    }
+
+    if (SEQ_LT(end1, end2))
+    {
+        return -3; // free former
+    }
+
+    if (px_chained_trim(pkt2, SEQ_DIFF(end2, seq1)) < 0)
+    {
+        printf("-2 cannot trim, treat as not related\n");
+        return -2; // cannot trim, treat as not related
+    }
+
+    return -4;
 }
 /*----------------------------------------------------------------------------*/
 /* Check if two UDP/IPv4 packets are neighbors. */
 /*
  * 0: not related
- * 1: append
- * 2: prepend
+ * 1: append pkt2
+ * -1: prepend pkt2
  */
 static inline int
 compare_ipid(struct rte_mbuf *pkt1,
@@ -154,8 +193,8 @@ compare_ipid(struct rte_mbuf *pkt1,
     struct rte_mbuf *seg;
     uint16_t diff1 = 0;
     uint16_t diff2 = 0;
-    uint16_t id1 = rte_be_to_cpu_16(*get_ip_id(pkt1));
-    uint16_t id2 = rte_be_to_cpu_16(*get_ip_id(pkt2));
+    uint16_t id1 = rte_be_to_cpu_16(*get_ipv4_id(pkt1));
+    uint16_t id2 = rte_be_to_cpu_16(*get_ipv4_id(pkt2));
 
     // fprintf(stdout,
     //         "nb_segs: pkt1 %d, pkt2 %d\n", pkt1->nb_segs, pkt2->nb_segs);
@@ -194,62 +233,19 @@ compare_ipid(struct rte_mbuf *pkt1,
     return 0;
 }
 /*----------------------------------------------------------------------------*/
-/* Check if two TCP/IPv4 packets are neighbors. */
-static inline int
-check_seq_backup(struct rte_mbuf *pkt1,
-                 struct rte_mbuf *pkt2)
-{
-    uint32_t seq1 = rte_be_to_cpu_32(*get_tcp_seq(pkt1));
-    uint32_t datalen1 = get_data_len(pkt1);
-    uint32_t seq2 = rte_be_to_cpu_32(*get_tcp_seq(pkt2));
-    uint32_t datalen2 = get_data_len(pkt2);
-
-    /* append or pre-pend the new packet */
-    if (SEQ_LT(seq1, seq2))
-    {
-        if ((seq1 + datalen1) == seq2)
-        {
-            /* in-order continuous, so appendable */
-            return 1;
-        }
-        /* in-order */
-        return 2;
-    }
-    if (SEQ_GT(seq1, seq2))
-    {
-        if ((seq2 + datalen2) == seq1)
-        {
-            /* reverse-order continuous, so prependable */
-            return -1;
-        }
-        /* reverse-order */
-        return -2;
-    }
-
-    /* retransmission in a same batch */
-    if (SEQ_LT(datalen1, datalen2))
-    {
-        /* latter is longer, remove the original */
-        return -3;
-    }
-
-    /* same data len, or former is longer, remove the latter */
-    return 0;
-}
-/*----------------------------------------------------------------------------*/
 /* Check if TCP option fields equal and seq fields are continuous. */
 static inline int
 compare_option_seq(struct rte_mbuf *pkt1,
                    struct rte_mbuf *pkt2)
 {
-    if (!compare_advwin(pkt1, pkt2))
-    {
-        return 0;
-    }
-    if (!compare_option(pkt1, pkt2))
-    {
-        return 0;
-    }
+    // if (!compare_advwin(pkt1, pkt2))
+    // {
+    //     return 0;
+    // }
+    // if (!compare_option(pkt1, pkt2))
+    // {
+    //     return 0;
+    // }
 
     return compare_seq(pkt1, pkt2);
 }
@@ -274,19 +270,27 @@ merge_tcp(struct px_item *cur_item,
     struct rte_mbuf *pkt_head, *pkt_tail;
     uint32_t *head_ack, *tail_ack;
     uint8_t *head_flags, *tail_flags;
+    uint16_t *head_advwnd, *tail_advwnd;
+    uint64_t *head_timestamp, *tail_timestamp;
+    uint32_t *head_tsval, *tail_tsval;
+    uint32_t *head_tsecr, *tail_tsecr;
 
     /* Thanks to TSO, we do not need to care about iMTU size */
     (void)imtu_size;
 
-    if (cmp == 1)
+    if (cmp == 1 || cmp == 3)
     {
         pkt_head = cur_item->firstseg;
         pkt_tail = firstseg;
     }
-    else if (cmp == -1)
+    else if (cmp == -1 || cmp == -3)
     {
         pkt_head = firstseg;
         pkt_tail = cur_item->firstseg;
+    }
+    else
+    {
+        rte_exit(EXIT_FAILURE, "Invalid cmp value %d in merge_tcp\n", cmp);
     }
 
     /* check if nb_segs is smaller than is nb_seg_max supported by the device */
@@ -320,17 +324,6 @@ merge_tcp(struct px_item *cur_item,
         }
     }
 
-    /* get ACK pointer before adjusting tail's header */
-    head_ack = get_tcp_ack(pkt_head);
-    tail_ack = get_tcp_ack(pkt_tail);
-
-    /* check if tail's ACK is greater than head's ACK */
-    if (SEQ_LT(ntohl(*head_ack), ntohl(*tail_ack)))
-    {
-        /* update head's ACK */
-        *head_ack = *tail_ack;
-    }
-
     /* get flags pointer before adjusting tail's header */
     head_flags = get_tcp_flags(pkt_head);
     tail_flags = get_tcp_flags(pkt_tail);
@@ -340,6 +333,83 @@ merge_tcp(struct px_item *cur_item,
     {
         /* update head's flags */
         *head_flags |= RTE_TCP_PSH_FLAG;
+    }
+
+    /* get TCP field pointers before adjusting tail's header */
+    head_ack = get_tcp_ack(pkt_head);
+    tail_ack = get_tcp_ack(pkt_tail);
+    head_advwnd = get_tcp_advwnd(pkt_head);
+    tail_advwnd = get_tcp_advwnd(pkt_tail);
+    head_timestamp = get_tcp_timestamp(pkt_head);
+    tail_timestamp = get_tcp_timestamp(pkt_tail);
+
+    /* check if tail's ACK is equall to head's ACK */
+    if (*head_ack == *tail_ack)
+    {
+        /* check if tail's ADV WND is smaller than head's ADV WND */
+        if (SEQ_GT(rte_be_to_cpu_16(*head_advwnd),
+                   rte_be_to_cpu_16(*tail_advwnd)))
+        {
+            /* update head's advwnd */
+            *head_advwnd = *tail_advwnd;
+        }
+
+        /* check if tail packet has greater TCP timestamp */
+        if (tail_timestamp && head_timestamp)
+        {
+            head_tsval = (uint32_t *)head_timestamp;
+            tail_tsval = (uint32_t *)tail_timestamp;
+            head_tsecr = head_tsval + 1;
+            tail_tsecr = tail_tsval + 1;
+
+            /* if tail TCP tsval is larger than head tsval */
+            if (SEQ_LT(rte_be_to_cpu_32(*head_tsval),
+                       rte_be_to_cpu_32(*tail_tsval)))
+            {
+                /* update head's TCP tsval */
+                *head_tsval = *tail_tsval;
+            }
+
+            /* if tail TCP tsecr is larger than head tsecr */
+            if (SEQ_LT(rte_be_to_cpu_32(*head_tsecr),
+                       rte_be_to_cpu_32(*tail_tsecr)))
+            {
+                /* update head's TCP tsecr */
+                *head_tsecr = *tail_tsecr;
+            }
+        }
+    }
+    /* check if tail's ACK is greater than head's ACK */
+    else if (SEQ_LT(rte_be_to_cpu_32(*head_ack),
+                    rte_be_to_cpu_32(*tail_ack)))
+    {
+        /* update head's ACK and ADV WND */
+        *head_ack = *tail_ack;
+        *head_advwnd = *tail_advwnd;
+
+        /* check if tail packet has greater TCP timestamp */
+        if (tail_timestamp && head_timestamp)
+        {
+            /* update head's TCP timestamp */
+            *head_timestamp = *tail_timestamp;
+        }
+    }
+
+    /* if tail's ACK is smaller than head's ACK, nothing to do */
+
+    if (cmp == 3)
+    {
+        /* free latter */
+        rte_pktmbuf_free(pkt_tail);
+        goto Merged;
+    }
+    if (cmp == -3)
+    {
+        /* free former and replace to latter */
+        rte_pktmbuf_free(pkt_tail);
+        cur_item->firstseg = firstseg;
+        cur_item->lastseg = lastseg;
+        goto Merged;
     }
 
     /* remove the packet header of tail packet */
@@ -355,13 +425,13 @@ merge_tcp(struct px_item *cur_item,
     /* chain two packets together */
     if (cmp == 1)
     {
-        cur_item->lastseg->next = firstseg;
+        cur_item->lastseg->next = pkt_tail;
         cur_item->lastseg = lastseg;
     }
     else if (cmp == -1)
     {
-        lastseg->next = cur_item->firstseg;
-        cur_item->firstseg = firstseg;
+        lastseg->next = pkt_tail;
+        cur_item->firstseg = pkt_head;
     }
 
     /* unmark first segment */
@@ -371,6 +441,7 @@ merge_tcp(struct px_item *cur_item,
     pkt_head->nb_segs += pkt_tail->nb_segs;
     pkt_head->pkt_len += pkt_tail->pkt_len;
 
+Merged:
     /* update timestamp of merged item */
     if (cur_item->timestamp > timestamp)
     {
@@ -401,6 +472,10 @@ merge_udp(struct px_item *cur_item,
     {
         pkt_head = firstseg;
         pkt_tail = cur_item->firstseg;
+    }
+    else
+    {
+        rte_exit(EXIT_FAILURE, "Invalid cmp value %d in merge_udp\n", cmp);
     }
 
     /* check if nb_segs is smaller than is nb_seg_max supported by the device */
@@ -460,13 +535,13 @@ merge_udp(struct px_item *cur_item,
     /* chain two packets together */
     if (cmp == 1)
     {
-        cur_item->lastseg->next = firstseg;
+        cur_item->lastseg->next = pkt_tail;
         cur_item->lastseg = lastseg;
     }
     else if (cmp == -1)
     {
-        lastseg->next = cur_item->firstseg;
-        cur_item->firstseg = firstseg;
+        lastseg->next = pkt_tail;
+        cur_item->firstseg = pkt_head;
     }
 
     /* unmark first segment */
@@ -553,6 +628,7 @@ encap_px_hdr(struct rte_mbuf *pkt)
     rte_pktmbuf_prepend(pkt, sizeof(struct rte_udp_hdr));
     memmove(rte_pktmbuf_mtod(pkt, uint8_t *), orig_data_off,
             pkt->l2_len + pkt->l3_len + sizeof(uint16_t) * 2);
+    mark_px(pkt);
 
     /* at this point, outer UDP header is same as the first inner UDP header */
 }
@@ -573,114 +649,9 @@ decap_px_hdr(struct rte_mbuf *pkt)
     rte_pktmbuf_append(pkt, sizeof(struct rte_udp_hdr));
     memmove(rte_pktmbuf_mtod(pkt, uint8_t *), orig_data_off,
             pkt->l2_len + pkt->l3_len);
+    unmark_px(pkt);
 
     /* at this point, outer UDP header is same as the first inner UDP header */
-}
-/*----------------------------------------------------------------------------*/
-static inline void
-update_udp(struct rte_mbuf *pkt)
-{
-    /* skip single packet */
-    if (is_single_pkt(pkt))
-    {
-        return;
-    }
-
-    /* encapsulate with PX caravan header */
-    encap_px_hdr(pkt);
-
-    /* update IP len */
-    update_iplen(pkt);
-
-    /* update UDP len */
-    update_udplen(pkt);
-
-    /* mark as PX caravan */
-    mark_px(pkt);
-}
-/*----------------------------------------------------------------------------*/
-/*
- * if a TCP packet is seperated, update seq of second TCP packet
- */
-static inline void
-update_seq(struct rte_mbuf *pkt,
-           uint32_t diff)
-{
-    uint32_t *seq = get_tcp_seq(pkt);
-    *seq = rte_cpu_to_be_32(rte_be_to_cpu_32(*seq) + diff);
-}
-/*----------------------------------------------------------------------------*/
-static inline void
-update_tcp(struct rte_mbuf *pkt,
-           uint16_t segsz)
-{
-    if (get_data_len(pkt) > segsz)
-    {
-        setup_tso(pkt, segsz);
-    }
-    else
-    {
-        unset_tso(pkt);
-    }
-
-    /* update header */
-    update_iplen(pkt);
-}
-/*----------------------------------------------------------------------------*/
-/* fill mbuf fields for IP packet */
-static inline void
-setup_ip(struct rte_mbuf *pkt,
-         int l3_len)
-{
-    /*
-     * We already concatenated non-TCP packets under 9KB.
-     * Also, checksums are not changed.
-     */
-    pkt->l3_len = l3_len;
-#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
-    pkt->ol_flags |= PKT_TX_IPV4 |
-                     PKT_TX_IP_CKSUM;
-#else
-    pkt->ol_flags |= RTE_MBUF_F_TX_IPV4 |
-                     RTE_MBUF_F_TX_IP_CKSUM;
-#endif
-}
-/*----------------------------------------------------------------------------*/
-/* Fill mbuf fields of a TCP packet. */
-static inline void
-setup_tcp(struct rte_mbuf *pkt,
-          int l4_len)
-{
-    pkt->l4_len = l4_len;
-#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
-    pkt->ol_flags |= PKT_TX_TCP_CKSUM;
-#else
-    pkt->ol_flags |= RTE_MBUF_F_TX_TCP_CKSUM;
-#endif
-}
-/*----------------------------------------------------------------------------*/
-/* fill mbuf fields for UDP packet */
-static inline void
-setup_udp(struct rte_mbuf *pkt)
-{
-    pkt->l4_len = sizeof(struct rte_udp_hdr);
-#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
-    pkt->ol_flags |= PKT_TX_UDP_CKSUM;
-#else
-    pkt->ol_flags |= RTE_MBUF_F_TX_UDP_CKSUM;
-#endif
-}
-/*----------------------------------------------------------------------------*/
-/* fill mbuf fields for SCTP packet */
-static inline void
-setup_sctp(struct rte_mbuf *pkt)
-{
-    pkt->l4_len = sizeof(struct rte_sctp_hdr);
-#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
-    pkt->ol_flags |= PKT_TX_SCTP_CKSUM;
-#else
-    pkt->ol_flags |= RTE_MBUF_F_TX_SCTP_CKSUM;
-#endif
 }
 /*----------------------------------------------------------------------------*/
 static inline uint32_t
@@ -948,6 +919,7 @@ separate_edge_seg(struct px_ctx *pctx,
         edge_tail->data_off += edge->data_len;
         edge_tail->data_len = trim_size;
         edge_tail->next = next;
+        mark_decaped(edge_tail);
     }
 
     /* make edge_head segment */
@@ -1008,7 +980,6 @@ separate_edge_seg(struct px_ctx *pctx,
     }
 
     unmark_decaped(edge_head);
-    mark_decaped(edge_tail);
     edge_head->data_len = hdr_size;
     edge_head->next = edge_tail;
     edge_head->pkt_len = hdr_size + last_segsz;
@@ -1021,15 +992,13 @@ separate_edge_seg(struct px_ctx *pctx,
         edge_head->nb_segs = pkt->nb_segs - (seg_idx - 1);
     }
 
-    /* update header (e.g., TCP seq, IP len) */
-    update_seq(edge_head, seq_diff);
-    update_iplen(edge_head);
-    update_ipid(edge_head, rte_be_to_cpu_16(*get_ip_id(edge_head)) + 2);
+    /* update header (e.g., TCP seq) */
+    update_tcpseq(edge_head, seq_diff);
+    update_ipid(edge_head, rte_be_to_cpu_16(*get_ipv4_id(pkt)) + 1);
 
     /* setup first segment */
     pkt->pkt_len = target_size;
     pkt->nb_segs = seg_idx + 1;
-    update_iplen(pkt);
 
     return edge_head;
 
@@ -1228,8 +1197,29 @@ assemble_tcp(struct px_ctx *pctx,
 
     /* find first neighbor item for the input pkt */
     prev_item = cur_item = &pctx->items[cur_flow->start_item_idx];
-    while (!(cmp = compare_option_seq(cur_item->firstseg, firstseg)))
+    cmp = compare_option_seq(cur_item->firstseg, firstseg);
+    while (cmp == 2 || cmp == -2)
     {
+        if (cmp == -2)
+        {
+            /* insert it as next item of prev_item */
+            insert_item(pctx, firstseg, lastseg, prev_item, timestamp);
+
+            /* check if cur_item is the first item */
+            if (prev_item == cur_item)
+            {
+                /* then switch both */
+                uint16_t temp_next_idx = cur_item->next_item_idx;
+                struct px_item *next_item = &pctx->items[temp_next_idx];
+
+                cur_item->next_item_idx = next_item->next_item_idx;  // next of next
+                next_item->next_item_idx = cur_flow->start_item_idx; // start
+
+                cur_flow->start_item_idx = temp_next_idx;
+            }
+            return;
+        }
+
         /* this item is not neighbor of input pkt */
         if (cur_item->next_item_idx == INVALID_INDEX)
         {
@@ -1238,95 +1228,82 @@ assemble_tcp(struct px_ctx *pctx,
             return;
         }
         prev_item = cur_item;
+
+        /* compare with next one */
         cur_item = &pctx->items[cur_item->next_item_idx];
+        cmp = compare_option_seq(cur_item->firstseg, firstseg);
     }
 
-    /* retransmission case, give up delaying */
-    // if (stall_limit)
-    // {
-    //     if (cmp == 3)
-    //     {
-    //         rte_pktmbuf_free(firstseg);
-    //         cur_item->stall_count = stall_limit;
-    //     }
-    //     else if (cmp == 4)
-    //     {
-    //         /* replace to latter */
-    //         rte_pktmbuf_free(cur_item->firstseg);
-    //         cur_item->firstseg = firstseg;
-    //         cur_item->lastseg = lastseg;
-    //         cur_item->stall_count = stall_limit;
-    //     }
-    // }
+    if (cmp == 4)
+    {
+        cur_item->lastseg = rte_pktmbuf_lastseg(cur_item->firstseg);
+        cmp = 1;
+    }
+
+    if (cmp == -4)
+    {
+        lastseg = rte_pktmbuf_lastseg(firstseg);
+        cmp = -1;
+    }
 
     /* found first neighbor item */
-    // if (cur_item->timestamp == timestamp)
-    // {
-    //     fprintf(stdout,
-    //             "1 stalled %ld ns\n", timestamp - cur_item->timestamp);
-    // }
     if (!merge_tcp(cur_item, firstseg, lastseg,
                    pctx->imtu_size, pctx->nb_seg_max,
                    timestamp, cmp, pctx->sgdma))
     {
-        /* bigger than 64KB; store this packet as a new item in the given flow */
+        /* could not merge, so insert this packet as a new item */
         insert_item(pctx, firstseg, lastseg, cur_item, timestamp);
         return;
     }
 
-    /* now pkt is merged to one item, so we dont need to insert new item */
-    merged_item = cur_item;
+    /* check if this item is the last one */
+    if (cur_item->next_item_idx == INVALID_INDEX)
+    {
+        /* end of item list */
+        return;
+    }
+
+    /* now pkt is merged to one item, so no need to insert as a new item */
 
     /*
      * to solve C -> A -> B (or A -> C -> B) issue,
-     * find second neighbor item for the input pkt
+     * try to find second neighbor item for the input pkt
      */
-    do
+    merged_item = cur_item;
+
+    /* try merge one more for the next item */
+    cur_item = &pctx->items[cur_item->next_item_idx];
+    cmp = compare_option_seq(merged_item->firstseg, cur_item->firstseg);
+
+    if (cmp == 2 || cmp == -2)
     {
         /* this item is not neighbor of input pkt */
-        if (cur_item->next_item_idx == INVALID_INDEX)
-        {
-            /* end of item list; no neighbor items matched */
-            return;
-        }
-        prev_item = cur_item;
-        cur_item = &pctx->items[cur_item->next_item_idx];
-    } while (!(cmp = compare_option_seq(merged_item->firstseg, cur_item->firstseg)));
+        return;
+    }
 
-    /* retransmission case, give up stall */
-    // if (stall_limit)
-    // {
-    //     if (cmp == 3)
-    //     {
-    //         rte_pktmbuf_free(cur_item->firstseg);
-    //         cur_item->stall_count = stall_limit;
-    //     }
-    //     else if (cmp == 4)
-    //     {
-    //         /* replace to latter */
-    //         rte_pktmbuf_free(merged_item->firstseg);
-    //         merged_item->firstseg = cur_item->firstseg;
-    //         merged_item->lastseg = cur_item->lastseg;
-    //         cur_item->stall_count = stall_limit;
-    //     }
-    // }
+    if (cmp == 4)
+    {
+        merged_item->lastseg = rte_pktmbuf_lastseg(merged_item->firstseg);
+        cmp = 1;
+    }
+
+    if (cmp == -4)
+    {
+        cur_item->lastseg = rte_pktmbuf_lastseg(cur_item->firstseg);
+        cmp = -1;
+    }
 
     /* found second neighbor item */
-    // if (merged_item->timestamp == cur_item->timestamp)
-    // {
-    //     fprintf(stdout,
-    //             "2 stalled %ld ns\n", timestamp - cur_item->timestamp);
-    // }
     if (!merge_tcp(merged_item, cur_item->firstseg, cur_item->lastseg,
                    pctx->imtu_size, pctx->nb_seg_max,
                    cur_item->timestamp, cmp, pctx->sgdma))
     {
-        /* bigger than 64KB; store this packet as a new item in the given flow */
+        /* could not merge, so insert this packet as a new item */
         return;
     }
 
     /* merged again; remove current item because it is merged to prior item */
-    prev_item->next_item_idx = cur_item->next_item_idx;
+    merged_item->next_item_idx = cur_item->next_item_idx;
 }
 /*----------------------------------------------------------------------------*/
 static inline void
@@ -1377,10 +1354,15 @@ update_dtb(struct rte_mbuf *pkt,
 }
 /*----------------------------------------------------------------------------*/
 static inline int
-parse_for_udp_gro(struct rte_mbuf *pkt)
+parse_for_udp_gro(struct rte_mbuf *pkt,
+                  int hwcsum)
 {
     uint16_t src_port, dst_port;
-    setup_udp(pkt);
+    fill_udp_l4_len(pkt);
+    if (hwcsum)
+    {
+        setup_udp_tx_cksum(pkt);
+    }
 
     /* check if this packet requires UDP GSO rather than UDP GRO */
     if (is_uso_needed(pkt))
@@ -1426,14 +1408,15 @@ parse_for_udp_gro(struct rte_mbuf *pkt)
 /*----------------------------------------------------------------------------*/
 static inline int
 parse_for_tcp_gro(struct rte_mbuf *pkt,
-                  uint8_t *tcp_flags)
+                  uint8_t *tcp_flags,
+                  int hwcsum)
 {
-    struct rte_tcp_hdr *tcp_hdr;
-
-    tcp_hdr = rte_pktmbuf_mtod_offset(pkt,
-                                      struct rte_tcp_hdr *,
-                                      pkt->l2_len + pkt->l3_len);
-    setup_tcp(pkt, tcp_hdr->data_off >> 4 << 2);
+    struct rte_tcp_hdr *tcp_hdr = get_tcp_hdr(pkt);
+    fill_tcp_l4_len(pkt);
+    if (hwcsum)
+    {
+        setup_tcp_tx_cksum(pkt);
+    }
 
     /* only process ACK packet */
     *tcp_flags = tcp_hdr->tcp_flags;
@@ -1513,24 +1496,10 @@ int px_parse_packet(struct px_ctx *pctx,
         return -1;
     }
 #endif
+    fill_l2_len(pkt);
 
-    pkt->l2_len = sizeof(struct rte_ether_hdr);
-
+    /* pass non-IPv4 packets */
     if (unlikely(!is_ipv4(pkt)))
-    {
-        return -1;
-    }
-    ipv4_hdr = rte_pktmbuf_mtod_offset(pkt,
-                                       struct rte_ipv4_hdr *,
-                                       sizeof(struct rte_ether_hdr));
-#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
-    setup_ip(pkt, (ipv4_hdr->version_ihl & 0x0f) << 2);
-#else
-    setup_ip(pkt, ipv4_hdr->ihl << 2);
-#endif
-
-    /* if IP option exists */
-    if (unlikely(pkt->l3_len != sizeof(struct rte_ipv4_hdr)))
     {
         return -1;
     }
@@ -1538,6 +1507,16 @@ int px_parse_packet(struct px_ctx *pctx,
     /* check if checksum correct */
     ret = px_verify_ipv4_cksum(pkt, hwcsum);
     if (ret < 0)
+    {
+        return -1;
+    }
+
+    fill_ipv4_l3_len(pkt);
+    setup_ipv4_tx_cksum(pkt);
+    ipv4_hdr = get_ipv4_hdr(pkt);
+
+    /* if IP option exists */
+    if (unlikely(pkt->l3_len != sizeof(struct rte_ipv4_hdr)))
     {
         return -1;
     }
@@ -1659,7 +1638,7 @@ Skip_log_rx_hw_timestamp:
         }
 
         /* parse for TCP GRO */
-        ret = parse_for_tcp_gro(pkt, tcp_flags);
+        ret = parse_for_tcp_gro(pkt, tcp_flags, hwcsum);
         if (ret < 0)
         {
             return ret;
@@ -1701,6 +1680,10 @@ Skip_log_rx_hw_timestamp:
          * configure PXIO to blindly do UDP de-tunneling for uplink UDP packets
          * no matter the packet actually has PX-caravan header (ToS | 0x01) or not.
          * So, blindly mark PX-caravan here for uplink UDP packets.
+         *
+         * This is to avoid modification of all the end nodes
+         * for generating PX-caravan header from them
+         * during evaluation of UDP semantic case.
          */
         if (g_is_semantic_test && pctx->is_uplink(pkt))
         {
@@ -1708,7 +1691,7 @@ Skip_log_rx_hw_timestamp:
         }
 
         /* parse for UDP GRO */
-        ret = parse_for_udp_gro(pkt);
+        ret = parse_for_udp_gro(pkt, hwcsum);
         if (ret < 0)
         {
             return ret;
@@ -1927,7 +1910,7 @@ link_and_flush(struct px_ctx *pctx,
                struct rte_mbuf **out,
                uint16_t nb_pkts)
 {
-    struct rte_mbuf *tmp, *start_pkt, *prev_pkt, *cur_pkt, *edge;
+    struct rte_mbuf *start_pkt, *prev_pkt, *cur_pkt, *edge;
     struct px_flow *cur_flow;
     struct px_item *cur_item;
     uint16_t prev_idx, item_idx, idx = 0, *start_id, id_diff;
@@ -1949,24 +1932,8 @@ link_and_flush(struct px_ctx *pctx,
         item_idx = cur_flow->start_item_idx;
         start_pkt = NULL;
         start_id = NULL;
-        id_diff = 1;
-
-        /* eMSS table lookup */
-        tmp = pctx->items[item_idx].firstseg;
-        if (g_is_semantic_test && pctx->is_uplink(tmp) &&
-            is_tcp(tmp))
-        {
-            if (mss_search_entry(pctx->port_id,
-                                 pctx->queue_id,
-                                 tmp->hash.rss,
-                                 get_four_tuple(tmp),
-                                 &saved_segsz,
-                                 pctx->now_ns) < 0)
-            {
-                rte_exit(EXIT_FAILURE,
-                         "mss_search_entry: MSS table is not initialized\n");
-            }
-        }
+        saved_segsz = 0; // for TCP uplink
+        id_diff = 1;     // for UDP downlink
 
         /* process the others after the first item */
         while (item_idx != INVALID_INDEX)
@@ -1978,9 +1945,24 @@ link_and_flush(struct px_ctx *pctx,
 
             if (is_tcp(cur_pkt))
             {
-                /* check if delayed merging needed */
+                /* check if delayed merging or segmentation */
                 if (g_is_semantic_test && pctx->is_uplink(cur_pkt))
                 {
+                    if (!saved_segsz)
+                    {
+                        /* eMSS table lookup only once for each flow */
+                        if (mss_search_entry(pctx->port_id,
+                                             pctx->queue_id,
+                                             cur_pkt->hash.rss,
+                                             get_four_tuple(cur_pkt),
+                                             &saved_segsz,
+                                             pctx->now_ns) < 0)
+                        {
+                            rte_exit(EXIT_FAILURE,
+                                     "mss_search_entry: MSS table is not initialized\n");
+                        }
+                    }
+
                     /* this flow is to be segmented */
                     target_segsz =
                         saved_segsz -
@@ -1999,7 +1981,7 @@ link_and_flush(struct px_ctx *pctx,
                  * but it is an average of LRO'ed segments.
                  *
                  * ToDo: find orig_segsz by looking up
-                 * MSS table using reverse four tuple.
+                 * advertised MSS from reverse flow.
                  */
                 orig_segsz =
                     pctx->emtu_size -
@@ -2013,9 +1995,6 @@ link_and_flush(struct px_ctx *pctx,
                       cur_pkt->l3_len -
                       cur_pkt->l4_len) /
                      orig_segsz);
-
-                assert(target_segsz + cur_pkt->l3_len + cur_pkt->l4_len <= pctx->imtu_size);
-                assert(target_segsz >= orig_segsz);
 
                 /* only for incoming packets when delayed merging enabled */
                 if (pctx->stash_array)
@@ -2094,7 +2073,8 @@ link_and_flush(struct px_ctx *pctx,
                 }
             No_delay_tcp:
                 // fprintf(stdout, "target_segsz: %d\n", target_segsz);
-                update_tcp(cur_pkt, target_segsz);
+                update_iplen(cur_pkt);
+                update_tso(cur_pkt, target_segsz);
             }
             else if (is_udp(cur_pkt))
             {
@@ -2137,9 +2117,6 @@ link_and_flush(struct px_ctx *pctx,
                       cur_pkt->l4_len) /
                      orig_segsz);
 
-                assert(target_segsz + cur_pkt->l3_len + cur_pkt->l4_len <= pctx->imtu_size);
-                assert(target_segsz >= orig_segsz);
-
                 /* only for incoming packets when delayed merging enabled */
                 if (pctx->stash_array)
                 {
@@ -2174,12 +2151,21 @@ link_and_flush(struct px_ctx *pctx,
                     }
                 }
             No_delay_udp:
-                update_udp(cur_pkt);
+                if (!is_single_pkt(cur_pkt))
+                {
+                    /* encapsulate with PX caravan header */
+                    encap_px_hdr(cur_pkt);
+                    update_iplen(cur_pkt);
+                    update_udplen(cur_pkt);
+
+                    /* mark as PX caravan */
+                    mark_px(cur_pkt);
+                }
 
                 /* make UDP packets continuous to enable UDP_GRO at endpoints */
                 if (!start_id)
                 {
-                    start_id = get_ip_id(cur_pkt);
+                    start_id = get_ipv4_id(cur_pkt);
                 }
                 else
                 {
@@ -2189,7 +2175,7 @@ link_and_flush(struct px_ctx *pctx,
                 }
                 // fprintf(stdout,
                 //         "ip_id: %u\n",
-                //         rte_be_to_cpu_16(*get_ip_id(cur_pkt)));
+                //         rte_be_to_cpu_16(*get_ipv4_id(cur_pkt)));
             }
 
             if (pctx->do_link)
@@ -2230,73 +2216,6 @@ link_and_flush(struct px_ctx *pctx,
         }
     }
 
-    /* reset table counters */
-    pctx->flow_num = pctx->item_num = 0;
-
-    return idx;
-}
-/*----------------------------------------------------------------------------*/
-static inline uint16_t
-concat_link_and_flush(struct px_ctx *pctx,
-                      struct rte_mbuf **out,
-                      uint16_t idx)
-{
-    struct rte_mbuf *start_pkt, *cur_pkt, *prev_pkt;
-    struct px_flow *cur_flow;
-    struct px_item *cur_item;
-    uint16_t item_idx;
-    int i;
-
-    for (i = 0; i < pctx->flow_num; i++)
-    {
-        cur_flow = &pctx->flows[i];
-
-        /* remove bucket of this flow */
-        if (cur_flow->bucket_idx != INVALID_INDEX)
-        {
-            pctx->buckets[cur_flow->bucket_idx] = INVALID_INDEX;
-            cur_flow->bucket_idx = INVALID_INDEX;
-        }
-
-        /* process the first item */
-        item_idx = cur_flow->start_item_idx;
-        start_pkt = NULL;
-
-        /* process the others after the first item */
-        while (item_idx != INVALID_INDEX)
-        {
-            cur_item = &pctx->items[item_idx];
-            item_idx = cur_item->next_item_idx;
-            cur_pkt = cur_item->firstseg;
-
-            /* update UDP header and add PX header if necessary */
-            if (cur_pkt->nb_segs > 1)
-            {
-                update_udp(cur_pkt);
-            }
-
-            if (pctx->do_link)
-            {
-                /* if link is on */
-                if (start_pkt)
-                {
-                    /* link this item after the prev item */
-                    link_packet(start_pkt, prev_pkt, cur_pkt);
-                    prev_pkt = cur_pkt;
-
-                    /* linked, so do not flush */
-                    item_idx = cur_item->next_item_idx;
-                    continue;
-                }
-
-                /* if link is on, setup the first pkt as start_pkt */
-                setup_start_item(cur_pkt);
-                start_pkt = cur_pkt;
-                prev_pkt = cur_pkt;
-            }
-            out[idx++] = cur_pkt;
-        }
-    }
     /* reset table counters */
     pctx->flow_num = pctx->item_num = 0;
 

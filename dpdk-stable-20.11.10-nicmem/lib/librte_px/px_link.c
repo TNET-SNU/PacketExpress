@@ -87,11 +87,11 @@ px_unlink(struct rte_mbuf **pkts,
 /*----------------------------------------------------------------------------*/
 uint16_t
 px_unlink_and_uso0(struct rte_mbuf **pkts,
-                  uint16_t nb_pkts,
-                  struct px_ring *tx_ring,
-                  struct rte_mempool *clone_pool,
-                  void (*cb)(struct rte_mbuf *,
-                             struct rte_mbuf *))
+                   uint16_t nb_pkts,
+                   struct px_ring *tx_ring,
+                   struct rte_mempool *clone_pool,
+                   void (*cb)(struct rte_mbuf *,
+                              struct rte_mbuf *))
 {
     struct rte_mbuf *start, *prev, *pkt, *hdr_clone, *body_clone;
     uint16_t idx = 0, seglen, segnum, last_seglen, offset = 0;
@@ -176,7 +176,7 @@ px_unlink_and_uso0(struct rte_mbuf **pkts,
 
                 /* update header */
                 pkt->data_len = get_hdr_len(pkt);
-                iplen = get_ip_len(pkt);
+                iplen = get_ipv4_len(pkt);
                 unmark_px(pkt);
                 *iplen = rte_cpu_to_be_16(pkt->l3_len + pkt->l4_len + seglen);
                 udplen = get_udp_len(pkt);
@@ -198,7 +198,7 @@ px_unlink_and_uso0(struct rte_mbuf **pkts,
                                     __FILE__, __func__, __LINE__);
                             continue;
                         }
-                        iplen = get_ip_len(hdr_clone);
+                        iplen = get_ipv4_len(hdr_clone);
                         *iplen = rte_cpu_to_be_16(pkt->l3_len +
                                                   pkt->l4_len +
                                                   last_seglen);
@@ -406,7 +406,7 @@ px_unlink_and_uso(struct rte_mbuf **pkts,
 
                 /* update header */
                 pkt->data_len = get_hdr_len(pkt);
-                iplen = get_ip_len(pkt);
+                iplen = get_ipv4_len(pkt);
                 unmark_px(pkt);
                 *iplen = rte_cpu_to_be_16(pkt->l3_len + pkt->l4_len + seglen);
                 udplen = get_udp_len(pkt);
@@ -428,7 +428,7 @@ px_unlink_and_uso(struct rte_mbuf **pkts,
                                     __FILE__, __func__, __LINE__);
                             continue;
                         }
-                        iplen = get_ip_len(hdr_clone);
+                        iplen = get_ipv4_len(hdr_clone);
                         *iplen = rte_cpu_to_be_16(pkt->l3_len +
                                                   pkt->l4_len +
                                                   last_seglen);

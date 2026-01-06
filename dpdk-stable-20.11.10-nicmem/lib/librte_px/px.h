@@ -678,7 +678,7 @@ px_uso_burst0(struct rte_mbuf **pkts,
 
         /* update header */
         pkt->data_len = get_hdr_len(pkt);
-        iplen = get_ip_len(pkt);
+        iplen = get_ipv4_len(pkt);
         unmark_px(pkt);
         *iplen = rte_cpu_to_be_16(pkt->l3_len + pkt->l4_len + seglen);
         udplen = get_udp_len(pkt);
@@ -701,7 +701,7 @@ px_uso_burst0(struct rte_mbuf **pkts,
                             __FILE__, __func__, __LINE__);
                     continue;
                 }
-                iplen = get_ip_len(hdr_clone);
+                iplen = get_ipv4_len(hdr_clone);
                 *iplen = rte_cpu_to_be_16(pkt->l3_len +
                                           pkt->l4_len +
                                           last_seglen);
@@ -836,7 +836,7 @@ px_uso_burst(struct rte_mbuf **pkts,
 
         /* update header */
         pkt->data_len = get_hdr_len(pkt);
-        iplen = get_ip_len(pkt);
+        iplen = get_ipv4_len(pkt);
         unmark_px(pkt);
         *iplen = rte_cpu_to_be_16(pkt->l3_len + pkt->l4_len + seglen);
         udplen = get_udp_len(pkt);
@@ -864,7 +864,7 @@ px_uso_burst(struct rte_mbuf **pkts,
                     goto Free_pkt;
                 }
                 pkt->next = next;
-                iplen = get_ip_len(hdr_clone);
+                iplen = get_ipv4_len(hdr_clone);
                 *iplen = rte_cpu_to_be_16(pkt->l3_len +
                                           pkt->l4_len +
                                           last_seglen);

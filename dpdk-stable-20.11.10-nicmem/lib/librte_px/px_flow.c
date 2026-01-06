@@ -574,7 +574,7 @@ px_flow_create_offload_auto(uint16_t port_id,
     ipv4_spec.hdr.src_addr = key->src_ip;
     ipv4_spec.hdr.dst_addr = key->dst_ip;
 
-    if (*get_ip_protoid(pkt) == IPPROTO_UDP)
+    if (*get_ipv4_protoid(pkt) == IPPROTO_UDP)
     {
         /* UDP pattern */
         if (key->src_port)
@@ -592,7 +592,7 @@ px_flow_create_offload_auto(uint16_t port_id,
         patterns[2].last = NULL;
         patterns[2].mask = &udp_mask;
     }
-    else if (*get_ip_protoid(pkt) == IPPROTO_TCP)
+    else if (*get_ipv4_protoid(pkt) == IPPROTO_TCP)
     {
         /* TCP pattern */
         if (key->src_port)
@@ -791,7 +791,7 @@ px_flow_create_onload_auto(uint16_t port_id,
     ipv4_spec.hdr.src_addr = key->src_ip;
     ipv4_spec.hdr.dst_addr = key->dst_ip;
 
-    if (*get_ip_protoid(pkt) == IPPROTO_UDP)
+    if (*get_ipv4_protoid(pkt) == IPPROTO_UDP)
     {
         /* UDP pattern */
         if (key->src_port)
@@ -809,7 +809,7 @@ px_flow_create_onload_auto(uint16_t port_id,
         patterns[2].last = NULL;
         patterns[2].mask = &udp_mask;
     }
-    else if (*get_ip_protoid(pkt) == IPPROTO_TCP)
+    else if (*get_ipv4_protoid(pkt) == IPPROTO_TCP)
     {
         /* TCP pattern */
         if (key->src_port)
