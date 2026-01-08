@@ -242,7 +242,7 @@ dpdk_send_pkts(struct mtcp_thread_context *ctxt, int nif)
 						   dpc->wmbufs[nif].len,
 						   SEMANTIC_TEST);
 #endif
-#if NUM_HAIRPIN_Q
+#if NUM_HAIRPIN_Q && (HAIRPIN_POLICY == 1)
 		px_flow_create_burst(nif, qid,
 							 dpc->wmbufs[nif].m_table,
 							 dpc->wmbufs[nif].len);
@@ -597,7 +597,7 @@ dpdk_load_module_lower_half(void)
 									   NULL,
 									   0,
 									   1,
-									   1,
+									   USE_DYNRXQ,
 									   NUM_HAIRPIN_Q ? HAIRPIN_POLICY : 0);
 #else
 			ret = rte_eth_dev_configure(portid,

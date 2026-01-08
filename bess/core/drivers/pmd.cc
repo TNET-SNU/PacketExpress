@@ -391,7 +391,7 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
                              NULL,
                              0,
                              1,
-                             1,
+                             USE_DYNRXQ,
                              NUM_HAIRPIN_Q ? HAIRPIN_POLICY : 0);
 #else
   ret = rte_eth_dev_configure(ret_port_id,
@@ -753,7 +753,7 @@ int PMDPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
                      reinterpret_cast<rte_mbuf **>(pkts), cnt,
                      SEMANTIC_TEST);
 #endif
-#if NUM_HAIRPIN_Q
+#if NUM_HAIRPIN_Q && (HAIRPIN_POLICY == 1)
   px_flow_create_burst(dpdk_port_id_, qid,
                        reinterpret_cast<rte_mbuf **>(pkts), cnt);
 #endif

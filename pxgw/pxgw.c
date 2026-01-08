@@ -32,11 +32,15 @@
 #include <rte_lcore.h>
 #include <px.h>
 /*----------------------------------------------------------------------------*/
+#define LOG_NIC_INFO 0
+#define LOG_EAL_INFO 0
+#define LOG_PXGW_INFO 1
+/*----------------------------------------------------------------------------*/
 /* Essential macros */
 #if NICMEM || USE_LRO
 /* Make sure you set LARGE_MTU_TWEAK_64 as 1 */
 #define MBUF_DATA_SIZE (65536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
-#define NB_MBUF ((1536 * 1024) - 1)
+#define NB_MBUF ((1024 * 1024) - 1)
 #elif JUMBO_FRAME || USE_GRO
 #define MBUF_DATA_SIZE 9024
 #define NB_MBUF ((1536 * 1024) - 1)
@@ -252,6 +256,7 @@ port_init(uint16_t port_id, uint16_t num_queue)
     struct rte_eth_fc_conf fc_conf; /* for Ethernet flow control settings */
     rte_eth_dev_info_get(port_id, &g_dev_info[port_id]);
 
+#if LOG_NIC_INFO
     printf("max_rx_queues: %u\n",
            g_dev_info[port_id].max_rx_queues);
     printf("max_tx_queues: %u\n",
@@ -292,6 +297,7 @@ port_init(uint16_t port_id, uint16_t num_queue)
            g_dev_info[port_id].rx_queue_offload_capa);
     printf("tx_queue_offload_capa: 0x%08lx\n",
            g_dev_info[port_id].tx_queue_offload_capa);
+#endif
 
     /* configure port */
     port_conf = px_eth_conf(port_id, NULL, NULL, 0, MBUF_DATA_SIZE,
@@ -457,7 +463,7 @@ port_init(uint16_t port_id, uint16_t num_queue)
 /*----------------------------------------------------------------------------*/
 int lcore_main(void *args)
 {
-    (void)args; // unused
+    RTE_SET_USED(args);
     struct rte_mbuf *rmbufs[RTE_MAX_ETHPORTS][MAX_PKT_BURST] = {{NULL}};
     struct rte_mbuf *wmbufs[RTE_MAX_ETHPORTS][MAX_PKT_BURST] = {{NULL}};
     struct rte_mbuf *m;
@@ -571,7 +577,7 @@ int lcore_main(void *args)
                                   qid,
                                   wmbufs[port_id],
                                   nb_tx[port_id]);
-            (void)ret;
+            RTE_SET_USED(ret);
 #else
 #if (USE_LRO || USE_GRO)
             px_setup_tso_burst(port_id,
@@ -580,7 +586,7 @@ int lcore_main(void *args)
                                nb_tx[port_id],
                                SEMANTIC_TEST);
 #endif
-#if NUM_HAIRPIN_Q
+#if NUM_HAIRPIN_Q && (HAIRPIN_POLICY == 1)
             px_flow_create_burst(port_id,
                                  qid,
                                  wmbufs[port_id],
@@ -617,7 +623,7 @@ int lcore_main(void *args)
 /*----------------------------------------------------------------------------*/
 void handle_sigint(int sig)
 {
-    (void)sig; // unused
+    RTE_SET_USED(sig);
     g_shutdown = 1;
     printf("\nSIGINT received, shutting down...\n");
 }
@@ -735,18 +741,22 @@ int main(int argc, char **argv)
     {
         rte_exit(EXIT_FAILURE, "Invalid EAL args\n");
     }
+#if LOG_EAL_INFO
     printf("EAL arguments:\n");
     for (i = 0; i < eal_argc; i++)
     {
         printf("  eal_args[%d] = %s\n", i, eal_args[i]);
     }
+#endif
 
     g_num_sockets = rte_socket_count();
     g_num_ports = rte_eth_dev_count_avail();
 
+#if LOG_PXGW_INFO
     printf("socket_count: %u\n", g_num_sockets);
     printf("lcore_count: %u\n", rte_lcore_count());
     printf("device_count: %u\n", g_num_ports);
+#endif
 
     /* mbuf pool creation */
     for (sid = 0; sid < g_num_sockets; sid++)

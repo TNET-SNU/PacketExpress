@@ -16,8 +16,8 @@ extern "C"
                       sizeof(struct rte_ipv4_hdr) - \
                       sizeof(struct rte_tcp_hdr))
 /*----------------------------------------------------------------------------*/
-#define MSS_THREAD_PERIOD 10
-#define MSS_TIMEOUT 300
+#define MSS_THREAD_PERIOD 60
+#define MSS_TIMEOUT 600
 /*----------------------------------------------------------------------------*/
 /* for counting bloom filter */
 #define LOG_BLOOM_FILTER_SIZE 13
@@ -59,7 +59,7 @@ xor_hash0(uint32_t rss,
 #ifdef SYMMETRIC_RSS
     return rss;
 #else
-    (void)rss;
+    RTE_SET_USED(rss);
     uint32_t temp = data[0] ^ data[1] ^ data[2];
     return temp ^ (temp >> 16);
 #endif
@@ -72,7 +72,7 @@ xor_hash1(uint32_t rss,
 #if 0
     return rss >> 16;
 #else
-    (void)rss;
+    RTE_SET_USED(rss);
     uint32_t temp = (data[0] ^ (data[1] << 3)) ^ data[2];
     return temp ^ (data[2] >> 2);
 #endif

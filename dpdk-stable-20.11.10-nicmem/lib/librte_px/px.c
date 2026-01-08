@@ -16,18 +16,21 @@ int g_is_semantic_test = 0;
 /* Below are for default RSS hash */
 uint8_t *g_px_rss_key = NULL;
 int g_px_rss_key_len = 0;
+#if NVME_TCP_PX
+static uint8_t g_rss_key_default[] =
+    {0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+     0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+     0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+     0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+     0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A};
+#else
 uint8_t g_rss_key_default[] =
     {0xD8, 0x2A, 0x6C, 0x5A, 0xDD, 0x3B, 0x9D, 0x1E,
      0x14, 0xCE, 0x2F, 0x37, 0x86, 0xB2, 0x69, 0xF0,
      0x44, 0x31, 0x7E, 0xA2, 0x07, 0xA5, 0x0A, 0x99,
      0x49, 0xC6, 0xA4, 0xFE, 0x0C, 0x4F, 0x59, 0x02,
      0xD4, 0x44, 0xE2, 0x4A, 0xDB, 0xE1, 0x05, 0x82};
-// static uint8_t g_rss_key_default[] =
-//     {0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
-//      0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
-//      0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
-//      0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
-//      0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A};
+#endif
 /*----------------------------------------------------------------------------*/
 /**
  * Below is for default ARP table.
@@ -60,7 +63,7 @@ const struct px_arp_entry g_arp_table_default[] = {
 /*----------------------------------------------------------------------------*/
 /* Check if TCP advertised window fields equal. */
 static inline uint32_t
-compare_advwin(struct rte_mbuf *pkt1,
+compare_advwnd(struct rte_mbuf *pkt1,
                struct rte_mbuf *pkt2)
 {
     if (unlikely(*get_tcp_advwnd(pkt1) != *get_tcp_advwnd(pkt2)))
@@ -204,7 +207,8 @@ compare_ipid(struct rte_mbuf *pkt1,
     /* count how many UDP packets are merged to pkt1 */
     for (seg = pkt1; seg != NULL; seg = seg->next)
     {
-        diff1 += !is_nicmem(seg);
+        /* do not count NICMEM segment */
+        diff1 += !(seg->ol_flags & EXT_ATTACHED_MBUF);
     }
     // fprintf(stdout, "diff1: %d\n", diff1);
     /* append or pre-pend the new packet */
@@ -217,7 +221,8 @@ compare_ipid(struct rte_mbuf *pkt1,
     /* count how many UDP packets are merged to pkt2 */
     for (seg = pkt2; seg != NULL; seg = seg->next)
     {
-        diff2 += !is_nicmem(seg);
+        /* do not count NICMEM segment */
+        diff2 += !(seg->ol_flags & EXT_ATTACHED_MBUF);
     }
     // fprintf(stdout, "diff2: %d\n", diff2);
     if ((id2 + diff2) == id1)
@@ -238,7 +243,11 @@ static inline int
 compare_option_seq(struct rte_mbuf *pkt1,
                    struct rte_mbuf *pkt2)
 {
-    // if (!compare_advwin(pkt1, pkt2))
+    /**
+     * Now we merge and update ADV WND and options, so no need to check
+     * whether they are equal.
+     */
+    // if (!compare_advwnd(pkt1, pkt2))
     // {
     //     return 0;
     // }
@@ -271,12 +280,9 @@ merge_tcp(struct px_item *cur_item,
     uint32_t *head_ack, *tail_ack;
     uint8_t *head_flags, *tail_flags;
     uint16_t *head_advwnd, *tail_advwnd;
-    uint64_t *head_timestamp, *tail_timestamp;
-    uint32_t *head_tsval, *tail_tsval;
-    uint32_t *head_tsecr, *tail_tsecr;
 
     /* Thanks to TSO, we do not need to care about iMTU size */
-    (void)imtu_size;
+    RTE_SET_USED(imtu_size);
 
     if (cmp == 1 || cmp == 3)
     {
@@ -293,6 +299,10 @@ merge_tcp(struct px_item *cur_item,
         rte_exit(EXIT_FAILURE, "Invalid cmp value %d in merge_tcp\n", cmp);
     }
 
+#if NVME_TCP_PX
+    RTE_SET_USED(nb_seg_max);
+    RTE_SET_USED(sgdma);
+#else
     /* check if nb_segs is smaller than is nb_seg_max supported by the device */
     if (unlikely(pkt_head->nb_segs + pkt_tail->nb_segs > nb_seg_max))
     {
@@ -323,8 +333,9 @@ merge_tcp(struct px_item *cur_item,
             return 0;
         }
     }
+#endif
 
-    /* get flags pointer before adjusting tail's header */
+    /* merge TCP flags */
     head_flags = get_tcp_flags(pkt_head);
     tail_flags = get_tcp_flags(pkt_tail);
 
@@ -335,13 +346,11 @@ merge_tcp(struct px_item *cur_item,
         *head_flags |= RTE_TCP_PSH_FLAG;
     }
 
-    /* get TCP field pointers before adjusting tail's header */
+    /* merge ACK and ADV WND */
     head_ack = get_tcp_ack(pkt_head);
     tail_ack = get_tcp_ack(pkt_tail);
     head_advwnd = get_tcp_advwnd(pkt_head);
     tail_advwnd = get_tcp_advwnd(pkt_tail);
-    head_timestamp = get_tcp_timestamp(pkt_head);
-    tail_timestamp = get_tcp_timestamp(pkt_tail);
 
     /* check if tail's ACK is equall to head's ACK */
     if (*head_ack == *tail_ack)
@@ -353,14 +362,29 @@ merge_tcp(struct px_item *cur_item,
             /* update head's advwnd */
             *head_advwnd = *tail_advwnd;
         }
+    }
+    /* check if tail's ACK is greater than head's ACK */
+    else if (SEQ_LT(rte_be_to_cpu_32(*head_ack),
+                    rte_be_to_cpu_32(*tail_ack)))
+    {
+        /* update head's ACK and ADV WND */
+        *head_ack = *tail_ack;
+        *head_advwnd = *tail_advwnd;
+    }
 
-        /* check if tail packet has greater TCP timestamp */
-        if (tail_timestamp && head_timestamp)
+    /* if tail's ACK is smaller than head's ACK, nothing to do */
+
+    /* merge TCP timestamp */
+    struct tcp_timestamp *tail_timestamp = get_tcp_timestamp(pkt_tail);
+    if (tail_timestamp)
+    {
+        uint32_t *tail_tsval = &tail_timestamp->tsval;
+        uint32_t *tail_tsecr = &tail_timestamp->tsecr;
+        struct tcp_timestamp *head_timestamp = get_tcp_timestamp(pkt_head);
+        if (head_timestamp)
         {
-            head_tsval = (uint32_t *)head_timestamp;
-            tail_tsval = (uint32_t *)tail_timestamp;
-            head_tsecr = head_tsval + 1;
-            tail_tsecr = tail_tsval + 1;
+            uint32_t *head_tsval = &head_timestamp->tsval;
+            uint32_t *head_tsecr = &head_timestamp->tsecr;
 
             /* if tail TCP tsval is larger than head tsval */
             if (SEQ_LT(rte_be_to_cpu_32(*head_tsval),
@@ -378,24 +402,126 @@ merge_tcp(struct px_item *cur_item,
                 *head_tsecr = *tail_tsecr;
             }
         }
-    }
-    /* check if tail's ACK is greater than head's ACK */
-    else if (SEQ_LT(rte_be_to_cpu_32(*head_ack),
-                    rte_be_to_cpu_32(*tail_ack)))
-    {
-        /* update head's ACK and ADV WND */
-        *head_ack = *tail_ack;
-        *head_advwnd = *tail_advwnd;
-
-        /* check if tail packet has greater TCP timestamp */
-        if (tail_timestamp && head_timestamp)
+        else
         {
-            /* update head's TCP timestamp */
-            *head_timestamp = *tail_timestamp;
+            /**
+             * just embed tail TCP timestamp to head.
+             * We add TCP timestamp as the first option after TCP header.
+             */
+            uint8_t *pkt_start = rte_pktmbuf_mtod(pkt_head, uint8_t *);
+            uint8_t *embed_point = pkt_start +
+                                   get_hdr_len(pkt_head) -
+                                   get_tcp_optlen(pkt_head);
+            int optlen = *((uint8_t *)tail_timestamp - 1);          // 1: length(1)
+            uint8_t *tail_ts_start = (uint8_t *)tail_timestamp - 2; // 2: kind(1) + length(1)
+            memmove(pkt_start - optlen, pkt_start, embed_point - pkt_start);
+            memcpy(embed_point - optlen, tail_ts_start, optlen);
+
+            /* update mbuf fields */
+            pkt_head->l4_len += optlen;
+            pkt_head->pkt_len += optlen;
+            pkt_head->data_len += optlen;
+            pkt_head->buf_addr = (uint8_t *)pkt_head->buf_addr - optlen;
+
+            printf("added TCP timestamp to head\n");
         }
     }
 
-    /* if tail's ACK is smaller than head's ACK, nothing to do */
+    // /* merge TCP SACK blocks */
+    // int k1, k2;
+    // struct tcp_sack_block *tail_sack_block = get_tcp_sack(pkt_tail, &k2);
+    // if (tail_sack_block)
+    // {
+    //     struct tcp_sack_block *head_sack_block = get_tcp_sack(pkt_head, &k1);
+    //     if (head_sack_block)
+    //     {
+    //         uint8_t *sack_optlen = (uint8_t *)head_sack_block - 1; // 1: length(1)
+    //         uint8_t *embed_point = (uint8_t *)head_sack_block - 2; // 2: kind(1) + length(1)
+
+    //         /* merge SACK blocks and make new SACK option */
+    //         int out_k;
+    //         uint8_t new_sack_option[MAX_TCP_OPT_LEN];
+    //         uint8_t new_sack_optlen;
+    //         out_k = px_merge_sack_and_encode(head_sack_block, k1,
+    //                                          tail_sack_block, k2,
+    //                                          new_sack_option,
+    //                                          &new_sack_optlen, 4);
+
+    //         /* replace sack_option of head to new_sack_option */
+    //         if (out_k > 0)
+    //         {
+    //             int optlen_diff = new_sack_optlen - *sack_optlen;
+    //             if (optlen_diff)
+    //             {
+    //                 /**
+    //                  * Note: we do not need to pad NOPs because
+    //                  * original TCP header length was multiple of 4 bytes,
+    //                  * and the difference of original and new SACK option length
+    //                  * is multiple of 8 bytes.
+    //                  */
+    //                 uint8_t *pkt_start = rte_pktmbuf_mtod(pkt_head, uint8_t *);
+    //                 memmove(pkt_start - optlen_diff, pkt_start, embed_point - pkt_start);
+    //                 memcpy(embed_point - optlen_diff, new_sack_option, new_sack_optlen);
+
+    //                 /* update mbuf fields */
+    //                 pkt_head->l4_len += optlen_diff;
+    //                 pkt_head->pkt_len += optlen_diff;
+    //                 pkt_head->data_len += optlen_diff;
+    //                 pkt_head->buf_addr = (uint8_t *)pkt_head->buf_addr - optlen_diff;
+    //             }
+    //             else
+    //             {
+    //                 memcpy(embed_point, new_sack_option, new_sack_optlen);
+    //             }
+    //         }
+    //     }
+    //     else
+    //     {
+    //         /**
+    //          * just embed tail TCP SACK to head.
+    //          * We add TCP timestamp as the last option before TCP payload.
+    //          */
+    //         uint8_t *pkt_start = rte_pktmbuf_mtod(pkt_head, uint8_t *);
+    //         uint8_t *embed_point = pkt_start + get_hdr_len(pkt_head);
+    //         int optlen = *((uint8_t *)tail_sack_block - 1);            // 1: length(1)
+    //         uint8_t *tail_sack_start = (uint8_t *)tail_sack_block - 2; // 2: kind(1) + length(1)
+    //         memmove(pkt_start - optlen, pkt_start, embed_point - pkt_start);
+    //         memcpy(embed_point - optlen, tail_sack_start, optlen);
+
+    //         /* update mbuf fields */
+    //         pkt_head->l4_len += optlen;
+    //         pkt_head->pkt_len += optlen;
+    //         pkt_head->data_len += optlen;
+    //         pkt_head->buf_addr = (uint8_t *)pkt_head->buf_addr - optlen;
+
+    //         /* update TCP fields */
+    //         uint8_t *doff = get_tcp_doff(pkt_head);
+    //         *doff = (pkt_head->l4_len >> 2 << 4);
+    //     }
+
+    //     printf("merged SACK blocks: head %d, tail %d\n", k1, k2);
+    // }
+
+    /* add padding if necessary */
+    if (pkt_head->l4_len % 4)
+    {
+        uint8_t *pkt_start = rte_pktmbuf_mtod(pkt_head, uint8_t *);
+        uint8_t *embed_point = pkt_start + get_hdr_len(pkt_head);
+        int optlen = 4 - (pkt_head->l4_len % 4);
+        uint8_t padding[3] = {TCPOPT_NOP, TCPOPT_NOP, TCPOPT_NOP};
+        memmove(pkt_start - optlen, pkt_start, embed_point - pkt_start);
+        memcpy(embed_point - optlen, padding, optlen);
+
+        /* update mbuf fields */
+        pkt_head->l4_len += optlen;
+        pkt_head->pkt_len += optlen;
+        pkt_head->data_len += optlen;
+        pkt_head->buf_addr = (uint8_t *)pkt_head->buf_addr - optlen;
+
+        /* update TCP fields */
+        uint8_t *doff = get_tcp_doff(pkt_head);
+        *doff = (pkt_head->l4_len >> 2 << 4);
+    }
 
     if (cmp == 3)
     {
@@ -867,158 +993,6 @@ insert_stash(struct px_ctx *pctx,
     return 0;
 }
 /*----------------------------------------------------------------------------*/
-static inline struct rte_mbuf *
-separate_edge_seg(struct px_ctx *pctx,
-                  struct rte_mbuf *pkt,
-                  uint32_t last_segsz)
-{
-    struct px_dev *px_dev = &g_px_dev[pctx->port_id];
-    struct rte_mempool *clone_pool = g_clone_pool[pctx->socket_id];
-    struct rte_mbuf *edge = pkt, *edge_tail = NULL, *edge_head;
-    struct rte_mbuf *hdr = pkt, *prev = NULL, *next;
-    uint32_t hdr_size = get_hdr_len(pkt);
-    uint32_t target_size = pkt->pkt_len - last_segsz;
-    uint32_t seq_diff, trim_size = 0, pkt_size = 0;
-    uint16_t seg_idx;
-
-    /* find edge segment */
-    for (seg_idx = 0; seg_idx < pkt->nb_segs; seg_idx++)
-    {
-        pkt_size += edge->data_len;
-        if (pkt_size >= target_size)
-        {
-            trim_size = pkt_size - target_size;
-            break;
-        }
-        prev = edge;
-        edge = edge->next;
-    }
-
-    assert(seg_idx < pkt->nb_segs);
-    assert(trim_size <= last_segsz);
-
-    next = edge->next;
-    edge->next = NULL;
-
-    if (!trim_size)
-    {
-        /* already separated */
-        edge_tail = next;
-    }
-    else
-    {
-        /* trim edge segment */
-        edge->data_len -= trim_size;
-
-        /* make edge_tail segment */
-        edge_tail = rte_pktmbuf_clone(edge, clone_pool);
-        if (!edge_tail)
-        {
-            goto Error;
-        }
-        edge_tail->data_off += edge->data_len;
-        edge_tail->data_len = trim_size;
-        edge_tail->next = next;
-        mark_decaped(edge_tail);
-    }
-
-    /* make edge_head segment */
-    if (is_nicmem(edge))
-    {
-        /* destroy the chain to next mbuf first */
-        prev->next = NULL;
-        if (is_decaped(prev))
-        {
-            unmark_decaped(prev);
-            /* prev segment is decapsulated */
-            edge_head = rte_pktmbuf_clone(prev, clone_pool);
-            if (!edge_head)
-            {
-                goto Error;
-            }
-            /* rollback headers */
-            edge_head->data_off -= hdr_size;
-            seq_diff = prev->data_len + edge->data_len;
-        }
-        else
-        {
-            /* prev segment still has valid header */
-            edge_head = rte_pktmbuf_copy(prev, clone_pool, 0, hdr_size);
-            if (!edge_head)
-            {
-                goto Error;
-            }
-            seq_diff = prev->data_len - hdr_size + edge->data_len;
-            put_sw_timestamp(edge_head, get_sw_timestamp(pkt));
-            if (px_dev->initialized_hairpin)
-            {
-                copy_orig_four_tuple(edge_head, pkt);
-            }
-        }
-        /* restore the chain to next mbuf */
-        prev->next = edge;
-    }
-    else
-    {
-        /*
-         * edge header is valid when transmitted
-         * so, we cannot modify header fields without deep copy
-         */
-        edge_head = rte_pktmbuf_copy(hdr, clone_pool, 0, hdr_size);
-        if (!edge_head)
-        {
-            goto Error;
-        }
-
-        /* get sequence difference */
-        seq_diff = target_size - hdr_size;
-        put_sw_timestamp(edge_head, get_sw_timestamp(pkt));
-        if (px_dev->initialized_hairpin)
-        {
-            copy_orig_four_tuple(edge_head, pkt);
-        }
-    }
-
-    unmark_decaped(edge_head);
-    edge_head->data_len = hdr_size;
-    edge_head->next = edge_tail;
-    edge_head->pkt_len = hdr_size + last_segsz;
-    if (!trim_size)
-    {
-        edge_head->nb_segs = pkt->nb_segs - seg_idx;
-    }
-    else
-    {
-        edge_head->nb_segs = pkt->nb_segs - (seg_idx - 1);
-    }
-
-    /* update header (e.g., TCP seq) */
-    update_tcpseq(edge_head, seq_diff);
-    update_ipid(edge_head, rte_be_to_cpu_16(*get_ipv4_id(pkt)) + 1);
-
-    /* setup first segment */
-    pkt->pkt_len = target_size;
-    pkt->nb_segs = seg_idx + 1;
-
-    return edge_head;
-
-Error:
-    fprintf(stderr, "duplication failed\n");
-    edge->data_len += trim_size;
-    edge->next = next;
-    if (prev)
-    {
-        prev->next = edge;
-    }
-    if (edge_tail)
-    {
-        edge_tail->next = NULL;
-        rte_pktmbuf_free(edge_tail);
-    }
-
-    return NULL;
-}
-/*----------------------------------------------------------------------------*/
 /*
  * Determine if the current packet should be delayed
  * based on the time difference and the original segment size
@@ -1357,7 +1331,6 @@ static inline int
 parse_for_udp_gro(struct rte_mbuf *pkt,
                   int hwcsum)
 {
-    uint16_t src_port, dst_port;
     fill_udp_l4_len(pkt);
     if (hwcsum)
     {
@@ -1371,21 +1344,15 @@ parse_for_udp_gro(struct rte_mbuf *pkt,
     }
 
     /* for UDP, filter traffic under 1024 port */
-    src_port = rte_be_to_cpu_16(*get_src_port(pkt));
-    if (src_port < 1024)
+    if (rte_be_to_cpu_16(*get_src_port(pkt)) <= 1024 ||
+        rte_be_to_cpu_16(*get_dst_port(pkt)) <= 1024)
     {
         /* not target flow */
         return -1;
     }
 
-    dst_port = rte_be_to_cpu_16(*get_dst_port(pkt));
-    if (dst_port < 1024)
-    {
-        /* not target flow */
-        return -1;
-    }
-
-    // if (pkt->next && is_nicmem(pkt->next))
+    /* log for NICMEM packet */
+    // if (pkt->next && pkt->next->ol_flags & EXT_ATTACHED_MBUF)
     // {
     //     fprintf(stdout,
     //             "is nicmem, pkt->buf_addr: %p, pkt->next->buf_addr: %p\n",
@@ -1411,17 +1378,17 @@ parse_for_tcp_gro(struct rte_mbuf *pkt,
                   uint8_t *tcp_flags,
                   int hwcsum)
 {
-    struct rte_tcp_hdr *tcp_hdr = get_tcp_hdr(pkt);
     fill_tcp_l4_len(pkt);
     if (hwcsum)
     {
         setup_tcp_tx_cksum(pkt);
     }
 
-    /* only process ACK packet */
-    *tcp_flags = tcp_hdr->tcp_flags;
-    if ((*tcp_flags != RTE_TCP_ACK_FLAG) &&
-        (*tcp_flags != (RTE_TCP_ACK_FLAG | RTE_TCP_PSH_FLAG)))
+    /* parse flags */
+    *tcp_flags = *get_tcp_flags(pkt);
+
+    /* pass no data packets */
+    if (unlikely(pkt->pkt_len <= get_hdr_len(pkt)))
     {
         return -1;
     }
@@ -1433,8 +1400,10 @@ parse_for_tcp_gro(struct rte_mbuf *pkt,
         return -1;
     }
 
-    /* only process payload length > 0 */
-    if (unlikely(pkt->pkt_len <= get_hdr_len(pkt)))
+    /* pass control packets */
+    if ((*tcp_flags & RTE_TCP_SYN_FLAG) ||
+        (*tcp_flags & RTE_TCP_FIN_FLAG) ||
+        (*tcp_flags & RTE_TCP_RST_FLAG))
     {
         return -1;
     }
@@ -1459,13 +1428,6 @@ parse_for_tcp_gro(struct rte_mbuf *pkt,
     //             "buf_addr: %p, iova: %p\n", pkt->next->buf_addr, pkt->next->buf_iova);
     // }
 
-    // if (pkt->next && is_nicmem(pkt->next))
-    // {
-    //     fprintf(stdout,
-    //             "is nicmem, pkt->buf_addr: %p, pkt->next->buf_addr: %p\n",
-    //             pkt->buf_addr, pkt->next->buf_addr);
-    // }
-
     return 0;
 }
 /*----------------------------------------------------------------------------*/
@@ -1486,9 +1448,6 @@ int px_parse_packet(struct px_ctx *pctx,
     uint32_t real_pkt_len;
     uint16_t next_hop_mtu;
     int ret;
-
-    /* set zero for TCP flags by default */
-    *tcp_flags = 0;
 
 #if RTE_VERSION >= RTE_VERSION_NUM(22, 11, 0, 0)
     if (unlikely(RTE_ETH_IS_TUNNEL_PKT(pkt->packet_type)))
@@ -1657,6 +1616,14 @@ Skip_log_rx_hw_timestamp:
             }
         }
 
+        /* log for NICMEM packet */
+        // if (pkt->next && pkt->next->ol_flags & EXT_ATTACHED_MBUF)
+        // {
+        //     fprintf(stdout,
+        //             "is nicmem, pkt->buf_addr: %p, pkt->next->buf_addr: %p\n",
+        //             pkt->buf_addr, pkt->next->buf_addr);
+        // }
+
         /* use below when stop TCP GRO */
         // return -1;
     }
@@ -1709,6 +1676,14 @@ Skip_log_rx_hw_timestamp:
                                  pctx->now_ns);
             }
         }
+
+        /* log for NICMEM packet */
+        // if (pkt->next && pkt->next->ol_flags & EXT_ATTACHED_MBUF)
+        // {
+        //     fprintf(stdout,
+        //             "is nicmem, pkt->buf_addr: %p, pkt->next->buf_addr: %p\n",
+        //             pkt->buf_addr, pkt->next->buf_addr);
+        // }
 
         /* use below when stop UDP GRO */
         // return -1;
@@ -1779,7 +1754,7 @@ void px_parse_batch(uint16_t port_id,
                     int hwcsum,
                     int is_semantic_test)
 {
-    uint64_t now_ns = px_gettime(TIME_FLAG);
+    uint64_t now_ns = PX_GETTIME(TIME_FLAG);
     struct px_ctx *pctx = &g_pctx[port_id][queue_id];
     struct rte_mbuf *pkt;
     uint16_t *mss_ptr, old_mss;
@@ -1866,7 +1841,7 @@ void px_setup_tso_burst(uint16_t port_id,
                         int is_semantic_test)
 {
     struct px_ctx *pctx = &g_pctx[port_id][queue_id];
-    (void)pctx;
+    RTE_SET_USED(pctx);
     struct rte_mbuf *pkt;
     uint16_t segsz;
     uint16_t i;
@@ -1910,12 +1885,25 @@ link_and_flush(struct px_ctx *pctx,
                struct rte_mbuf **out,
                uint16_t nb_pkts)
 {
+    struct rte_mempool *pool = g_clone_pool[pctx->socket_id];
     struct rte_mbuf *start_pkt, *prev_pkt, *cur_pkt, *edge;
     struct px_flow *cur_flow;
     struct px_item *cur_item;
-    uint16_t prev_idx, item_idx, idx = 0, *start_id, id_diff;
-    uint16_t saved_segsz, target_segsz, orig_segsz, last_segsz;
+    uint32_t last_segsz;
+    uint16_t item_idx, idx = 0, *start_id, id_diff;
+    uint16_t saved_segsz, target_segsz, orig_segsz;
+    uint16_t port_id = pctx->port_id;
+    uint16_t queue_id = pctx->queue_id;
     int i;
+#if NVME_TCP_PX
+    uint32_t cur_seq, cur_len;
+    uint16_t prev_idx;
+    struct l5_flow *l5p;
+    uint32_t target_len;
+    uint32_t pdu_len;
+    uint8_t pdu_hdr_len;
+    uint32_t adj_len;
+#endif
 
     for (i = 0; i < pctx->flow_num; i++)
     {
@@ -1934,12 +1922,17 @@ link_and_flush(struct px_ctx *pctx,
         start_id = NULL;
         saved_segsz = 0; // for TCP uplink
         id_diff = 1;     // for UDP downlink
+#if NVME_TCP_PX
+        l5p = NULL;
+#endif
 
         /* process the others after the first item */
         while (item_idx != INVALID_INDEX)
         {
             cur_item = &pctx->items[item_idx];
+#if NVME_TCP_PX
             prev_idx = item_idx;
+#endif
             item_idx = cur_item->next_item_idx;
             cur_pkt = cur_item->firstseg;
 
@@ -1951,8 +1944,8 @@ link_and_flush(struct px_ctx *pctx,
                     if (!saved_segsz)
                     {
                         /* eMSS table lookup only once for each flow */
-                        if (mss_search_entry(pctx->port_id,
-                                             pctx->queue_id,
+                        if (mss_search_entry(port_id,
+                                             queue_id,
                                              cur_pkt->hash.rss,
                                              get_four_tuple(cur_pkt),
                                              &saved_segsz,
@@ -1970,6 +1963,9 @@ link_and_flush(struct px_ctx *pctx,
                          sizeof(struct rte_tcp_hdr));
                     goto No_delay_tcp;
                 }
+
+                /* delayed merging enabled only for incoming packets */
+
                 /**
                  * get orig_segsz
                  *
@@ -1996,79 +1992,256 @@ link_and_flush(struct px_ctx *pctx,
                       cur_pkt->l4_len) /
                      orig_segsz);
 
-                /* only for incoming packets when delayed merging enabled */
-                if (pctx->stash_array)
+                if (!pctx->stash_array)
                 {
-                    /* check if current packet should be delayed */
-                    if (get_data_len(cur_pkt) + orig_segsz <= target_segsz)
+                    goto No_delay_tcp;
+                }
+#if NVME_TCP_PX
+                if (!is_nvme_tcp(cur_pkt))
+                {
+                    goto Normal_delay_path;
+                }
+                if (!l5p)
+                {
+                    /* l5 flow lookup */
+                    l5p = px_l5_search(port_id, queue_id,
+                                       get_four_tuple(cur_pkt));
+                    if (!l5p)
                     {
-                        /*
-                         * size of this packet is R < 9K
-                         * delay current packet (R) to merge more
-                         */
-                        /* if this item is the last item and delay nsec is marginal */
-                        if ((item_idx == INVALID_INDEX) &&
-                            is_delay_needed(pctx,
-                                            get_four_tuple(cur_pkt),
-                                            get_data_len(cur_pkt),
-                                            cur_item->timestamp,
-                                            orig_segsz,
-                                            target_segsz))
+                        px_dump_tuple(get_four_tuple(cur_pkt));
+                        rte_exit(EXIT_FAILURE, "[line %d] no l5 flow\n", __LINE__);
+                    }
+                }
+
+                cur_seq = rte_be_to_cpu_32(*get_tcp_seq(cur_pkt));
+                cur_len = get_data_len(cur_pkt);
+
+                /* check RTX pkt */
+                if (SEQ_GEQ(l5p->peer->ack, cur_seq + cur_len))
+                {
+                    /* this packet is already acked by peer */
+                    px_dump_l5p("RTX1", l5p, cur_seq, cur_len, 0);
+                    rte_pktmbuf_free(cur_pkt);
+                    continue;
+                }
+
+                px_l5_handle_ack(port_id, queue_id, cur_pkt, l5p);
+
+                /* update received SEQ */
+                if (SEQ_GEQ(l5p->recvd, cur_seq) &&
+                    SEQ_LT(l5p->recvd, cur_seq + cur_len))
+                {
+                    l5p->recvd = cur_seq + cur_len;
+                }
+
+                /* check out-of-order */
+                if (SEQ_LT(l5p->esn + l5p->offset_on_pdu, cur_seq))
+                {
+                    /*
+                     * Out of order detected
+                     * stall current packet to merge more
+                     */
+                    // px_dump_l5p("stall1", l5p, cur_seq, cur_len, 0);
+                    if (insert_stash(pctx,
+                                     cur_pkt,
+                                     rte_pktmbuf_lastseg(cur_pkt),
+                                     cur_item->timestamp) < 0)
+                    {
+                        rte_exit(EXIT_FAILURE,
+                                 "insert_stash failed\n");
+                    }
+                    l5p->stalled = 1;
+                    // px_l5_direct_ack(port_id, queue_id, cur_pkt, l5p, pool);
+
+                    continue;
+                }
+
+                /* check RTX pkt */
+                if (SEQ_GEQ(l5p->esn + l5p->offset_on_pdu, cur_seq + cur_len))
+                {
+                    px_dump_l5p("RTX2", l5p, cur_seq, cur_len, target_len);
+                    px_l5_rtx(port_id, queue_id, l5p, cur_seq, cur_len);
+                    rte_pktmbuf_free(cur_pkt);
+                    continue;
+                }
+
+                /* check if head adjustment is needed */
+                if (SEQ_GT(l5p->esn + l5p->offset_on_pdu, cur_seq))
+                {
+                    /* adjust head of packet (l5p->esn + l5p->ofset_on_pdu - cur_seq) */
+                    adj_len = (l5p->esn + l5p->offset_on_pdu) - cur_seq;
+                    assert(cur_pkt->pkt_len > adj_len + get_hdr_len(cur_pkt));
+                    last_segsz = cur_len - adj_len;
+                    edge = separate_edge_seg(cur_pkt, last_segsz, pool);
+                    if (!edge)
+                    {
+                        rte_pktmbuf_dump(stdout, cur_pkt, cur_pkt->pkt_len);
+                        rte_exit(EXIT_FAILURE, "adjusting head failed\n");
+                    }
+                    rte_pktmbuf_free(cur_pkt);
+
+                    /* now cur_pkt is edge */
+                    cur_pkt = edge;
+                    cur_seq = rte_be_to_cpu_32(*get_tcp_seq(cur_pkt));
+                    assert(cur_seq == (l5p->esn + l5p->offset_on_pdu));
+                    cur_len = get_data_len(cur_pkt);
+                    assert(cur_len == last_segsz);
+                }
+
+                /* now cur_seq == l5p->esn + l5p->offset_on_pdu */
+
+                if (l5p->esn == cur_seq)
+                {
+                    pdu_hdr_len = get_nvme_tcp_hdr_len(cur_pkt);
+                    pdu_len = get_nvme_tcp_pdu_len(cur_pkt);
+                    if (!pdu_hdr_len || !pdu_len)
+                    {
+                        px_dump_l5p("stall3", l5p, cur_seq, cur_len, target_len);
+                        if (insert_stash(pctx,
+                                         cur_pkt,
+                                         rte_pktmbuf_lastseg(cur_pkt),
+                                         cur_item->timestamp) < 0)
                         {
-                            /* can delay, so insert to stash item array */
-                            if (insert_stash(pctx,
-                                             cur_pkt,
-                                             cur_item->lastseg,
-                                             cur_item->timestamp) < 0)
-                            {
-                                fprintf(stdout, "stash table overflow\n");
-                                goto No_delay_tcp;
-                            }
-                            continue;
+                            rte_exit(EXIT_FAILURE,
+                                     "insert_stash failed\n");
                         }
-                        goto No_delay_tcp;
+                        l5p->stalled = 1;
+
+                        continue;
                     }
 
-                    /* check if edge separation is needed */
-                    last_segsz = get_data_len(cur_pkt) % target_segsz;
-                    if (last_segsz &&
-                        last_segsz <= (target_segsz - orig_segsz))
-                    {
-                        /*
-                         * size of this packet is 9K * N + R
-                         * flush complete packets (N)
-                         * stash duplicated edge (R) to merge more
-                         */
-                        /* if this item is the last item and delay nsec is marginal */
-                        if ((item_idx == INVALID_INDEX) &&
-                            is_delay_needed(pctx,
-                                            get_four_tuple(cur_pkt),
-                                            last_segsz,
-                                            cur_item->timestamp,
-                                            orig_segsz,
-                                            target_segsz))
-                        {
-                            edge = separate_edge_seg(pctx, cur_pkt, last_segsz);
-                            if (!edge)
-                            {
-                                fprintf(stderr,
-                                        "Failed to separate edge segment\n");
-                                continue;
-                            }
+                    /* now we can update pdu len and pdu hdr len */
+                    l5p->hdr_len = pdu_hdr_len;
+                    l5p->pdu_len = pdu_len;
+                    l5p->offset_on_pdu = 0;
+                }
 
-                            /* can delay, so insert to stash item array */
-                            if (insert_stash(pctx,
-                                             edge,
-                                             rte_pktmbuf_lastseg(edge),
-                                             cur_item->timestamp) < 0)
-                            {
-                                /* ToDo: in this case we should merge again... */
-                                /* this should not happen */
-                                rte_exit(EXIT_FAILURE,
-                                         "stash table overflow\n");
-                            }
+                /* check if remaining pdu_len is larger than iMTU */
+                target_len = l5p->pdu_len - l5p->offset_on_pdu;
+                if (target_len > (PAGE_SIZE * 2 + l5p->hdr_len))
+                {
+                    /* this packet is too large, so separate to multiple 8K PDUs */
+                    target_len = PAGE_SIZE * 2;
+                    if (l5p->offset_on_pdu == 0)
+                    {
+                        target_len += l5p->hdr_len;
+                    }
+                }
+
+                /* check if current packet should be stalled */
+                if (cur_len < target_len)
+                {
+                    /*
+                     * size of this packet is R < target_len
+                     * stall current packet (R) to merge more
+                     */
+                    // px_dump_l5p("stall2", l5p, cur_seq, cur_len, target_len);
+                    if (insert_stash(pctx,
+                                     cur_pkt,
+                                     rte_pktmbuf_lastseg(cur_pkt),
+                                     cur_item->timestamp) < 0)
+                    {
+                        rte_exit(EXIT_FAILURE,
+                                 "insert_stash failed\n");
+                    }
+                    l5p->stalled = 1;
+
+                    continue;
+                }
+
+                l5p->stalled = 0;
+
+                /* check if edge separation is needed */
+                if (cur_len > target_len)
+                {
+                    last_segsz = cur_len - target_len;
+                    edge = separate_edge_seg(cur_pkt, last_segsz, pool);
+                    if (!edge)
+                    {
+                        rte_exit(EXIT_FAILURE, "duplicate edge failed\n");
+                    }
+                    // rte_pktmbuf_dump(stdout, edge, 90);
+                    /* revisit this item */
+                    item_idx = prev_idx;
+                    cur_item->firstseg = edge;
+                }
+
+                assert(get_data_len(cur_pkt) == target_len);
+
+                /* now this packet will be sent */
+                px_l5_advance_pdu(port_id, queue_id, cur_pkt, l5p, pool);
+
+                goto No_delay_tcp;
+            Normal_delay_path:
+#endif
+                /* check if current packet should be delayed */
+                if (get_data_len(cur_pkt) + orig_segsz <= target_segsz)
+                {
+                    /*
+                     * size of this packet is R < 9K
+                     * delay current packet (R) to merge more
+                     */
+                    /* if this item is the last item and delay nsec is marginal */
+                    if ((item_idx == INVALID_INDEX) &&
+                        is_delay_needed(pctx,
+                                        get_four_tuple(cur_pkt),
+                                        get_data_len(cur_pkt),
+                                        cur_item->timestamp,
+                                        orig_segsz,
+                                        target_segsz))
+                    {
+                        /* can delay, so insert to stash item array */
+                        if (insert_stash(pctx,
+                                         cur_pkt,
+                                         cur_item->lastseg,
+                                         cur_item->timestamp) < 0)
+                        {
+                            fprintf(stdout, "stash table overflow\n");
+                            goto No_delay_tcp;
                         }
-                        goto No_delay_tcp;
+                        continue;
+                    }
+                    goto No_delay_tcp;
+                }
+
+                /* check if edge separation is needed */
+                last_segsz = get_data_len(cur_pkt) % target_segsz;
+                if (last_segsz &&
+                    ((last_segsz + orig_segsz) <= target_segsz))
+                {
+                    /*
+                     * size of this packet is 9K * N + R
+                     * flush complete packets (N)
+                     * stash duplicated edge (R) to merge more
+                     */
+                    /* if this item is the last item and delay nsec is marginal */
+                    if ((item_idx == INVALID_INDEX) &&
+                        is_delay_needed(pctx,
+                                        get_four_tuple(cur_pkt),
+                                        last_segsz,
+                                        cur_item->timestamp,
+                                        orig_segsz,
+                                        target_segsz))
+                    {
+                        edge = separate_edge_seg(cur_pkt, last_segsz, pool);
+                        if (!edge)
+                        {
+                            fprintf(stderr,
+                                    "Failed to separate edge segment\n");
+                            continue;
+                        }
+
+                        /* can delay, so insert to stash item array */
+                        if (insert_stash(pctx,
+                                         edge,
+                                         rte_pktmbuf_lastseg(edge),
+                                         cur_item->timestamp) < 0)
+                        {
+                            /* ToDo: in this case we should merge again... */
+                            /* this should not happen */
+                            rte_exit(EXIT_FAILURE,
+                                     "stash table overflow\n");
+                        }
                     }
                 }
             No_delay_tcp:
@@ -2093,8 +2266,9 @@ link_and_flush(struct px_ctx *pctx,
                  * ToDo: find orig_segsz by looking up
                  * MSS table using reverse four tuple.
                  */
-                if (cur_pkt->next && is_nicmem(cur_pkt->next))
+                if (cur_pkt->next && cur_pkt->next->ol_flags & EXT_ATTACHED_MBUF)
                 {
+                    /* if NICMEM packet */
                     // fprintf(stdout, "is nicmem\n");
                     orig_segsz =
                         cur_pkt->data_len +
@@ -2204,7 +2378,8 @@ link_and_flush(struct px_ctx *pctx,
                 if (px_ring_enqueue(&pctx->rx_ring, &cur_pkt, 1) != 1)
                 {
                     /* enqueue failed, drop the packet */
-                    fprintf(stderr, "ring overflow\n");
+                    fprintf(stderr, "[line %d] RX ring overflow in %s\n",
+                            __LINE__, __func__);
                     rte_pktmbuf_free(cur_pkt);
                     cur_pkt = NULL;
                 }
@@ -2325,6 +2500,13 @@ px_core(struct px_ctx *pctx,
                                    sizeof(struct rte_ipv4_hdr) -
                                    sizeof(struct rte_tcp_hdr));
                 }
+#if NVME_TCP_PX
+                if (is_nvme_tcp(pkt))
+                {
+                    px_l5_handle_syn(pctx->port_id, pctx->queue_id, pkt,
+                                     g_clone_pool[pctx->socket_id]);
+                }
+#endif
             }
             /* check FIN/RST */
             else if (tcp_flags & (RTE_TCP_FIN_FLAG | RTE_TCP_RST_FLAG))
@@ -2338,13 +2520,23 @@ px_core(struct px_ctx *pctx,
                     rte_exit(EXIT_FAILURE,
                              "mss_evict_entry: MSS table is not initialized\n");
                 }
+#if NVME_TCP_PX
+                if (is_nvme_tcp(pkt))
+                {
+                    px_l5_handle_fin(pctx->port_id, pctx->queue_id, pkt);
+                }
+#endif
             }
-            /* simple ACK packet */
-            else
+#if NVME_TCP_PX
+            /* pure ACK */
+            else if (tcp_flags & RTE_TCP_ACK_FLAG)
             {
-                /* nothing to do for L4 PX */;
+                if (is_nvme_tcp(pkt))
+                {
+                    px_l5_handle_ack(pctx->port_id, pctx->queue_id, pkt, NULL);
+                }
             }
-
+#endif
         Skip_tcp_mss:
             pkts[cnt++] = pkt;
             continue;
@@ -2520,6 +2712,14 @@ int px_init(uint16_t port_id,
             }
             pctx->do_delayed_merging = 1;
         }
+#if NVME_TCP_PX
+        /* initiate l5 flow context */
+        ret = px_l5_init(port_id, queue_id, mss_table_size);
+        if (ret < 0)
+        {
+            rte_exit(EXIT_FAILURE, "px_l5_init() failed\n");
+        }
+#endif
 
         /* estimate table size */
         // table_size = burst * (px_dev->stall_limit + 1);
@@ -2603,14 +2803,14 @@ int px_init(uint16_t port_id,
         }
 
         /* create PX RX ring as same size as original RX ring */
-        ret = px_ring_init(&pctx->rx_ring, px_dev->nb_rx_desc[queue_id]);
+        ret = px_ring_init(&pctx->rx_ring, px_dev->nb_rx_desc[queue_id] * 20);
         if (ret < 0)
         {
             rte_exit(EXIT_FAILURE, "px_ring_init failed\n");
         }
 
         /* create PX TX ring as same size as original TX ring */
-        ret = px_ring_init(&pctx->tx_ring, px_dev->nb_tx_desc[queue_id]);
+        ret = px_ring_init(&pctx->tx_ring, px_dev->nb_tx_desc[queue_id] * 10);
         if (ret < 0)
         {
             rte_exit(EXIT_FAILURE, "px_ring_init failed\n");
@@ -2664,7 +2864,7 @@ int px_init(uint16_t port_id,
     /* initialize ReTa*/
     // px_reta_init(port_id);
 
-    fprintf(stdout, "port_num in px_init: %d\n", rte_eth_dev_count_avail());
+    // fprintf(stdout, "port_num in px_init: %d\n", rte_eth_dev_count_avail());
 
     /* initialize async QPs and thread */
     ret = px_async_start(get_num_cpus() - 1,
@@ -2919,12 +3119,14 @@ int px_eth_dev_configure(uint16_t port_id,
     }
 
     /* it is nominally 1024, but in real, only 512 is allowed */
-    fprintf(stdout, "max_rx_queues: %d\n",
-            px_dev->dev_info.max_rx_queues);
-    fprintf(stdout, "reta_size: %d\n",
-            px_dev->dev_info.reta_size);
-    fprintf(stdout, "min_mtu: %d, max_mtu: %d\n",
-            px_dev->dev_info.min_mtu, px_dev->dev_info.max_mtu);
+    // fprintf(stdout, "max_rx_queues: %d, "
+    //                 "reta_size: %d, "
+    //                 "min_mtu: %d, "
+    //                 "max_mtu: %d\n",
+    //         px_dev->dev_info.max_rx_queues,
+    //         px_dev->dev_info.reta_size,
+    //         px_dev->dev_info.min_mtu,
+    //         px_dev->dev_info.max_mtu);
 
     px_dev->initialized_dyn_rxq = dyn_rxq;
     if (!px_dev->initialized_dyn_rxq)
@@ -2993,9 +3195,9 @@ int px_eth_dev_configure(uint16_t port_id,
         g_pctx[port_id][queue_id].queue_id = queue_id;
     }
 
-    fprintf(stdout,
-            "num_rxq: %u, max_rxq: %u, max_lxq_per_rxq: %u\n",
-            num_rxq, max_rxq, max_lxq_per_rxq);
+    // fprintf(stdout,
+    //         "num_rxq: %u, max_rxq: %u, max_lxq_per_rxq: %u\n",
+    //         num_rxq, max_rxq, max_lxq_per_rxq);
 
     /* initialize ReTa entry */
     px_latent_configure(port_id,
@@ -3151,11 +3353,12 @@ int px_eth_rx_queue_setup(uint16_t port_id,
     if (px_dev->initialized_nicmem)
     {
         ret = px_nicmem_setup(port_id, rx_conf, mp);
-        if (ret)
+        if (ret < 0)
         {
             return ret;
         }
 
+        /* mp is configured in rx_conf, so set mp to NULL */
         mp = NULL;
     }
 
@@ -3244,7 +3447,7 @@ rx_and_px(uint16_t port_id,
     *active_rxq_cnt = 0;
     int i, is_transient = 0;
 
-    now_ns = px_gettime(CLOCK_CPUTSC_PRECISE);
+    now_ns = PX_GETTIME(CLOCK_CPUTSC_PRECISE);
     *queue_time = pctx->queue_time ? now_ns - pctx->queue_time : 0;
     pctx->queue_time = now_ns;
 
@@ -3259,7 +3462,7 @@ rx_and_px(uint16_t port_id,
                                     inner_qid,
                                     rx_pkts + total,
                                     nb_pkts - total);
-            pctx->now_ns = !i ? now_ns : px_gettime(CLOCK_CPUTSC_PRECISE);
+            pctx->now_ns = !i ? now_ns : PX_GETTIME(CLOCK_CPUTSC_PRECISE);
             if (!recv)
             {
                 if (!bubble_start)
@@ -3340,7 +3543,7 @@ rx_and_px(uint16_t port_id,
                                     inner_qid,
                                     rx_pkts + total,
                                     nb_pkts - total);
-            pctx->now_ns = !i ? now_ns : px_gettime(CLOCK_CPUTSC_PRECISE);
+            pctx->now_ns = !i ? now_ns : PX_GETTIME(CLOCK_CPUTSC_PRECISE);
             if (!recv)
             {
                 if (!bubble_start)
@@ -3398,8 +3601,7 @@ px_eth_rx_burst(uint16_t port_id,
     struct px_dev *px_dev = &g_px_dev[port_id];
     struct px_ctx *pctx = &g_pctx[port_id][queue_id];
     struct px_ring *rx_ring = &pctx->rx_ring;
-    uint16_t read_px_rx_ring = 0;
-    uint16_t read_hw_rx_ring = 0;
+    uint16_t total_read_pkts = 0;
     uint16_t num_flows_per_rxq = 0;
     uint16_t num_pkts_per_rxq = 0;
     uint16_t active_rxq_cnt = 0;
@@ -3407,7 +3609,7 @@ px_eth_rx_burst(uint16_t port_id,
     struct rte_mbuf **orig_batch = rx_pkts;
 
     /* monitor stats on specific core */
-    uint64_t now_ns = px_gettime(CLOCK_CPUTSC_PRECISE);
+    uint64_t now_ns = PX_GETTIME(CLOCK_CPUTSC_PRECISE);
     static uint64_t prev_now_ns = 0;
     if (rte_lcore_id() == STAT_MONITOR_CORE_ID)
     {
@@ -3459,39 +3661,39 @@ px_eth_rx_burst(uint16_t port_id,
     /* stage 1: fetch from time out ring */
     if (px_dev->cutoff_ns)
     {
-        read_px_rx_ring = px_ring_dequeue(rx_ring, rx_pkts, nb_pkts);
+        total_read_pkts = px_ring_dequeue(rx_ring, rx_pkts, nb_pkts);
 
-        assert(read_px_rx_ring <= nb_pkts);
+        assert(total_read_pkts <= nb_pkts);
 
         /* adjust batch offset */
-        rx_pkts += read_px_rx_ring;
-        nb_pkts -= read_px_rx_ring;
+        rx_pkts += total_read_pkts;
+        nb_pkts -= total_read_pkts;
     }
 
     /* stage 2: RX and GRO if batch has more rooms */
     if (nb_pkts)
     {
-        read_hw_rx_ring = rx_and_px(port_id,
-                                    queue_id,
-                                    rx_pkts,
-                                    nb_pkts,
-                                    &num_flows_per_rxq,
-                                    &num_pkts_per_rxq,
-                                    &active_rxq_cnt,
-                                    &queue_time);
+        total_read_pkts += rx_and_px(port_id,
+                                     queue_id,
+                                     rx_pkts,
+                                     nb_pkts,
+                                     &num_flows_per_rxq,
+                                     &num_pkts_per_rxq,
+                                     &active_rxq_cnt,
+                                     &queue_time);
     }
 
     /* stage 3: update stats */
     px_stat_update_rx(port_id,
                       queue_id,
                       orig_batch,
-                      read_px_rx_ring + read_hw_rx_ring,
+                      total_read_pkts,
                       num_flows_per_rxq,
                       num_pkts_per_rxq,
                       active_rxq_cnt,
                       queue_time);
 
-    return read_px_rx_ring + read_hw_rx_ring;
+    return total_read_pkts;
 }
 /*----------------------------------------------------------------------------*/
 uint16_t
@@ -3500,6 +3702,7 @@ px_eth_tx_burst0(uint16_t port_id,
                  struct rte_mbuf **tx_pkts,
                  uint16_t nb_pkts)
 {
+    struct px_dev *px_dev = &g_px_dev[port_id];
     struct px_ctx *pctx = &g_pctx[port_id][queue_id];
     struct px_ring *tx_ring = &pctx->tx_ring;
     struct rte_mbuf *out_batch[PX_TX_BURST];
@@ -3507,12 +3710,11 @@ px_eth_tx_burst0(uint16_t port_id,
     uint16_t sent_hw_tx_ring = 0;
     int offset = 0;
 
-    /* stage 0: create hairpin flow */
-    // struct px_dev *px_dev = &g_px_dev[port_id];
-    // if (px_dev->initialized_hairpin)
-    // {
-    //     px_flow_create_burst(port_id, queue_id, tx_pkts, nb_pkts);
-    // }
+    /* stage 0: create offload hairpin flow for opt-out policy */
+    if (px_dev->initialized_hairpin && px_dev->hp_policy == 1)
+    {
+        px_flow_create_burst(port_id, queue_id, tx_pkts, nb_pkts);
+    }
 
     /* stage 1: enqueue packets from app to PX TX ring */
     if (pctx->do_link)
@@ -3588,12 +3790,11 @@ px_eth_tx_burst(uint16_t port_id,
     uint16_t nb_pkts_after_uso = 0;
     int offset = 0, i;
 
-    /* stage 0: create hairpin flow */
-    // struct px_dev *px_dev = &g_px_dev[port_id];
-    // if (px_dev->initialized_hairpin && px_dev->hp_policy == 1)
-    // {
-    //     px_flow_create_burst(port_id, queue_id, tx_pkts, nb_pkts);
-    // }
+    /* stage 0: create offload hairpin flow for opt-out policy */
+    if (px_dev->initialized_hairpin && px_dev->hp_policy == 1)
+    {
+        px_flow_create_burst(port_id, queue_id, tx_pkts, nb_pkts);
+    }
 
     /* stage 1: TX packets from app */
     if (pctx->do_link)

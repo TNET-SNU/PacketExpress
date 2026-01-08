@@ -128,7 +128,7 @@ void px_stat_update_tx(uint16_t port_id,
     uint32_t data_len;
     int max_segnum, i;
     tx_stat = &g_tx_stat[port_id][queue_id];
-    uint64_t now_ns = px_gettime(TIME_FLAG);
+    uint64_t now_ns = PX_GETTIME(TIME_FLAG);
 
     /* if main core has already read my stats, reset mine */
     if (tx_stat->reset)
@@ -233,13 +233,13 @@ void px_stat_update_tx(uint16_t port_id,
 /*----------------------------------------------------------------------------*/
 static void px_stat_shift_up_handler(int signum)
 {
-    (void)signum;
+    RTE_SET_USED(signum);
     g_shift_up_requested = 1;
 }
 /*----------------------------------------------------------------------------*/
 static void px_stat_shift_down_handler(int signum)
 {
-    (void)signum;
+    RTE_SET_USED(signum);
     g_shift_down_requested = 1;
 }
 /*----------------------------------------------------------------------------*/
@@ -300,7 +300,7 @@ void px_stat_monitor(uint16_t main_core_id)
                                   tx_iter->under_iMTU_cnt) *
                                  100)
                     : 0;
-            (void)yield1_iter;
+            RTE_SET_USED(yield1_iter);
 
             yield2_iter =
                 (tx_iter->_1_seg_cnt ||
@@ -490,7 +490,7 @@ void px_stat_monitor(uint16_t main_core_id)
             ? (uint32_t)((float)tx_total.iMTU_cnt /
                          (tx_total.iMTU_cnt + tx_total.under_iMTU_cnt) * 100)
             : 0;
-    (void)yield1_total;
+    RTE_SET_USED(yield1_total);
 
     yield2_total =
         (tx_total._1_seg_cnt ||
@@ -563,12 +563,28 @@ void px_stat_monitor(uint16_t main_core_id)
     /* print total stat */
     fprintf(stdout, "SYN/SYNACK: %lu/%lu\n",
             tcp_total.syn_cnt, tcp_total.synack_cnt);
+    
+    /* print port stat */
+    struct rte_eth_stats port_stat;
+    memset(&port_stat, 0, sizeof(port_stat));
+    rte_eth_stats_get(1, &port_stat);
+    // if (port_stat.imissed || port_stat.oerrors)
+    {
+        printf("[ PORT %2d ] "
+                "RX: %5lu pkts, %5lu bytes; "
+                "TX: %5lu pkts, %5lu bytes; "
+                "RX dropped: %5lu pkts, TX dropped: %5lu pkts\n",
+                1,
+                port_stat.ipackets, port_stat.ibytes,
+                port_stat.opackets, port_stat.obytes,
+                port_stat.imissed, port_stat.oerrors);
+    }
     fprintf(stdout,
             "[ TOTAL ] "
             "%4u Gbps "
             "%5u Kpps "
             "delay: %6u ns "
-            "yield: %2u%% "
+            // "yield: %2u%% "
             "yield: %2u%% "
             "pktsize: %6lu "
             "globalIAT: %5lu ns "
@@ -587,7 +603,7 @@ void px_stat_monitor(uint16_t main_core_id)
             gbps_total,
             kpps_total,
             delay_total,
-            yield1_total,
+            // yield1_total,
             yield2_total,
             rx_total.data_pkt_cnt
                 ? rx_total.data_bytes_cnt /
@@ -773,8 +789,8 @@ int px_stat_start_monitor(unsigned int stat_interval,
         perror("sigaction failed");
         return -1;
     }
-    (void)sa_gear_up;
-    (void)px_stat_shift_up_handler;
+    RTE_SET_USED(sa_gear_up);
+    RTE_SET_USED(px_stat_shift_up_handler);
 
     /* register manual gear shift down handler */
     // sa_gear_down.sa_handler = px_stat_shift_down_handler;
@@ -785,8 +801,8 @@ int px_stat_start_monitor(unsigned int stat_interval,
     //     perror("sigaction failed");
     //     return -1;
     // }
-    (void)sa_gear_down;
-    (void)px_stat_shift_down_handler;
+    RTE_SET_USED(sa_gear_down);
+    RTE_SET_USED(px_stat_shift_down_handler);
 
     /* mark as initialized */
     g_stat_interval = stat_interval;

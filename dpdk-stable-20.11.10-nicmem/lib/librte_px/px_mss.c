@@ -18,7 +18,7 @@ mss_periodic_cleanup(void *arg)
     free(arg);
     while (!g_mss_shutdown)
     {
-        now_ns = px_gettime(TIME_FLAG);
+        now_ns = PX_GETTIME(TIME_FLAG);
         for (i = 0; i < port_nb; i++)
         {
             for (j = 0; j < g_num_cores; j++)
@@ -116,17 +116,17 @@ int mss_init_ctx(uint16_t port_id,
     atomic_init(&ctx->epoch, 0);
 
     /* Create a new thread for periodic cleanup */
-    // uint16_t *num_cores = calloc(1, sizeof(uint16_t));
-    // *num_cores = rte_lcore_count();
-    // if (pthread_create(&g_mss_tid, NULL, mss_periodic_cleanup, num_cores) != 0)
-    // {
-    //     fprintf(stderr, "Failed to create cleanup thread\n");
-    //     mss_bloom_destroy(ctx->bf);
-    //     rte_hash_free(ctx->tbl);
-    //     rte_mempool_free(ctx->pool);
-    //     rte_free(ctx);
-    //     return -1;
-    // }
+    uint16_t *num_cores = calloc(1, sizeof(uint16_t));
+    *num_cores = rte_lcore_count();
+    if (pthread_create(&g_mss_tid, NULL, mss_periodic_cleanup, num_cores) != 0)
+    {
+        fprintf(stderr, "Failed to create cleanup thread\n");
+        mss_bloom_destroy(ctx->bf);
+        rte_hash_free(ctx->tbl);
+        rte_mempool_free(ctx->pool);
+        rte_free(ctx);
+        return -1;
+    }
 
     ctx->port_id = port_id;
     ctx->queue_id = queue_id;

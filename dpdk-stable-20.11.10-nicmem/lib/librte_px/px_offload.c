@@ -17,7 +17,14 @@ int px_flow_create(uint16_t core_id,
     struct ri_node *target, *new;
     struct request req;
     struct rte_mbuf *clone;
-    struct four_tuple *orig_ft = get_orig_four_tuple(pkt);
+    struct four_tuple *orig_ft;
+
+    orig_ft = get_orig_four_tuple(pkt);
+    if (!orig_ft)
+    {
+        fprintf(stdout, "get_orig_four_tuple failed!\n");
+        return -1;
+    }
 
     /* below is to control flow creation ratio */
     // if ((orig_ft->src_port + orig_ft->dst_port) % 5 >= 4) // create 80% of flows
@@ -34,6 +41,7 @@ int px_flow_create(uint16_t core_id,
         .key = *orig_ft,
         .pkt = pkt,
     };
+
     target = ht_search(core_id, &node);
     if (target)
     {
@@ -55,6 +63,7 @@ int px_flow_create(uint16_t core_id,
                 clone = get_firstseg_clone(node.pkt);
                 if (!clone)
                 {
+                    fprintf(stdout, "get_firstseg_clone failed!\n");
                     return -1;
                 }
 
@@ -77,6 +86,7 @@ int px_flow_create(uint16_t core_id,
         new = node_pool_alloc(core_id);
         if (!new)
         {
+            fprintf(stdout, "node_pool_alloc failed!\n");
             return -1;
         }
 
@@ -85,6 +95,7 @@ int px_flow_create(uint16_t core_id,
         clone = get_firstseg_clone(node.pkt);
         if (!clone)
         {
+            fprintf(stdout, "get_firstseg_clone failed!\n");
             node_pool_free(core_id, new);
             return -1;
         }
@@ -114,7 +125,15 @@ int px_flow_delete(uint16_t core_id,
     struct ri_node *target;
     struct request req;
     enum cache_request cmd;
-    struct four_tuple *orig_ft = get_orig_four_tuple(pkt);
+    struct four_tuple *orig_ft;
+
+    orig_ft = get_orig_four_tuple(pkt);
+    if (!orig_ft)
+    {
+        fprintf(stdout, "get_orig_four_tuple failed!\n");
+        return -1;
+    }
+
     struct ri_node node = {
         .key = *orig_ft,
         .pkt = pkt,
@@ -150,7 +169,15 @@ px_flow_search(uint16_t core_id,
                struct rte_mbuf *pkt)
 {
     struct ri_node *target;
-    struct four_tuple *orig_ft = get_orig_four_tuple(pkt);
+    struct four_tuple *orig_ft;
+
+    orig_ft = get_orig_four_tuple(pkt);
+    if (!orig_ft)
+    {
+        fprintf(stdout, "get_orig_four_tuple failed!\n");
+        return NULL;
+    }
+
     struct ri_node node = {
         .key = *orig_ft,
         .pkt = pkt,
@@ -179,7 +206,15 @@ int px_flow_stat(uint16_t core_id,
 {
     struct ri_node *target;
     struct rte_flow_query_count query;
-    struct four_tuple *orig_ft = get_orig_four_tuple(pkt);
+    struct four_tuple *orig_ft;
+    
+    orig_ft = get_orig_four_tuple(pkt);
+    if (!orig_ft)
+    {
+        fprintf(stdout, "get_orig_four_tuple failed!\n");
+        return -1;
+    }
+
     struct ri_node node = {
         .key = *orig_ft,
         .pkt = pkt,
@@ -666,7 +701,7 @@ int px_hairpin_setup(uint16_t port_id,
     struct rte_eth_hairpin_conf hp_rx_conf, hp_tx_conf;
     const struct rte_eth_hairpin_conf *hp_rx_conf_ptr, *hp_tx_conf_ptr;
     int i, ret;
-    (void)num_rxq;
+    RTE_SET_USED(num_rxq);
 
     ret = rte_eth_dev_hairpin_capability_get(port_id, &cap);
     if (ret < 0)

@@ -2156,7 +2156,7 @@ static inline void netif_tx_burst(lcoreid_t cid, portid_t pid, queueid_t qindex)
 #if (USE_LRO || USE_GRO)
     px_setup_tso_burst(pid, txq->id, txq->mbufs, txq->len, SEMANTIC_TEST);
 #endif
-#if NUM_HAIRPIN_Q
+#if NUM_HAIRPIN_Q && (HAIRPIN_POLICY == 1)
     px_flow_create_burst(pid, txq->id, txq->mbufs, txq->len);
 #endif
     px_stat_update_tx(pid, txq->id, txq->mbufs, txq->len, USE_LRO || USE_GRO);
@@ -4027,7 +4027,7 @@ int netif_port_start(struct netif_port *port)
                                NULL,
                                0,
                                1,
-                               1,
+                               USE_DYNRXQ,
                                NUM_HAIRPIN_Q ? HAIRPIN_POLICY : 0);
 #else
     ret = rte_eth_dev_configure(port->id,

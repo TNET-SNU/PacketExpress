@@ -243,7 +243,8 @@ px_unlink_and_uso0(struct rte_mbuf **pkts,
                     if (px_ring_enqueue(tx_ring, &hdr_clone, 1) != 1)
                     {
                         /* enqueue failed, drop the packet */
-                        fprintf(stderr, "ring overflow\n");
+                        fprintf(stderr, "[line %d] TX ring overflow in %s\n",
+                                __LINE__, __func__);
                         rte_pktmbuf_free(hdr_clone);
                         hdr_clone = NULL;
                     }
@@ -268,7 +269,8 @@ px_unlink_and_uso0(struct rte_mbuf **pkts,
                 if (px_ring_enqueue(tx_ring, &pkt, 1) != 1)
                 {
                     /* enqueue failed, drop the packet */
-                    fprintf(stderr, "ring overflow\n");
+                    fprintf(stderr, "[line %d] TX ring overflow in %s\n",
+                            __LINE__, __func__);
                     rte_pktmbuf_free(pkt);
                     pkt = NULL;
                 }
@@ -323,7 +325,7 @@ px_unlink_and_uso(struct rte_mbuf **pkts,
     uint16_t *iplen, *udplen;
     int j;
 #else
-    (void)clone_pool;
+    RTE_SET_USED(clone_pool);
 #endif
 
     for (i = 0; i < nb_pkts; i++)
@@ -476,7 +478,8 @@ px_unlink_and_uso(struct rte_mbuf **pkts,
                         if (px_ring_enqueue(tx_ring, &hdr_clone, 1) != 1)
                         {
                             /* enqueue failed, drop the packet */
-                            fprintf(stderr, "ring overflow\n");
+                            fprintf(stderr, "[line %d] TX ring overflow in %s\n",
+                                    __LINE__, __func__);
                             rte_pktmbuf_free(hdr_clone);
                             hdr_clone = NULL;
                         }
@@ -510,7 +513,8 @@ px_unlink_and_uso(struct rte_mbuf **pkts,
                     if (px_ring_enqueue(tx_ring, &pkt, 1) != 1)
                     {
                         /* enqueue failed, drop the packet */
-                        fprintf(stderr, "ring overflow\n");
+                        fprintf(stderr, "[line %d] TX ring overflow in %s\n",
+                                __LINE__, __func__);
                         rte_pktmbuf_free(pkt);
                         pkt = NULL;
                     }

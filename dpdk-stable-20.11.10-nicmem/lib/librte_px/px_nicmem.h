@@ -20,24 +20,6 @@ struct px_nicmem_ctx
     struct rte_pktmbuf_extmem *emem_array;
 };
 /*----------------------------------------------------------------------------*/
-static inline uint64_t
-is_nicmem(struct rte_mbuf *pkt)
-{
-    return pkt->ol_flags & EXT_ATTACHED_MBUF;
-}
-/*----------------------------------------------------------------------------*/
-static inline void
-mark_nicmem(struct rte_mbuf *pkt)
-{
-    pkt->ol_flags |= EXT_ATTACHED_MBUF;
-}
-/*----------------------------------------------------------------------------*/
-static inline void
-unmark_nicmem(struct rte_mbuf *pkt)
-{
-    pkt->ol_flags &= ~EXT_ATTACHED_MBUF;
-}
-/*----------------------------------------------------------------------------*/
 int px_nicmem_free(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 int px_nicmem_configure(uint16_t port_id,

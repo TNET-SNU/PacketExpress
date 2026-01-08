@@ -14,7 +14,7 @@ void px_latent_configure(uint16_t port_id,
 {
     struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
     struct px_latent_gear *gear;
-    uint16_t max_lxq_per_rxq, gear_per_rxq;
+    uint16_t max_lxq_per_rxq, num_lxq_per_rxq;
     uint16_t gear_idx, i, j;
 
     /* make configure idempotent */
@@ -51,18 +51,18 @@ void px_latent_configure(uint16_t port_id,
             /* invalid gear */
             gear->valid = 0;
             fprintf(stdout,
-                    "  gear %d invalid, num_lxq: %d\n",
+                    "  gear %d (num_lxq %d) invalid\n",
                     gear_idx, gear->num_lxq);
             continue;
         }
 
         /* then, check if gear is valid for the given num_rxq */
-        gear_per_rxq = gear->num_lxq / latent_ctx->num_rxq;
-        if (!gear_per_rxq)
+        num_lxq_per_rxq = gear->num_lxq / latent_ctx->num_rxq;
+        if (!num_lxq_per_rxq)
         {
             gear->valid = 0;
             fprintf(stdout,
-                    "  gear %d invalid, num_lxq: %d\n",
+                    "  gear %d (num_lxq %d) invalid\n",
                     gear_idx, gear->num_lxq);
             continue;
         }
@@ -74,7 +74,7 @@ void px_latent_configure(uint16_t port_id,
             for (j = 0; j < max_lxq_per_rxq; j++)
             {
                 gear->rss_queues[i * max_lxq_per_rxq + j] =
-                    i * max_lxq_per_rxq + j % gear_per_rxq;
+                    i * max_lxq_per_rxq + j % num_lxq_per_rxq;
             }
         }
 
@@ -137,6 +137,7 @@ void px_latent_configure(uint16_t port_id,
             .queue = gear->rss_queues};
     }
 
+    /* mark initialized */
     latent_ctx->flow_initialized = 1;
 }
 /*----------------------------------------------------------------------------*/
@@ -229,7 +230,7 @@ int px_latent_gear_jump(uint16_t port_id)
         return -1;
     }
 #else
-    (void)port_id;
+    RTE_SET_USED(port_id);
 #endif
 
     return 0;
@@ -243,6 +244,7 @@ int px_latent_gear_init(uint16_t port_id)
     struct rte_flow_error error;
     int i, ret;
 
+    /* check initialized */
     if (!latent_ctx->flow_initialized || !latent_ctx->num_gears)
     {
         fprintf(stdout,
@@ -320,7 +322,9 @@ int px_latent_gear_to_target(uint16_t core_id,
     struct rte_flow_error error;
     uint16_t cur_gear_idx;
     int i, ret;
+    RTE_SET_USED(core_id);
 
+    /* check initialized */
     if (!latent_ctx->flow_initialized || !latent_ctx->num_gears)
     {
         fprintf(stdout,
@@ -888,8 +892,10 @@ uint32_t px_latent_gear_check_ack(uint16_t port_id)
 
     for (queue_id = 0; queue_id < latent_ctx->num_rxq; queue_id++)
     {
-        // Use memory_order_acquire to synchronize with the release store
-        // in set/reset functions.
+        /**
+         * Use memory_order_acquire to synchronize with the release store
+         * in set/reset functions.
+         */
         if (!atomic_load_explicit(
                 &latent_ctx->acked[queue_id],
                 memory_order_acquire))
@@ -1489,6 +1495,7 @@ void px_reta_init(uint16_t port_id)
     struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
     int ret, i;
 
+    /* check initialized */
     if (latent_ctx->reta_initialized)
     {
         /* already reta_initialized */
@@ -1527,6 +1534,7 @@ void px_reta_update(uint16_t port_id, uint16_t rss_len)
     struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
     int ret, i;
 
+    /* check initialized */
     if (!latent_ctx->reta_initialized)
     {
         /* not reta_initialized yet */
@@ -1718,6 +1726,7 @@ int px_eth_dev_rss_reta_update(uint16_t port_id,
     int ret, i, j, group_num, inner_len;
     uint16_t num_lxq_per_rxq;
 
+    /* check initialized */
     if (!latent_ctx->flow_initialized)
     {
         fprintf(stderr, "ReTa context is not initialized\n");
@@ -1783,6 +1792,7 @@ int reta_runtime_update(uint16_t port_id)
     int i, j, group_num, inner_len;
     uint16_t num_lxq_per_rxq;
 
+    /* check initialized */
     if (!latent_ctx->flow_initialized)
     {
         fprintf(stderr, "ReTa context is not initialized\n");
@@ -1828,6 +1838,7 @@ int px_eth_dump_reta(uint16_t port_id)
     uint16_t reta_size = latent_ctx->reta_size;
     int ret, i;
 
+    /* check initialized */
     if (!latent_ctx->flow_initialized)
     {
         fprintf(stderr, "ReTa context is not initialized\n");

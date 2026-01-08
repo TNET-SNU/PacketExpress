@@ -8,8 +8,8 @@ extern "C"
 /*----------------------------------------------------------------------------*/
 #include "px_common.h"
 /*----------------------------------------------------------------------------*/
-#define IAT_THREAD_PERIOD 10
-#define IAT_TIMEOUT 300
+#define IAT_THREAD_PERIOD 60
+#define IAT_TIMEOUT 600
 #define EWMA_ALPHA 0.125 // α = 1/8
 #define NMAX 45
 #define OUTLIER_CNT 10
@@ -123,9 +123,9 @@ init_rx_hw_timestamp(void)
                  "rte_mbuf_dyn_rx_timestamp_register failed: %d\n", ret);
         return ret;
     }
-    fprintf(stdout,
-            "rx timestamp field offset: %d, flag: 0x%lx\n",
-            rx_hw_timestamp_field_offset, rx_hw_timestamp_flag);
+    // fprintf(stdout,
+    //         "rx timestamp field offset: %d, flag: 0x%lx\n",
+    //         rx_hw_timestamp_field_offset, rx_hw_timestamp_flag);
     done = 1;
 
     return 0;

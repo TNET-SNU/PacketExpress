@@ -169,7 +169,7 @@ iat_periodic_cleanup(void *arg)
     free(arg);
     while (!g_iat_shutdown)
     {
-        now_ns = px_gettime(TIME_FLAG);
+        now_ns = PX_GETTIME(TIME_FLAG);
         for (i = 0; i < port_nb; i++)
         {
             for (j = 0; j < g_num_cores; j++)
@@ -265,16 +265,16 @@ int iat_init_ctx(uint16_t port_id,
     }
 
     /* Create a new thread for periodic cleanup */
-    // uint16_t *num_cores = calloc(1, sizeof(uint16_t));
-    // *num_cores = rte_lcore_count();
-    // if (pthread_create(&g_iat_tid, NULL, iat_periodic_cleanup, num_cores) != 0)
-    // {
-    //     fprintf(stderr, "Failed to create cleanup thread\n");
-    //     rte_hash_free(ctx->tbl);
-    //     rte_mempool_free(ctx->pool);
-    //     rte_free(ctx);
-    //     return -1;
-    // }
+    uint16_t *num_cores = calloc(1, sizeof(uint16_t));
+    *num_cores = rte_lcore_count();
+    if (pthread_create(&g_iat_tid, NULL, iat_periodic_cleanup, num_cores) != 0)
+    {
+        fprintf(stderr, "Failed to create cleanup thread\n");
+        rte_hash_free(ctx->tbl);
+        rte_mempool_free(ctx->pool);
+        rte_free(ctx);
+        return -1;
+    }
 
     ctx->port_id = port_id;
     ctx->queue_id = queue_id;
@@ -949,7 +949,7 @@ void iat_local_stat(uint16_t port_id,
             temp_data_len += entry->avg_data_len;
             temp_count++;
 
-#ifdef LOG_IAT_ENTRIES
+#if LOG_IAT_ENTRIES
             fprintf(stdout,
                     "  IAT stats: burst_iat: %9u ns, "
                     "global_iat: %9u ns, "

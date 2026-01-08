@@ -86,9 +86,7 @@ extern "C"
 // #define FALLBACK_eMTU 576
 #define FALLBACK_eMTU 1240
 /*----------------------------------------------------------------------------*/
-#define NVME_TCP_PX 0
-#define TLS_PX 0
-#define L5_DEBUG 0
+#define NVME_TCP_PX 1
 #ifndef PAGE_SIZE
 #define PAGE_SIZE 4096
 #endif
@@ -118,11 +116,10 @@ extern "C"
 // #define FIXED_TIMEOUT 180000 /* 180us */ /* 400Mbps */
 /*----------------------------------------------------------------------------*/
 #define TEST_RSS_ATOMICITY 0
-// #define LOG_IAT_ENTRIES 1
+#define LOG_IAT_ENTRIES 1
 #define USE_JUMP_RULE 0
 /*----------------------------------------------------------------------------*/
 #define USE_USO 0
-#define LIMIT_64K 1
 /*----------------------------------------------------------------------------*/
 /* Custom timestamp flags */
 #define CLOCK_CPUTSC 100
@@ -146,6 +143,8 @@ extern "C"
 #define MIN(a, b) ((a > b) ? b : a)
 /*----------------------------------------------------------------------------*/
 /* for TCP option parsing */
+#define MAX_TCP_HLEN 60
+#define MAX_TCP_OPT_LEN (MAX_TCP_HLEN - sizeof(struct rte_tcp_hdr))
 #define TCPOPT_EOL 0
 #define TCPOPT_NOP 1
 #define TCPOPT_MAXSEG 2
@@ -164,6 +163,152 @@ extern "C"
      TCPOPT_NOP << 16 |      \
      TCPOPT_TIMESTAMP << 8 | \
      TCPOLEN_TIMESTAMP)
+/*----------------------------------------------------------------------------*/
+static inline uint64_t
+PX_GETTIME(clockid_t clk_id)
+{
+    struct timespec ts;
+    /* ToDo: make below use switch */
+    if (clk_id == CLOCK_CPUTSC_PRECISE)
+    {
+        return (uint64_t)((double)rte_rdtsc_precise() *
+                          NS_PER_S / rte_get_tsc_hz());
+    }
+    if (clk_id == CLOCK_CPUTSC)
+    {
+        return (uint64_t)((double)rte_rdtsc() *
+                          NS_PER_S / rte_get_tsc_hz());
+    }
+    if (clk_id == CLOCK_NICTSC)
+    {
+        /* not implemented yet */
+        return 0;
+    }
+
+    clock_gettime(clk_id, &ts);
+
+    return (uint64_t)ts.tv_sec * NS_PER_S + ts.tv_nsec;
+}
+/*----------------------------------------------------------------------------*/
+#if MEASURE_DELAY
+#define MEASURE(name, cmd)                                           \
+    do                                                               \
+    {                                                                \
+        uint64_t _start1, _start2, _end1, _end2;                     \
+        long _time1, _time2;                                         \
+        _start1 = PX_GETTIME(TIME_FLAG);                             \
+        _start2 = PX_GETTIME(CLOCK_THREAD_CPUTIME_ID);               \
+        cmd;                                                         \
+        _end1 = PX_GETTIME(TIME_FLAG);                               \
+        _end2 = PX_GETTIME(CLOCK_THREAD_CPUTIME_ID);                 \
+        _time1 = (_end1 - _start1);                                  \
+        _time2 = (_end2 - _start2);                                  \
+        fprintf(stdout,                                              \
+                "[%s:%d:%s:%s] "                                     \
+                "Wallclock time: %.0lf ns, Thread time: %.0lf ns\n", \
+                __FILE__, __LINE__, __func__, name,                  \
+                (double)_time1, (double)_time2);                     \
+    } while (/*CONSTCOND*/ 0);
+#else
+#define MEASURE(name, cmd) \
+    do                     \
+    {                      \
+        cmd;               \
+    } while (/*CONSTCOND*/ 0);
+#endif
+/*----------------------------------------------------------------------------*/
+static inline unsigned int
+CEIL_DIV(unsigned int a, unsigned int b)
+{
+    return (a + b - 1) / b;
+}
+/*----------------------------------------------------------------------------*/
+static inline unsigned int
+FLOOR_DIV(unsigned int a, unsigned int b)
+{
+    return (a / b);
+}
+/*----------------------------------------------------------------------------*/
+static inline bool
+SEQ_LT(uint32_t a, uint32_t b)
+{
+    return (int32_t)(a - b) < 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline bool
+SEQ_LEQ(uint32_t a, uint32_t b)
+{
+    return (int32_t)(a - b) <= 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline bool
+SEQ_GT(uint32_t a, uint32_t b)
+{
+    return (int32_t)(a - b) > 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline bool
+SEQ_GEQ(uint32_t a, uint32_t b)
+{
+    return (int32_t)(a - b) >= 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline uint32_t
+SEQ_DIFF(uint32_t a, uint32_t b)
+{
+    return (uint32_t)((int32_t)(a - b));
+}
+/*----------------------------------------------------------------------------*/
+static inline int
+SEQ_RANGE_OVERLAP(uint32_t s1, uint32_t e1,
+                  uint32_t s2, uint32_t e2)
+{
+    /* s1 < e2 && s2 < e1 */
+    if (SEQ_LT(s1, e2) && SEQ_LT(s2, e1))
+    {
+        return 1;
+    }
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline bool
+ID_LT(uint16_t a, uint16_t b)
+{
+    return (int16_t)(a - b) < 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline bool
+ID_LEQ(uint16_t a, uint16_t b)
+{
+    return (int16_t)(a - b) <= 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline bool
+ID_GT(uint16_t a, uint16_t b)
+{
+    return (int16_t)(a - b) > 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline bool
+ID_GEQ(uint16_t a, uint16_t b)
+{
+    return (int16_t)(a - b) >= 0;
+}
+/*----------------------------------------------------------------------------*/
+static inline uint16_t
+ID_DIFF(uint16_t a, uint16_t b)
+{
+    return (uint16_t)((int16_t)(a - b));
+}
+/*----------------------------------------------------------------------------*/
+struct four_tuple
+{
+    /* below are network-byte order */
+    uint32_t src_ip;
+    uint32_t dst_ip;
+    uint16_t src_port;
+    uint16_t dst_port;
+} __attribute__((packed));
 /*----------------------------------------------------------------------------*/
 struct px_dev
 {
@@ -282,151 +427,6 @@ struct px_caravan_hdr
     uint16_t hdr_len;
     /* length of each segment */
     uint16_t seglen;
-};
-/*----------------------------------------------------------------------------*/
-static inline uint64_t
-px_gettime(clockid_t clk_id)
-{
-    struct timespec ts;
-    /* ToDo: make below use switch */
-    if (clk_id == CLOCK_CPUTSC_PRECISE)
-    {
-        return (uint64_t)((double)rte_rdtsc_precise() *
-                          NS_PER_S / rte_get_tsc_hz());
-    }
-    if (clk_id == CLOCK_CPUTSC)
-    {
-        return (uint64_t)((double)rte_rdtsc() *
-                          NS_PER_S / rte_get_tsc_hz());
-    }
-    if (clk_id == CLOCK_NICTSC)
-    {
-        /* not implemented yet */
-        return 0;
-    }
-
-    clock_gettime(clk_id, &ts);
-
-    return (uint64_t)ts.tv_sec * NS_PER_S + ts.tv_nsec;
-}
-/*----------------------------------------------------------------------------*/
-#if MEASURE_DELAY
-#define MEASURE(name, cmd)                                           \
-    do                                                               \
-    {                                                                \
-        uint64_t _start1, _start2, _end1, _end2;                     \
-        long _time1, _time2;                                         \
-        _start1 = px_gettime(TIME_FLAG);                             \
-        _start2 = px_gettime(CLOCK_THREAD_CPUTIME_ID);               \
-        cmd;                                                         \
-        _end1 = px_gettime(TIME_FLAG);                               \
-        _end2 = px_gettime(CLOCK_THREAD_CPUTIME_ID);                 \
-        _time1 = (_end1 - _start1);                                  \
-        _time2 = (_end2 - _start2);                                  \
-        fprintf(stdout,                                              \
-                "[%s:%d:%s:%s] "                                     \
-                "Wallclock time: %.0lf ns, Thread time: %.0lf ns\n", \
-                __FILE__, __LINE__, __func__, name,                  \
-                (double)_time1, (double)_time2);                     \
-    } while (/*CONSTCOND*/ 0);
-#else
-#define MEASURE(name, cmd) \
-    do                     \
-    {                      \
-        cmd;               \
-    } while (/*CONSTCOND*/ 0);
-#endif
-/*----------------------------------------------------------------------------*/
-static inline unsigned int
-CEIL_DIV(unsigned int a, unsigned int b)
-{
-    return (a + b - 1) / b;
-}
-/*----------------------------------------------------------------------------*/
-static inline unsigned int
-FLOOR_DIV(unsigned int a, unsigned int b)
-{
-    return (a / b);
-}
-/*----------------------------------------------------------------------------*/
-static inline bool
-SEQ_LT(uint32_t a, uint32_t b)
-{
-    return (int32_t)(a - b) < 0;
-}
-/*----------------------------------------------------------------------------*/
-static inline bool
-SEQ_LEQ(uint32_t a, uint32_t b)
-{
-    return (int32_t)(a - b) <= 0;
-}
-/*----------------------------------------------------------------------------*/
-static inline bool
-SEQ_GT(uint32_t a, uint32_t b)
-{
-    return (int32_t)(a - b) > 0;
-}
-/*----------------------------------------------------------------------------*/
-static inline bool
-SEQ_GEQ(uint32_t a, uint32_t b)
-{
-    return (int32_t)(a - b) >= 0;
-}
-/*----------------------------------------------------------------------------*/
-static inline uint32_t
-SEQ_DIFF(uint32_t a, uint32_t b)
-{
-    return (uint32_t)((int32_t)(a - b));
-}
-/*----------------------------------------------------------------------------*/
-static inline int
-SEQ_RANGE_OVERLAP(uint32_t s1, uint32_t e1,
-                  uint32_t s2, uint32_t e2)
-{
-    /* s1 < e2 && s2 < e1 */
-    if (SEQ_LT(s1, e2) && SEQ_LT(s2, e1))
-    {
-        return 1;
-    }
-    return 0;
-}
-/*----------------------------------------------------------------------------*/
-static inline bool
-ID_LT(uint16_t a, uint16_t b)
-{
-    return (int16_t)(a - b) < 0;
-}
-/*----------------------------------------------------------------------------*/
-static inline bool
-ID_LEQ(uint16_t a, uint16_t b)
-{
-    return (int16_t)(a - b) <= 0;
-}
-/*----------------------------------------------------------------------------*/
-static inline bool
-ID_GT(uint16_t a, uint16_t b)
-{
-    return (int16_t)(a - b) > 0;
-}
-/*----------------------------------------------------------------------------*/
-static inline bool
-ID_GEQ(uint16_t a, uint16_t b)
-{
-    return (int16_t)(a - b) >= 0;
-}
-/*----------------------------------------------------------------------------*/
-static inline uint16_t
-ID_DIFF(uint16_t a, uint16_t b)
-{
-    return (uint16_t)((int16_t)(a - b));
-}
-/*----------------------------------------------------------------------------*/
-struct four_tuple
-{
-    uint32_t src_ip;
-    uint32_t dst_ip;
-    uint16_t src_port;
-    uint16_t dst_port;
 } __attribute__((packed));
 /*----------------------------------------------------------------------------*/
 static inline void
@@ -499,10 +499,10 @@ static inline void
 busy_wait_for(unsigned int ns)
 {
     uint64_t start, end;
-    start = px_gettime(TIME_FLAG);
+    start = PX_GETTIME(TIME_FLAG);
     do
     {
-        end = px_gettime(TIME_FLAG);
+        end = PX_GETTIME(TIME_FLAG);
     } while (end - start < ns); // Loop until it arrives.
 }
 /*----------------------------------------------------------------------------*/
@@ -826,103 +826,387 @@ get_tcp_optlen(struct rte_mbuf *pkt)
     return pkt->l4_len - sizeof(struct rte_tcp_hdr);
 }
 /*----------------------------------------------------------------------------*/
-/* Get TCP timestamp values from options */
-static inline uint64_t *
-get_tcp_timestamp(struct rte_mbuf *pkt)
-{
-    uint8_t *tcpopt = get_tcp_option(pkt);
-    int total_optlen = get_tcp_optlen(pkt);
-    int opt, optlen, i;
-
-    for (i = 0; i < total_optlen;)
-    {
-        opt = *(tcpopt + i++);
-
-        if (opt == TCPOPT_EOL)
-        {
-            /* end of option field */
-            break;
-        }
-        if (opt == TCPOPT_NOP)
-        {
-            /* no option */
-            continue;
-        }
-        if (i >= total_optlen) // prevent overrun
-        {
-            break;
-        }
-        optlen = *(tcpopt + i++);
-        if (optlen < 2 || i + (optlen - 2) > total_optlen)
-        {
-            break;
-        }
-        if (opt == TCPOPT_TIMESTAMP && optlen == TCPOLEN_TIMESTAMP)
-        {
-            return (uint64_t *)(tcpopt + i);
-        }
-        /* not handle */
-        i += optlen - 2;
-    }
-
-    /* no timestamp field found */
-    return NULL;
-}
-/*----------------------------------------------------------------------------*/
-/* Get TCP MSS values from options */
+/* Get pointer to TCP MSS value (payload start of MAXSEG option) */
 static inline uint16_t *
 get_tcp_mss(struct rte_mbuf *pkt)
 {
     uint8_t *tcpopt = get_tcp_option(pkt);
     int total_optlen = get_tcp_optlen(pkt);
-    int opt, optlen, i;
+    int i = 0;
 
-    for (i = 0; i < total_optlen;)
+    if (!tcpopt || total_optlen <= 0)
     {
-        opt = *(tcpopt + i++);
-        if (opt == TCPOPT_EOL)
-        {
-            /* end of option field */
-            break;
-        }
-        if (opt == TCPOPT_NOP)
-        {
-            /* no option */
-            continue;
-        }
-        if (i >= total_optlen) // prevent overrun
-        {
-            break;
-        }
-        optlen = *(tcpopt + i++);
-        if (i + optlen - 2 > total_optlen)
-        {
-            break;
-        }
-        if (opt == TCPOPT_MAXSEG)
-        {
-            return (uint16_t *)(tcpopt + i);
-        }
-        if (opt == TCPOPT_WINDOW)
-        {
-            i++;
-            continue;
-        }
-        if (opt == TCPOPT_SACK_PERMITTED)
-        {
-            continue;
-        }
-        if (opt == TCPOPT_TIMESTAMP)
-        {
-            i += 8;
-            continue;
-        }
-        /* not handle */
-        i += optlen - 2;
+        return NULL;
     }
 
-    /* no MSS field found */
+    while (i < total_optlen)
+    {
+        uint8_t opt = tcpopt[i++];
+
+        if (opt == TCPOPT_EOL)
+        {
+            break;
+        }
+
+        if (opt == TCPOPT_NOP)
+        {
+            continue;
+        }
+
+        /* need length byte */
+        if (i >= total_optlen)
+        {
+            break;
+        }
+
+        uint8_t optlen = tcpopt[i++];
+
+        /* optlen includes kind+len */
+        if (optlen < 2)
+        {
+            break;
+        }
+
+        int payload_len = (int)optlen - 2;
+
+        /* bounds check: i points to payload start */
+        if (i + payload_len > total_optlen)
+        {
+            break;
+        }
+
+        if (opt == TCPOPT_MAXSEG)
+        {
+            /* MSS option must be length 4: kind(1)+len(1)+mss(2) */
+            if (optlen != 4)
+            {
+                return NULL;
+            }
+
+            return (uint16_t *)(tcpopt + i); /* points to MSS (network order) */
+        }
+
+        /* skip this option payload */
+        i += payload_len;
+    }
+
     return NULL;
+}
+/*----------------------------------------------------------------------------*/
+/* Timestamp block: [tsval, tsecr] */
+struct tcp_timestamp
+{
+    /* below fields are network-byte order */
+    uint32_t tsval;
+    uint32_t tsecr;
+} __attribute__((packed));
+/*----------------------------------------------------------------------------*/
+/* Get pointer to TCP timestamp value (payload start of TCPOPT_TIMESTAMP option) */
+static inline struct tcp_timestamp *
+get_tcp_timestamp(struct rte_mbuf *pkt)
+{
+    uint8_t *tcpopt = get_tcp_option(pkt);
+    int total_optlen = get_tcp_optlen(pkt);
+    int i = 0;
+
+    if (!tcpopt || total_optlen <= 0)
+    {
+        return NULL;
+    }
+
+    while (i < total_optlen)
+    {
+        uint8_t opt = tcpopt[i++];
+
+        if (opt == TCPOPT_EOL)
+        {
+            break;
+        }
+
+        if (opt == TCPOPT_NOP)
+        {
+            continue;
+        }
+
+        /* need length byte */
+        if (i >= total_optlen)
+        {
+            break;
+        }
+
+        uint8_t optlen = tcpopt[i++];
+
+        /* optlen includes kind + len */
+        if (optlen < 2)
+        {
+            break;
+        }
+
+        int payload_len = (int)optlen - 2;
+
+        /* bounds check */
+        if (i + payload_len > total_optlen)
+        {
+            break;
+        }
+
+        if (opt == TCPOPT_TIMESTAMP && optlen == TCPOLEN_TIMESTAMP)
+        {
+            /* tcpopt + i points to TSval */
+            return (struct tcp_timestamp *)(tcpopt + i);
+        }
+
+        /* skip payload */
+        i += payload_len;
+    }
+
+    return NULL;
+}
+/*----------------------------------------------------------------------------*/
+/* SACK block: [left, right) */
+struct tcp_sack_block
+{
+    /* below fields are network-byte order */
+    uint32_t left;
+    uint32_t right;
+} __attribute__((packed));
+/*----------------------------------------------------------------------------*/
+/* SACK block: [left, right) */
+struct tcp_sack_range
+{
+    /* below fields are host-byte order */
+    uint32_t left;
+    uint32_t right;
+};
+/*----------------------------------------------------------------------------*/
+/**
+ * Get pointer to first SACK block (payload start of TCPOPT_SACK option),
+ * and set out_nblocks=k.
+ * SACK option length: 2 + 8 * k, k >= 1
+ */
+static inline struct tcp_sack_block *
+get_tcp_sack(struct rte_mbuf *pkt, int *out_nblocks)
+{
+    uint8_t *tcpopt = get_tcp_option(pkt);
+    int total_optlen = get_tcp_optlen(pkt);
+    int i = 0;
+
+    if (!tcpopt || total_optlen <= 0 || !out_nblocks)
+    {
+        return NULL;
+    }
+    *out_nblocks = 0;
+
+    while (i < total_optlen)
+    {
+        uint8_t opt = tcpopt[i++];
+
+        if (opt == TCPOPT_EOL)
+        {
+            break;
+        }
+
+        if (opt == TCPOPT_NOP)
+        {
+            continue;
+        }
+
+        /* need length byte */
+        if (i >= total_optlen)
+        {
+            break;
+        }
+
+        uint8_t optlen = tcpopt[i++];
+
+        /* optlen includes kind + len */
+        if (optlen < 2)
+        {
+            break;
+        }
+
+        int payload_len = (int)optlen - 2;
+
+        /* bounds check */
+        if (i + payload_len > total_optlen)
+        {
+            break;
+        }
+
+        if (opt == TCPOPT_SACK)
+        {
+            /* must be 2 + 8 * k */
+            if (optlen < 10 || ((optlen - 2) % 8) != 0)
+            {
+                return NULL;
+            }
+
+            int nblocks = (optlen - 2) / 8;
+            if (nblocks <= 0)
+            {
+                return NULL;
+            }
+
+            *out_nblocks = nblocks;
+
+            /* tcpopt + i points to first block's left edge */
+            return (struct tcp_sack_block *)(tcpopt + i);
+        }
+
+        /* skip payload */
+        i += payload_len;
+    }
+
+    return NULL;
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+px_sort_ranges(struct tcp_sack_range *a, int n)
+{
+    /* insertion sort: n is small (<= 8~16 typically) */
+    for (int i = 1; i < n; i++)
+    {
+        struct tcp_sack_range key = a[i];
+        int j = i - 1;
+        while (j >= 0 &&
+               (a[j].left > key.left ||
+                (a[j].left == key.left && a[j].right > key.right)))
+        {
+            a[j + 1] = a[j];
+            j--;
+        }
+        a[j + 1] = key;
+    }
+}
+/*----------------------------------------------------------------------------*/
+/* merge overlaps + adjacent: [a,b) and [b,c) => [a,c) */
+static inline int
+px_coalesce_ranges(struct tcp_sack_range *a, int n)
+{
+    if (n <= 1)
+    {
+        return n;
+    }
+
+    px_sort_ranges(a, n);
+
+    int w = 0;
+    for (int i = 1; i < n; i++)
+    {
+        if (a[w].right >= a[i].left)
+        {
+            if (a[i].right > a[w].right)
+            {
+                a[w].right = a[i].right;
+            }
+        }
+        else
+        {
+            w++;
+            a[w] = a[i];
+        }
+    }
+
+    return w + 1;
+}
+/*----------------------------------------------------------------------------*/
+/* collect blocks (network order) into host-order ranges, unaligned-safe */
+static inline int
+px_collect_sack_ranges(struct tcp_sack_block *b, int nb,
+                       struct tcp_sack_range *out, int out_cap)
+{
+    if (!b || nb <= 0 || !out || out_cap <= 0)
+    {
+        return 0;
+    }
+
+    int n = 0;
+    for (int i = 0; i < nb && n < out_cap; i++)
+    {
+        uint32_t left_n, right_n;
+        memcpy(&left_n, &b[i].left, 4);
+        memcpy(&right_n, &b[i].right, 4);
+
+        uint32_t left = rte_be_to_cpu_32(left_n);
+        uint32_t right = rte_be_to_cpu_32(right_n);
+
+        if (right > left)
+        {
+            out[n].left = left;
+            out[n].right = right;
+            n++;
+        }
+    }
+
+    return n;
+}
+/*----------------------------------------------------------------------------*/
+/**
+ * Merge two SACK block lists (payload pointers + counts) and encode SACK option.
+ *
+ * Inputs:
+ *  - b1, nb1: blocks from pkt1 (payload start returned by get_tcp_sack)
+ *  - b2, nb2: blocks from pkt2
+ *
+ * Output:
+ *  - out_opt: buffer to write option (kind+len+blocks)
+ *  - out_optlen: written option length
+ *  - out_cap_blocks: max blocks to emit (recommend 4)
+ *
+ * Return:
+ *  - number of blocks emitted (0 => no SACK option produced)
+ *
+ * Requirement:
+ *  - out_opt must have at least (2 + 8*out_cap_blocks) bytes.
+ */
+static inline int
+px_merge_sack_and_encode(struct tcp_sack_block *b1, int nb1,
+                         struct tcp_sack_block *b2, int nb2,
+                         uint8_t *out_opt, uint8_t *out_optlen,
+                         int out_cap_blocks)
+{
+    if (!out_opt || !out_optlen || out_cap_blocks <= 0)
+    {
+        return 0;
+    }
+
+    *out_optlen = 0;
+
+    /* temporary union buffer: enough for typical cases */
+    struct tcp_sack_range tmp[MAX_TCP_OPT_LEN] = {0};
+    int n = 0;
+
+    n += px_collect_sack_ranges(b1, nb1, tmp + n, (int)(MAX_TCP_OPT_LEN - n));
+    n += px_collect_sack_ranges(b2, nb2, tmp + n, (int)(MAX_TCP_OPT_LEN - n));
+
+    if (n == 0)
+    {
+        return 0;
+    }
+
+    n = px_coalesce_ranges(tmp, n);
+
+    if (n > out_cap_blocks)
+    {
+        n = out_cap_blocks;
+    }
+
+    uint8_t optlen = (uint8_t)(2 + 8 * n);
+    out_opt[0] = TCPOPT_SACK;
+    out_opt[1] = optlen;
+
+    uint8_t *p = out_opt + 2;
+    for (int i = 0; i < n; i++)
+    {
+        uint32_t left_n = rte_cpu_to_be_32(tmp[i].left);
+        uint32_t right_n = rte_cpu_to_be_32(tmp[i].right);
+        memcpy(p + i * 8 + 0, &left_n, 4);
+        memcpy(p + i * 8 + 4, &right_n, 4);
+    }
+
+    *out_optlen = optlen;
+
+    return n;
 }
 /*----------------------------------------------------------------------------*/
 static inline uint32_t
@@ -945,6 +1229,7 @@ get_payload(struct rte_mbuf *pkt)
     {
         return rte_pktmbuf_mtod_offset(pkt, uint8_t *, get_hdr_len(pkt));
     }
+
     /* L2/3/4 headers are decapped */
     return rte_pktmbuf_mtod(pkt->next, uint8_t *);
 }
@@ -1169,7 +1454,26 @@ is_single_pkt(struct rte_mbuf *pkt)
 {
     return pkt->nb_segs == 1 ||
            (pkt->nb_segs == 2 &&
+            pkt->next &&
             (pkt->next->ol_flags & EXT_ATTACHED_MBUF));
+}
+/*----------------------------------------------------------------------------*/
+static inline int
+is_decaped(struct rte_mbuf *pkt)
+{
+    return (pkt->ol_flags & (IND_ATTACHED_MBUF << 1)) > 0ULL;
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+mark_decaped(struct rte_mbuf *pkt)
+{
+    pkt->ol_flags |= (IND_ATTACHED_MBUF << 1);
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+unmark_decaped(struct rte_mbuf *pkt)
+{
+    pkt->ol_flags &= ~(IND_ATTACHED_MBUF << 1);
 }
 /*----------------------------------------------------------------------------*/
 static inline int
@@ -1297,7 +1601,7 @@ get_orig_four_tuple(struct rte_mbuf *pkt)
     return (struct four_tuple *)pkt->buf_addr;
 }
 /*----------------------------------------------------------------------------*/
-static inline int
+static inline void
 put_orig_four_tuple(struct rte_mbuf *pkt)
 {
     /* check if the headroom is used for 4-tuple */
@@ -1308,7 +1612,7 @@ put_orig_four_tuple(struct rte_mbuf *pkt)
 #endif
     {
         /* headroom already used for 4-tuple */
-        return -1;
+        return;
     }
 
     /* backup the tuple in the headroom */
@@ -1320,11 +1624,9 @@ put_orig_four_tuple(struct rte_mbuf *pkt)
 #else
     pkt->ol_flags |= (RTE_MBUF_F_FIRST_FREE << 1);
 #endif
-
-    return 0;
 }
 /*----------------------------------------------------------------------------*/
-static inline int
+static inline void
 copy_orig_four_tuple(struct rte_mbuf *dst,
                      struct rte_mbuf *src)
 {
@@ -1335,14 +1637,12 @@ copy_orig_four_tuple(struct rte_mbuf *dst,
     if (!(src->ol_flags & (RTE_MBUF_F_FIRST_FREE << 1)))
 #endif
     {
-        return -1;
+        return;
     }
 
     dst->ol_flags |= (PKT_FIRST_FREE << 1);
 
     memcpy(dst->buf_addr, src->buf_addr, sizeof(struct four_tuple));
-
-    return 0;
 }
 /*----------------------------------------------------------------------------*/
 static inline void
@@ -1393,6 +1693,564 @@ get_sw_timestamp(struct rte_mbuf *pkt)
 {
     return *(uint64_t *)((uint8_t *)pkt->buf_addr +
                          sizeof(struct four_tuple));
+}
+/*----------------------------------------------------------------------------*/
+/* Incremental checksum update for 16-bit value change */
+static inline uint16_t
+inc_csum_update(uint16_t csum,
+                uint16_t old_value,
+                uint16_t new_value)
+{
+    uint32_t sum;
+
+    /* subtract old value and add new value (1's complement arithmetic) */
+    sum = ~csum & UINT16_MAX;       // take 1's complement of the current checksum
+    sum += ~old_value & UINT16_MAX; // subtract old value (1's complement addition)
+    sum += new_value;               // add new value
+
+    /* fold to 16 bits by adding carry */
+    while (sum >> sizeof(uint16_t))
+    {
+        sum = (sum & UINT16_MAX) + (sum >> sizeof(uint16_t));
+    }
+
+    /* take 1's complement again to get the final checksum */
+    return ~((uint16_t)sum);
+}
+/*----------------------------------------------------------------------------*/
+/**
+ * return  0 if checksum valid
+ * return -1 if no IPv4, or checksum mismatch
+ */
+static inline int
+px_verify_ipv4_cksum(struct rte_mbuf *m,
+                     int hwcsum)
+{
+    struct rte_ether_hdr *eth_hdr;
+    struct rte_ipv4_hdr *ip_hdr;
+    uint16_t eth_type;
+    uint16_t cksum_actual;
+
+    /* Ethernet header */
+    eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
+    eth_type = rte_be_to_cpu_16(eth_hdr->ether_type);
+    if (eth_type != RTE_ETHER_TYPE_IPV4)
+    {
+        return -1;
+    }
+
+    if (hwcsum)
+    {
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+        if (!(m->ol_flags & PKT_RX_IP_CKSUM_GOOD))
+#else
+        if (!(m->ol_flags & RTE_MBUF_F_RX_IP_CKSUM_GOOD))
+#endif
+        {
+            return -2; // invalid checksum
+        }
+
+        return 0; // checksum already verified by hardware
+    }
+
+    /* IPv4 header */
+    ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
+
+    /* Validate IP header checksum */
+    cksum_actual = rte_ipv4_cksum(ip_hdr);
+    if (cksum_actual == 0xffff || cksum_actual == 0x0000)
+    {
+        return 0; // valid
+    }
+    else
+    {
+        return -3; // checksum mismatch
+    }
+}
+/*----------------------------------------------------------------------------*/
+/**
+ * return  0 if checksum valid
+ * return -1 if no IPv4, TCP, or checksum mismatch
+ */
+static inline int
+px_verify_tcp_cksum(struct rte_mbuf *m,
+                    int hwcsum)
+{
+    struct rte_ether_hdr *eth_hdr;
+    struct rte_ipv4_hdr *ip_hdr;
+    struct rte_tcp_hdr *tcp_hdr;
+    uint16_t eth_type;
+    uint16_t cksum_actual;
+
+    /* Ethernet header */
+    eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
+    eth_type = rte_be_to_cpu_16(eth_hdr->ether_type);
+    if (eth_type != RTE_ETHER_TYPE_IPV4)
+    {
+        return -1; // Not IPv4
+    }
+
+    /* IPv4 header */
+    ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
+    if (ip_hdr->next_proto_id != IPPROTO_TCP)
+    {
+        return -2; // Not TCP
+    }
+
+    if (hwcsum)
+    {
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+        if (!(m->ol_flags & PKT_RX_L4_CKSUM_GOOD))
+#else
+        if (!(m->ol_flags & RTE_MBUF_F_RX_L4_CKSUM_GOOD))
+#endif
+        {
+            return -3; // invalid checksum
+        }
+
+        return 0; // checksum already verified by hardware
+    }
+
+    /* TCP header */
+    tcp_hdr = (struct rte_tcp_hdr *)((uint8_t *)ip_hdr + m->l3_len);
+
+    /* Calculate checksum */
+    cksum_actual = rte_ipv4_udptcp_cksum(ip_hdr, tcp_hdr);
+
+    /* 0x0000 or 0xffff considered valid */
+    if (cksum_actual == 0xffff || cksum_actual == 0x0000)
+    {
+        return 0; // Valid checksum
+    }
+
+    return -4; // Checksum mismatch
+}
+/*----------------------------------------------------------------------------*/
+/**
+ * return  0 if checksum valid
+ * return -1 if no IPv4, UDP, or checksum mismatch
+ */
+static inline int
+px_verify_udp_cksum(struct rte_mbuf *m,
+                    int hwcsum)
+{
+    struct rte_ether_hdr *eth_hdr;
+    struct rte_ipv4_hdr *ip_hdr;
+    struct rte_udp_hdr *udp_hdr;
+    uint16_t eth_type;
+    uint16_t cksum_actual;
+
+    eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
+    eth_type = rte_be_to_cpu_16(eth_hdr->ether_type);
+
+    if (eth_type != RTE_ETHER_TYPE_IPV4)
+    {
+        return -1; // Not IPv4
+    }
+
+    ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
+
+    if (ip_hdr->next_proto_id != IPPROTO_UDP)
+    {
+        return -2; // Not UDP
+    }
+
+    if (hwcsum)
+    {
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+        if (!(m->ol_flags & PKT_RX_L4_CKSUM_GOOD))
+#else
+        if (!(m->ol_flags & RTE_MBUF_F_RX_L4_CKSUM_GOOD))
+#endif
+        {
+            return -3; // invalid checksum
+        }
+
+        return 0; // checksum already verified by hardware
+    }
+
+    udp_hdr = (struct rte_udp_hdr *)((uint8_t *)ip_hdr + m->l3_len);
+
+    /* 0 means checksum not used in UDP */
+    if (udp_hdr->dgram_cksum == 0)
+    {
+        return 0;
+    }
+
+    /* Calculate checksum */
+    cksum_actual = rte_ipv4_udptcp_cksum(ip_hdr, udp_hdr);
+    if (cksum_actual == 0x0000 || cksum_actual == 0xffff)
+    {
+        return 0; // Valid checksum
+    }
+
+    return -4; // Checksum mismatch
+}
+/*----------------------------------------------------------------------------*/
+/**
+ * return  0 if checksum valid
+ * return -1 if not IPv4, -2 if not ICMP, -3 if checksum mismatch
+ */
+static inline int
+px_verify_icmp_cksum(struct rte_mbuf *m)
+{
+    struct rte_ether_hdr *eth_hdr;
+    struct rte_ipv4_hdr *ip_hdr;
+    struct rte_icmp_hdr *icmp_hdr;
+    uint16_t eth_type;
+    uint16_t cksum_actual;
+
+    eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
+    eth_type = rte_be_to_cpu_16(eth_hdr->ether_type);
+
+    if (eth_type != RTE_ETHER_TYPE_IPV4)
+    {
+        return -1; // Not IPv4
+    }
+    ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
+
+    if (ip_hdr->next_proto_id != IPPROTO_ICMP)
+    {
+        return -2; // Not ICMP
+    }
+    icmp_hdr = (struct rte_icmp_hdr *)((uint8_t *)ip_hdr + m->l3_len);
+
+    cksum_actual = rte_raw_cksum(icmp_hdr,
+                                 rte_be_to_cpu_16(ip_hdr->total_length) -
+                                     m->l3_len);
+
+    cksum_actual = ~cksum_actual;
+
+    if (cksum_actual == 0x0000 || cksum_actual == 0xffff)
+    {
+        return 0; // Valid checksum
+    }
+
+    return -3; // Checksum mismatch
+}
+/*----------------------------------------------------------------------------*/
+static inline uint16_t
+px_ipv4_icmp_cksum(const struct rte_ipv4_hdr *ipv4_hdr,
+                   const void *icmp_hdr)
+{
+    uint16_t cksum;
+    uint32_t l3_len, l4_len;
+    uint8_t ip_hdr_len;
+
+    ip_hdr_len = rte_ipv4_hdr_len(ipv4_hdr);
+    l3_len = rte_be_to_cpu_16(ipv4_hdr->total_length);
+    if (l3_len < ip_hdr_len)
+    {
+        return 0;
+    }
+
+    l4_len = l3_len - ip_hdr_len;
+
+    cksum = rte_raw_cksum(icmp_hdr, l4_len);
+    /* ICMP has no pseudo-header checksum */
+
+    cksum = ~cksum;
+
+    return cksum;
+}
+/*----------------------------------------------------------------------------*/
+/**
+ * return  0 if checksum filled successfully
+ * return -1 if no IPv4, or L4 protocol not supported
+ */
+static inline int
+px_fill_ipv4_l4_cksum(struct rte_mbuf *m,
+                      int hwcsum)
+{
+    struct rte_ether_hdr *eth_hdr;
+    struct rte_ipv4_hdr *ip_hdr;
+    void *l4_hdr;
+    uint16_t eth_type;
+
+    eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
+    eth_type = rte_be_to_cpu_16(eth_hdr->ether_type);
+
+    if (eth_type != RTE_ETHER_TYPE_IPV4)
+    {
+        return -1;
+    }
+
+    ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
+
+    /* Calculate L3 checksum */
+    if (hwcsum)
+    {
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+        m->ol_flags |= PKT_TX_IPV4 |
+                       PKT_TX_IP_CKSUM;
+#else
+        m->ol_flags |= RTE_MBUF_F_TX_IPV4 |
+                       RTE_MBUF_F_TX_IP_CKSUM;
+#endif
+    }
+    else
+    {
+        ip_hdr->hdr_checksum = 0;
+        ip_hdr->hdr_checksum = rte_ipv4_cksum(ip_hdr);
+    }
+
+    /* Calculate L4 checksum */
+    l4_hdr = (uint8_t *)ip_hdr + m->l3_len;
+    switch (ip_hdr->next_proto_id)
+    {
+    case IPPROTO_UDP:
+    {
+        if (hwcsum)
+        {
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+            m->ol_flags |= PKT_TX_UDP_CKSUM;
+#else
+            m->ol_flags |= RTE_MBUF_F_TX_UDP_CKSUM;
+#endif
+        }
+        else
+        {
+            struct rte_udp_hdr *udp_hdr = (struct rte_udp_hdr *)l4_hdr;
+            udp_hdr->dgram_cksum = 0;
+            udp_hdr->dgram_cksum = rte_ipv4_udptcp_cksum(ip_hdr, udp_hdr);
+        }
+        break;
+    }
+    case IPPROTO_TCP:
+    {
+        if (hwcsum)
+        {
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+            m->ol_flags |= PKT_TX_TCP_CKSUM;
+#else
+            m->ol_flags |= RTE_MBUF_F_TX_TCP_CKSUM;
+#endif
+        }
+        else
+        {
+            struct rte_tcp_hdr *tcp_hdr = (struct rte_tcp_hdr *)l4_hdr;
+            tcp_hdr->cksum = 0;
+            tcp_hdr->cksum = rte_ipv4_udptcp_cksum(ip_hdr, tcp_hdr);
+        }
+        break;
+    }
+    case IPPROTO_ICMP:
+    {
+        /* SW checksum needed */
+        struct rte_icmp_hdr *icmp_hdr = (struct rte_icmp_hdr *)l4_hdr;
+        icmp_hdr->icmp_cksum = 0;
+        icmp_hdr->icmp_cksum = px_ipv4_icmp_cksum(ip_hdr, icmp_hdr);
+        break;
+    }
+    case IPPROTO_SCTP:
+    {
+        /* ToDo: support SCTP csum */
+        // struct rte_sctp_hdr *sctp_hdr = (struct rte_sctp_hdr *)l4_hdr;
+        // sctp_hdr->cksum = 0;
+        // sctp_hdr->cksum = px_ipv4_sctp_cksum(ip_hdr, sctp_hdr);
+        break;
+    }
+    default:
+    {
+        return -1; // Unsupported L4 protocol
+    }
+    }
+
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
+/**
+ * Update TCP checksum incrementally using RFC 1624 logic.
+ * * Formula: HC' = ~(~HC + ~m + m')
+ * HC  : old checksum in the header
+ * HC' : new checksum
+ * m   : old value of the modified field
+ * m'  : new value of the modified field
+ *
+ * @param tcp_hdr
+ * Pointer to the TCP header.
+ * @param old_val
+ * The 16-bit value before modification (Network Byte Order).
+ * @param new_val
+ * The 16-bit value after modification (Network Byte Order).
+ */
+static inline void
+inc_update_tcp_cksum(struct rte_mbuf *m,
+                     uint16_t old_val,
+                     uint16_t new_val)
+{
+    struct rte_tcp_hdr *tcp_hdr =
+        rte_pktmbuf_mtod_offset(m,
+                                struct rte_tcp_hdr *,
+                                m->l2_len + m->l3_len);
+    /**
+     * 1. Unfold the current checksum
+     * (convert from 1's complement to 2's complement)
+     */
+    uint32_t cksum = ~rte_be_to_cpu_16(tcp_hdr->cksum) & 0xFFFF;
+
+    /* 2. Subtract the old value by adding its 1's complement */
+    cksum += ~rte_be_to_cpu_16(old_val) & 0xFFFF;
+
+    /* 3. Add the new value */
+    cksum += rte_be_to_cpu_16(new_val);
+
+    /**
+     * 4. Handle carries (End-around carry)
+     * If the sum exceeds 16 bits, add the carry back to the LSB
+     */
+    cksum = (cksum >> 16) + (cksum & 0xFFFF);
+    cksum += (cksum >> 16);
+
+    /* 5. Fold back to 16 bits and take 1's complement (Final Checksum) */
+    tcp_hdr->cksum = rte_cpu_to_be_16(~(uint16_t)cksum);
+}
+/*----------------------------------------------------------------------------*/
+/* ToDo: reflect TCP flags to edge */
+static inline struct rte_mbuf *
+separate_edge_seg(struct rte_mbuf *pkt,
+                  uint32_t last_segsz,
+                  struct rte_mempool *pool)
+{
+    struct rte_mbuf *edge = pkt, *edge_tail = NULL, *edge_head;
+    struct rte_mbuf *hdr = pkt, *prev = NULL, *next;
+    uint32_t hdr_size = get_hdr_len(pkt);
+    uint32_t target_size = pkt->pkt_len - last_segsz;
+    uint32_t seq_diff, trim_size = 0, pkt_size = 0;
+    uint16_t seg_idx;
+
+    /* find edge segment */
+    for (seg_idx = 0; seg_idx < pkt->nb_segs; seg_idx++)
+    {
+        pkt_size += edge->data_len;
+        if (pkt_size >= target_size)
+        {
+            trim_size = pkt_size - target_size;
+            break;
+        }
+        prev = edge;
+        edge = edge->next;
+    }
+
+    assert(seg_idx < pkt->nb_segs);
+    assert(trim_size <= last_segsz);
+
+    next = edge->next;
+    edge->next = NULL;
+
+    if (!trim_size)
+    {
+        /* already separated */
+        edge_tail = next;
+    }
+    else
+    {
+        /* trim edge segment */
+        edge->data_len -= trim_size;
+
+        /* make edge_tail segment */
+        edge_tail = rte_pktmbuf_clone(edge, pool);
+        if (!edge_tail)
+        {
+            goto Error;
+        }
+        edge_tail->data_off += edge->data_len;
+        edge_tail->data_len = trim_size;
+        edge_tail->next = next;
+        mark_decaped(edge_tail);
+    }
+
+    /* make edge_head segment */
+    if (edge->ol_flags & EXT_ATTACHED_MBUF)
+    {
+        /* if edge segment is NICMEM */
+
+        /* destroy the chain to next mbuf first */
+        prev->next = NULL;
+        if (is_decaped(prev))
+        {
+            unmark_decaped(prev);
+            /* prev segment is decapsulated */
+            edge_head = rte_pktmbuf_clone(prev, pool);
+            if (!edge_head)
+            {
+                goto Error;
+            }
+            /* rollback headers */
+            edge_head->data_off -= hdr_size;
+            seq_diff = prev->data_len + edge->data_len;
+        }
+        else
+        {
+            /* prev segment still has valid header */
+            edge_head = rte_pktmbuf_copy(prev, pool, 0, hdr_size);
+            if (!edge_head)
+            {
+                goto Error;
+            }
+            seq_diff = prev->data_len - hdr_size + edge->data_len;
+            put_sw_timestamp(edge_head, get_sw_timestamp(pkt));
+            copy_orig_four_tuple(edge_head, pkt);
+        }
+        /* restore the chain to next mbuf */
+        prev->next = edge;
+    }
+    else
+    {
+        /*
+         * edge header is valid when transmitted
+         * so, we cannot modify header fields without deep copy
+         */
+        edge_head = rte_pktmbuf_copy(hdr, pool, 0, hdr_size);
+        if (!edge_head)
+        {
+            goto Error;
+        }
+
+        /* get sequence difference */
+        seq_diff = target_size - hdr_size;
+        put_sw_timestamp(edge_head, get_sw_timestamp(pkt));
+        copy_orig_four_tuple(edge_head, pkt);
+    }
+
+    unmark_decaped(edge_head);
+    edge_head->data_len = hdr_size;
+    edge_head->next = edge_tail;
+    edge_head->pkt_len = hdr_size + last_segsz;
+    if (!trim_size)
+    {
+        edge_head->nb_segs = pkt->nb_segs - seg_idx;
+    }
+    else
+    {
+        edge_head->nb_segs = pkt->nb_segs - (seg_idx - 1);
+    }
+
+    /* update header (e.g., TCP seq) */
+    update_tcpseq(edge_head, seq_diff);
+    update_ipid(edge_head, rte_be_to_cpu_16(*get_ipv4_id(pkt)) + 1);
+
+    /* setup first segment */
+    pkt->pkt_len = target_size;
+    pkt->nb_segs = seg_idx + 1;
+
+    return edge_head;
+
+Error:
+    fprintf(stderr, "duplication failed\n");
+    edge->data_len += trim_size;
+    edge->next = next;
+    if (prev)
+    {
+        prev->next = edge;
+    }
+    if (edge_tail)
+    {
+        edge_tail->next = NULL;
+        rte_pktmbuf_free(edge_tail);
+    }
+
+    return NULL;
 }
 /*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
