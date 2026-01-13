@@ -516,6 +516,7 @@ px_unlink_and_uso(struct rte_mbuf **pkts,
                         fprintf(stderr, "[line %d] TX ring overflow in %s\n",
                                 __LINE__, __func__);
                         rte_pktmbuf_free(pkt);
+                        rte_exit(EXIT_FAILURE, "TX ring overflow\n");
                         pkt = NULL;
                     }
                 }

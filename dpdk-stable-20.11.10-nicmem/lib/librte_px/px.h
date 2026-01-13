@@ -101,6 +101,9 @@ struct px_ctx
     /* maximum number of segments for gather TX */
     uint16_t nb_seg_max;
 
+    /* maximum bytes for gather TX */
+    uint32_t bytes_max;
+
     /* bucket array */
     uint16_t *buckets;
 

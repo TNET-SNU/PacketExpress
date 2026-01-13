@@ -166,6 +166,8 @@ compare_seq(struct rte_mbuf *pkt1,
             return 2; // cannot trim, treat as not related
         }
 
+        printf("[line %d] trimmed: pkt1 end %u, pkt2 start %u\n", __LINE__, end1, seq2);
+
         return 4;
     }
 
@@ -179,6 +181,8 @@ compare_seq(struct rte_mbuf *pkt1,
         printf("-2 cannot trim, treat as not related\n");
         return -2; // cannot trim, treat as not related
     }
+
+    printf("[line %d] trimmed: pkt2 end %u, pkt1 start %u\n", __LINE__, end2, seq1);
 
     return -4;
 }
@@ -272,11 +276,12 @@ merge_tcp(struct px_item *cur_item,
           struct rte_mbuf *lastseg,
           uint16_t imtu_size,
           uint16_t nb_seg_max,
+          uint32_t bytes_max,
           uint64_t timestamp,
           int cmp,
           int sgdma)
 {
-    struct rte_mbuf *pkt_head, *pkt_tail;
+    struct rte_mbuf *pkt_head, *pkt_tail, *next;
     uint32_t *head_ack, *tail_ack;
     uint8_t *head_flags, *tail_flags;
     uint16_t *head_advwnd, *tail_advwnd;
@@ -302,6 +307,7 @@ merge_tcp(struct px_item *cur_item,
 #if NVME_TCP_PX
     RTE_SET_USED(nb_seg_max);
     RTE_SET_USED(sgdma);
+    RTE_SET_USED(bytes_max);
 #else
     /* check if nb_segs is smaller than is nb_seg_max supported by the device */
     if (unlikely(pkt_head->nb_segs + pkt_tail->nb_segs > nb_seg_max))
@@ -327,8 +333,7 @@ merge_tcp(struct px_item *cur_item,
          * ToDo: how to know the hardware limit?
          * For now, we just assume 1MB
          */
-        if (unlikely(pkt_head->pkt_len + get_data_len(pkt_tail) >
-                     1024 * 1024))
+        if (unlikely(pkt_head->pkt_len + get_data_len(pkt_tail) > bytes_max))
         {
             return 0;
         }
@@ -371,9 +376,6 @@ merge_tcp(struct px_item *cur_item,
         *head_ack = *tail_ack;
         *head_advwnd = *tail_advwnd;
     }
-
-    /* if tail's ACK is smaller than head's ACK, nothing to do */
-
     /* merge TCP timestamp */
     struct tcp_timestamp *tail_timestamp = get_tcp_timestamp(pkt_tail);
     if (tail_timestamp)
@@ -502,51 +504,71 @@ merge_tcp(struct px_item *cur_item,
     //     printf("merged SACK blocks: head %d, tail %d\n", k1, k2);
     // }
 
-    /* add padding if necessary */
-    if (pkt_head->l4_len % 4)
-    {
-        uint8_t *pkt_start = rte_pktmbuf_mtod(pkt_head, uint8_t *);
-        uint8_t *embed_point = pkt_start + get_hdr_len(pkt_head);
-        int optlen = 4 - (pkt_head->l4_len % 4);
-        uint8_t padding[3] = {TCPOPT_NOP, TCPOPT_NOP, TCPOPT_NOP};
-        memmove(pkt_start - optlen, pkt_start, embed_point - pkt_start);
-        memcpy(embed_point - optlen, padding, optlen);
+    // /* add padding if necessary */
+    // if (pkt_head->l4_len % 4)
+    // {
+    //     uint8_t *pkt_start = rte_pktmbuf_mtod(pkt_head, uint8_t *);
+    //     uint8_t *embed_point = pkt_start + get_hdr_len(pkt_head);
+    //     int optlen = 4 - (pkt_head->l4_len % 4);
+    //     uint8_t padding[3] = {TCPOPT_NOP, TCPOPT_NOP, TCPOPT_NOP};
+    //     memmove(pkt_start - optlen, pkt_start, embed_point - pkt_start);
+    //     memcpy(embed_point - optlen, padding, optlen);
 
-        /* update mbuf fields */
-        pkt_head->l4_len += optlen;
-        pkt_head->pkt_len += optlen;
-        pkt_head->data_len += optlen;
-        pkt_head->buf_addr = (uint8_t *)pkt_head->buf_addr - optlen;
+    //     /* update mbuf fields */
+    //     pkt_head->l4_len += optlen;
+    //     pkt_head->pkt_len += optlen;
+    //     pkt_head->data_len += optlen;
+    //     pkt_head->buf_addr = (uint8_t *)pkt_head->buf_addr - optlen;
 
-        /* update TCP fields */
-        uint8_t *doff = get_tcp_doff(pkt_head);
-        *doff = (pkt_head->l4_len >> 2 << 4);
-    }
+    //     /* update TCP fields */
+    //     uint8_t *doff = get_tcp_doff(pkt_head);
+    //     *doff = (pkt_head->l4_len >> 2 << 4);
+    // }
 
     if (cmp == 3)
     {
         /* free latter */
-        rte_pktmbuf_free(pkt_tail);
+        printf("merge_tcp: free latter pkt\n");
+        rte_pktmbuf_free(firstseg);
         goto Merged;
     }
     if (cmp == -3)
     {
         /* free former and replace to latter */
-        rte_pktmbuf_free(pkt_tail);
+        printf("merge_tcp: free former pkt\n");
+        rte_pktmbuf_free(cur_item->firstseg);
         cur_item->firstseg = firstseg;
         cur_item->lastseg = lastseg;
         goto Merged;
     }
 
     /* remove the packet header of tail packet */
-    if (!rte_pktmbuf_adj(pkt_tail, get_hdr_len(pkt_tail)))
+    if (pkt_tail->data_len > get_hdr_len(pkt_tail))
     {
-        fprintf(stdout, "rte_pktmbuf_adj failed\n");
-        return 0;
+        if (!rte_pktmbuf_adj(pkt_tail, get_hdr_len(pkt_tail)))
+        {
+            printf("rte_pktmbuf_adj failed\n");
+            rte_exit(EXIT_FAILURE, "rte_pktmbuf_adj failed\n");
+            return 0;
+        }
     }
-
-    /* mark tail packet as decapsulated */
-    mark_decaped(pkt_tail);
+    else if (pkt_tail->data_len == get_hdr_len(pkt_tail))
+    {
+        pkt_tail->next->nb_segs = pkt_tail->nb_segs - 1;
+        pkt_tail->next->pkt_len = pkt_tail->pkt_len - get_hdr_len(pkt_tail);
+        next = pkt_tail->next;
+        pkt_tail->next = NULL;
+        rte_pktmbuf_free(pkt_tail);
+        pkt_tail = next;
+        printf("pkt_tail data_len %u == hdr_len %u\n",
+               pkt_tail->data_len, get_hdr_len(pkt_tail));
+    }
+    else
+    {
+        printf("pkt_tail data_len %u <= hdr_len %u\n",
+               pkt_tail->data_len, get_hdr_len(pkt_tail));
+        rte_exit(EXIT_FAILURE, "Invalid pkt_tail in merge_tcp\n");
+    }
 
     /* chain two packets together */
     if (cmp == 1)
@@ -559,9 +581,6 @@ merge_tcp(struct px_item *cur_item,
         lastseg->next = pkt_tail;
         cur_item->firstseg = pkt_head;
     }
-
-    /* unmark first segment */
-    unmark_decaped(pkt_head);
 
     /* update number of segments for the merged packet */
     pkt_head->nb_segs += pkt_tail->nb_segs;
@@ -583,6 +602,7 @@ merge_udp(struct px_item *cur_item,
           struct rte_mbuf *lastseg,
           uint16_t imtu_size,
           uint16_t nb_seg_max,
+          uint32_t bytes_max,
           uint64_t timestamp,
           int cmp,
           int sgdma)
@@ -628,8 +648,7 @@ merge_udp(struct px_item *cur_item,
          * ToDo: how to know the hardware limit?
          * For now, we just assume 1MB
          */
-        if (unlikely(pkt_head->pkt_len + get_data_len(pkt_tail) >
-                     1024 * 1024))
+        if (unlikely(pkt_head->pkt_len + get_data_len(pkt_tail) > bytes_max))
         {
             return 0;
         }
@@ -655,9 +674,6 @@ merge_udp(struct px_item *cur_item,
         return 0;
     }
 
-    /* mark tail packet as decapsulated */
-    mark_decaped(pkt_tail);
-
     /* chain two packets together */
     if (cmp == 1)
     {
@@ -669,9 +685,6 @@ merge_udp(struct px_item *cur_item,
         lastseg->next = pkt_tail;
         cur_item->firstseg = pkt_head;
     }
-
-    /* unmark first segment */
-    unmark_decaped(pkt_head);
 
     /* update number of segments for the merged packet */
     pkt_head->nb_segs += pkt_tail->nb_segs;
@@ -893,9 +906,10 @@ insert_flow(struct px_ctx *pctx,
 {
     struct px_flow *cur_flow;
 
-    if (pctx->flow_num >= pctx->array_size)
+    if ((pctx->flow_num + 2) >= pctx->array_size)
     {
         fprintf(stderr, "flow table overflow\n");
+        rte_exit(EXIT_FAILURE, "flow table overflow\n");
         return -1;
     }
 
@@ -934,9 +948,10 @@ insert_item(struct px_ctx *pctx,
 {
     struct px_item *cur_item;
 
-    if (pctx->item_num >= pctx->array_size)
+    if ((pctx->item_num + 2) >= pctx->array_size)
     {
         fprintf(stderr, "item table overflow\n");
+        rte_exit(EXIT_FAILURE, "item table overflow\n");
         return -1;
     }
 
@@ -974,8 +989,10 @@ insert_stash(struct px_ctx *pctx,
     struct px_item *cur_stash;
 
     stash = &pctx->stash_array[pctx->latent_id];
-    if (stash->num >= pctx->array_size)
+    if ((stash->num + 2) >= pctx->array_size)
     {
+        fprintf(stderr, "stash table overflow\n");
+        rte_exit(EXIT_FAILURE, "stash table overflow\n");
         return -1;
     }
     cur_stash = &stash->items[stash->num];
@@ -983,6 +1000,7 @@ insert_stash(struct px_ctx *pctx,
     /* insert new item with the packet */
     cur_stash->firstseg = firstseg;
     cur_stash->lastseg = lastseg;
+    cur_stash->next_item_idx = INVALID_INDEX;
 
     /* increment item array index */
     stash->num++;
@@ -1086,7 +1104,7 @@ assemble_udp(struct px_ctx *pctx,
 
     /* found first neighbor item */
     if (!merge_udp(cur_item, firstseg, lastseg,
-                   pctx->imtu_size, pctx->nb_seg_max,
+                   pctx->imtu_size, pctx->nb_seg_max, pctx->bytes_max,
                    timestamp, cmp, pctx->sgdma))
     {
         /* bigger than 9KB; store this packet as a new item in the given flow */
@@ -1115,7 +1133,7 @@ assemble_udp(struct px_ctx *pctx,
 
     /* found second neighbor item */
     if (!merge_udp(merged_item, cur_item->firstseg, cur_item->lastseg,
-                   pctx->imtu_size, pctx->nb_seg_max,
+                   pctx->imtu_size, pctx->nb_seg_max, pctx->bytes_max,
                    cur_item->timestamp, cmp, pctx->sgdma))
     {
         /* current item length is bigger than 9KB */
@@ -1176,6 +1194,8 @@ assemble_tcp(struct px_ctx *pctx,
     {
         if (cmp == -2)
         {
+            printf("Warning: out-of-order TCP segments detected\n");
+
             /* insert it as next item of prev_item */
             insert_item(pctx, firstseg, lastseg, prev_item, timestamp);
 
@@ -1222,7 +1242,7 @@ assemble_tcp(struct px_ctx *pctx,
 
     /* found first neighbor item */
     if (!merge_tcp(cur_item, firstseg, lastseg,
-                   pctx->imtu_size, pctx->nb_seg_max,
+                   pctx->imtu_size, pctx->nb_seg_max, pctx->bytes_max,
                    timestamp, cmp, pctx->sgdma))
     {
         /* could not merge, so insert this packet as a new item */
@@ -1269,7 +1289,7 @@ assemble_tcp(struct px_ctx *pctx,
 
     /* found second neighbor item */
     if (!merge_tcp(merged_item, cur_item->firstseg, cur_item->lastseg,
-                   pctx->imtu_size, pctx->nb_seg_max,
+                   pctx->imtu_size, pctx->nb_seg_max, pctx->bytes_max,
                    cur_item->timestamp, cmp, pctx->sgdma))
     {
         /* could not merge, so insert this packet as a new item */
@@ -1899,7 +1919,7 @@ link_and_flush(struct px_ctx *pctx,
     uint32_t cur_seq, cur_len;
     uint16_t prev_idx;
     struct l5_flow *l5p;
-    uint32_t target_len;
+    uint32_t orig_target_len, target_len;
     uint32_t pdu_len;
     uint8_t pdu_hdr_len;
     uint32_t adj_len;
@@ -1925,6 +1945,7 @@ link_and_flush(struct px_ctx *pctx,
 #if NVME_TCP_PX
         l5p = NULL;
 #endif
+        // px_dump_tuple(get_four_tuple(pctx->items[item_idx].firstseg));
 
         /* process the others after the first item */
         while (item_idx != INVALID_INDEX)
@@ -2016,87 +2037,158 @@ link_and_flush(struct px_ctx *pctx,
                 cur_seq = rte_be_to_cpu_32(*get_tcp_seq(cur_pkt));
                 cur_len = get_data_len(cur_pkt);
 
-                /* check RTX pkt */
-                if (SEQ_GEQ(l5p->peer->ack, cur_seq + cur_len))
+                px_l5_handle_ack(port_id, queue_id, cur_pkt, l5p);
+                if (!cur_len)
                 {
-                    /* this packet is already acked by peer */
-                    px_dump_l5p("RTX1", l5p, cur_seq, cur_len, 0);
+                    px_dump_tuple(get_four_tuple(cur_pkt));
+                    rte_pktmbuf_dump(stdout, cur_pkt, cur_pkt->pkt_len);
+                    printf("[L5PX] zero data len pkt, seq: [%u ~ %u)\n",
+                           SEQ_DIFF(cur_seq, l5p->isn), SEQ_DIFF(cur_seq + cur_len, l5p->isn));
+
+                    rte_exit(EXIT_FAILURE, "zero data len pkt\n");
+                    // goto No_delay_tcp;
+                }
+
+                if (SEQ_LT(l5p->rcv_nxt, l5p->snd_nxt))
+                {
+                    printf("[line %d] ???, snd_una: %u, snd_nxt: %u, rcv_nxt: %u\n",
+                           __LINE__,
+                           SEQ_DIFF(l5p->snd_una, l5p->isn),
+                           SEQ_DIFF(l5p->snd_nxt, l5p->isn),
+                           SEQ_DIFF(l5p->rcv_nxt, l5p->isn));
+                    rte_exit(EXIT_FAILURE, "rcv_nxt < snd_nxt\n");
+                }
+                if (SEQ_LT(l5p->snd_nxt, l5p->snd_una))
+                {
+                    printf("[line %d] ???, snd_una: %u, snd_nxt: %u, rcv_nxt: %u\n",
+                           __LINE__,
+                           SEQ_DIFF(l5p->snd_una, l5p->isn),
+                           SEQ_DIFF(l5p->snd_nxt, l5p->isn),
+                           SEQ_DIFF(l5p->rcv_nxt, l5p->isn));
+                    rte_exit(EXIT_FAILURE, "snd_nxt < snd_una\n");
+                }
+
+                /* check OLD pkt */
+                if (SEQ_GEQ(l5p->snd_una, cur_seq + cur_len))
+                {
+                    /**
+                     * this packet is already acked by peer
+                     * trim payload to zero length
+                     * and send as a pure ACK only
+                     */
+                    // if (px_chained_trim(cur_pkt, cur_len) < 0)
+                    // {
+                    //     rte_exit(EXIT_FAILURE,
+                    //              "px_chained_trim failed\n");
+                    // }
+
+                    // goto No_delay_tcp;
+
                     rte_pktmbuf_free(cur_pkt);
                     continue;
                 }
 
-                px_l5_handle_ack(port_id, queue_id, cur_pkt, l5p);
-
-                /* update received SEQ */
-                if (SEQ_GEQ(l5p->recvd, cur_seq) &&
-                    SEQ_LT(l5p->recvd, cur_seq + cur_len))
-                {
-                    l5p->recvd = cur_seq + cur_len;
-                }
-
-                /* check out-of-order */
-                if (SEQ_LT(l5p->esn + l5p->offset_on_pdu, cur_seq))
-                {
-                    /*
-                     * Out of order detected
-                     * stall current packet to merge more
-                     */
-                    // px_dump_l5p("stall1", l5p, cur_seq, cur_len, 0);
-                    if (insert_stash(pctx,
-                                     cur_pkt,
-                                     rte_pktmbuf_lastseg(cur_pkt),
-                                     cur_item->timestamp) < 0)
-                    {
-                        rte_exit(EXIT_FAILURE,
-                                 "insert_stash failed\n");
-                    }
-                    l5p->stalled = 1;
-                    // px_l5_direct_ack(port_id, queue_id, cur_pkt, l5p, pool);
-
-                    continue;
-                }
-
                 /* check RTX pkt */
-                if (SEQ_GEQ(l5p->esn + l5p->offset_on_pdu, cur_seq + cur_len))
+                if (SEQ_GEQ(l5p->snd_nxt, cur_seq + cur_len))
                 {
-                    px_dump_l5p("RTX2", l5p, cur_seq, cur_len, target_len);
+                    /**
+                     * this packet is RTXed from the sender
+                     * sender corresponding PDUs,
+                     * trim payload to zero length,
+                     * and send as a pure ACK only
+                     */
                     px_l5_rtx(port_id, queue_id, l5p, cur_seq, cur_len);
+                    // if (px_chained_trim(cur_pkt, cur_len) < 0)
+                    // {
+                    //     rte_exit(EXIT_FAILURE,
+                    //              "px_chained_trim failed\n");
+                    // }
+
+                    // goto No_delay_tcp;
+
                     rte_pktmbuf_free(cur_pkt);
                     continue;
                 }
 
                 /* check if head adjustment is needed */
-                if (SEQ_GT(l5p->esn + l5p->offset_on_pdu, cur_seq))
+                if (SEQ_GT(l5p->snd_nxt, cur_seq))
                 {
-                    /* adjust head of packet (l5p->esn + l5p->ofset_on_pdu - cur_seq) */
-                    adj_len = (l5p->esn + l5p->offset_on_pdu) - cur_seq;
+                    rte_exit(EXIT_FAILURE,
+                             "[line %d] head adjustment needed\n",
+                             __LINE__);
+                    adj_len = l5p->snd_nxt - cur_seq;
                     assert(cur_pkt->pkt_len > adj_len + get_hdr_len(cur_pkt));
                     last_segsz = cur_len - adj_len;
-                    edge = separate_edge_seg(cur_pkt, last_segsz, pool);
+                    edge = separate_edge_seg(cur_pkt, last_segsz, cur_pkt->pool);
                     if (!edge)
                     {
-                        rte_pktmbuf_dump(stdout, cur_pkt, cur_pkt->pkt_len);
                         rte_exit(EXIT_FAILURE, "adjusting head failed\n");
                     }
                     rte_pktmbuf_free(cur_pkt);
 
                     /* now cur_pkt is edge */
+                    cur_item->firstseg = edge;
+                    cur_item->lastseg = rte_pktmbuf_lastseg(edge);
                     cur_pkt = edge;
                     cur_seq = rte_be_to_cpu_32(*get_tcp_seq(cur_pkt));
-                    assert(cur_seq == (l5p->esn + l5p->offset_on_pdu));
+                    assert(cur_seq == l5p->snd_nxt);
                     cur_len = get_data_len(cur_pkt);
                     assert(cur_len == last_segsz);
                 }
 
-                /* now cur_seq == l5p->esn + l5p->offset_on_pdu */
-
-                if (l5p->esn == cur_seq)
+                if (l5p->snd_nxt == cur_seq)
                 {
-                    pdu_hdr_len = get_nvme_tcp_hdr_len(cur_pkt);
-                    pdu_len = get_nvme_tcp_pdu_len(cur_pkt);
-                    if (!pdu_hdr_len || !pdu_len)
+                    /* advance receive next */
+                    px_l5_advance_rcvnxt(port_id, queue_id, cur_pkt, l5p);
+
+                    /* check if it has l5 header to parse */
+                    if (!l5p->offset_on_pdu)
                     {
-                        px_dump_l5p("stall3", l5p, cur_seq, cur_len, target_len);
+                        pdu_hdr_len = get_nvme_tcp_hdr_len(cur_pkt);
+                        pdu_len = get_nvme_tcp_pdu_len(cur_pkt);
+                        if (!pdu_hdr_len || !pdu_len)
+                        {
+                            px_dump_l5p("stall1", l5p, cur_seq, cur_len, target_len);
+                            if (insert_stash(pctx,
+                                             cur_pkt,
+                                             rte_pktmbuf_lastseg(cur_pkt),
+                                             cur_item->timestamp) < 0)
+                            {
+                                rte_exit(EXIT_FAILURE,
+                                         "insert_stash failed\n");
+                            }
+                            printf("[L5PX] invalid PDU hdr len or PDU len, pdu_hdr_len: %u, pdu_len: %u\n",
+                                   pdu_hdr_len, pdu_len);
+                            rte_pktmbuf_dump(stdout, cur_pkt, 90);
+
+                            continue;
+                        }
+
+                        /* now we can update pdu len and pdu hdr len */
+                        l5p->pdu_hdr_len = pdu_hdr_len;
+                        l5p->pdu_len = pdu_len;
+                    }
+
+                    /* check if remaining pdu_len is larger than iMTU */
+                    orig_target_len = target_len = l5p->pdu_len - l5p->offset_on_pdu;
+                    if (target_len > (PAGE_SIZE * 2 + l5p->pdu_hdr_len))
+                    {
+                        /* this packet is too large, so separate to multiple 8K PDUs */
+                        target_len = PAGE_SIZE * 2;
+                        if (l5p->offset_on_pdu == 0)
+                        {
+                            target_len += l5p->pdu_hdr_len;
+                        }
+                    }
+
+                    /* check if current packet should be stalled */
+                    if (cur_len < target_len)
+                    {
+                        /**
+                         * size of this packet is R < target_len
+                         * stall current packet (R) to merge more
+                         */
+                        // px_dump_l5p("stall2", l5p, cur_seq, cur_len, target_len);
                         if (insert_stash(pctx,
                                          cur_pkt,
                                          rte_pktmbuf_lastseg(cur_pkt),
@@ -2105,79 +2197,108 @@ link_and_flush(struct px_ctx *pctx,
                             rte_exit(EXIT_FAILURE,
                                      "insert_stash failed\n");
                         }
-                        l5p->stalled = 1;
 
                         continue;
                     }
 
-                    /* now we can update pdu len and pdu hdr len */
-                    l5p->hdr_len = pdu_hdr_len;
-                    l5p->pdu_len = pdu_len;
-                    l5p->offset_on_pdu = 0;
-                }
-
-                /* check if remaining pdu_len is larger than iMTU */
-                target_len = l5p->pdu_len - l5p->offset_on_pdu;
-                if (target_len > (PAGE_SIZE * 2 + l5p->hdr_len))
-                {
-                    /* this packet is too large, so separate to multiple 8K PDUs */
-                    target_len = PAGE_SIZE * 2;
-                    if (l5p->offset_on_pdu == 0)
+                    /* check if edge separation is needed */
+                    if (cur_len > target_len)
                     {
-                        target_len += l5p->hdr_len;
+                        if (l5p->offset_on_pdu &&
+                            cur_pkt->nb_segs <= pctx->nb_seg_max &&
+                            cur_pkt->pkt_len <= pctx->bytes_max)
+                        {
+                            /* can use TSO */
+                            last_segsz = cur_len -
+                                         target_len *
+                                             (MIN(cur_len, orig_target_len) /
+                                              target_len);
+                            if (last_segsz)
+                            {
+                                edge = separate_edge_seg(cur_pkt, last_segsz, cur_pkt->pool);
+                                if (!edge)
+                                {
+                                    rte_exit(EXIT_FAILURE, "separate edge segment failed\n");
+                                }
+                                item_idx = prev_idx;
+                                cur_item->firstseg = edge;
+                                cur_item->lastseg = rte_pktmbuf_lastseg(edge);
+                            }
+                            target_segsz = target_len;
+                            assert(!(get_data_len(cur_pkt) % target_len));
+                        }
+                        else
+                        {
+                            /* cannot use TSO */
+                            last_segsz = cur_len - target_len;
+                            edge = separate_edge_seg(cur_pkt, last_segsz, cur_pkt->pool);
+                            if (!edge)
+                            {
+                                rte_exit(EXIT_FAILURE, "duplicate edge failed\n");
+                            }
+                            item_idx = prev_idx;
+                            cur_item->firstseg = edge;
+                            cur_item->lastseg = rte_pktmbuf_lastseg(edge);
+                            assert(get_data_len(cur_pkt) == target_len);
+                        }
                     }
+
+                    /* now this packet will be sent */
+                    px_l5_advance_sndnxt(port_id, queue_id, cur_pkt, l5p);
+
+                    goto No_delay_tcp;
                 }
 
-                /* check if current packet should be stalled */
-                if (cur_len < target_len)
+                /**
+                 * Out of order detected
+                 * stash current packet to merge more
+                 */
+                // px_dump_l5p("stall3", l5p, cur_seq, cur_len, 0);
+                if (insert_stash(pctx,
+                                 cur_pkt,
+                                 rte_pktmbuf_lastseg(cur_pkt),
+                                 cur_item->timestamp) < 0)
                 {
-                    /*
-                     * size of this packet is R < target_len
-                     * stall current packet (R) to merge more
-                     */
-                    // px_dump_l5p("stall2", l5p, cur_seq, cur_len, target_len);
-                    if (insert_stash(pctx,
-                                     cur_pkt,
-                                     rte_pktmbuf_lastseg(cur_pkt),
-                                     cur_item->timestamp) < 0)
-                    {
-                        rte_exit(EXIT_FAILURE,
-                                 "insert_stash failed\n");
-                    }
-                    l5p->stalled = 1;
-
-                    continue;
+                    rte_exit(EXIT_FAILURE,
+                             "insert_stash failed\n");
                 }
 
-                l5p->stalled = 0;
-
-                /* check if edge separation is needed */
-                if (cur_len > target_len)
+                /* buffer to OoO queue */
+                uint32_t added_ooo_bytes = px_l5_buffer_ooo(port_id, queue_id, cur_pkt, l5p);
+                if (added_ooo_bytes > 0)
                 {
-                    last_segsz = cur_len - target_len;
-                    edge = separate_edge_seg(cur_pkt, last_segsz, pool);
-                    if (!edge)
-                    {
-                        rte_exit(EXIT_FAILURE, "duplicate edge failed\n");
-                    }
-                    // rte_pktmbuf_dump(stdout, edge, 90);
-                    /* revisit this item */
-                    item_idx = prev_idx;
-                    cur_item->firstseg = edge;
+                    printf("[%lu] OoO snd_nxt: %u, "
+                           "rcv_nxt: %u "
+                           "seq: [%u ~ %u), "
+                           "gap: %u, "
+                           "added_bytes: %u\n",
+                           pctx->now_ns,
+                           SEQ_DIFF(l5p->snd_nxt, l5p->isn),
+                           SEQ_DIFF(l5p->rcv_nxt, l5p->isn),
+                           SEQ_DIFF(cur_seq, l5p->isn),
+                           SEQ_DIFF(cur_seq + cur_len, l5p->isn),
+                           SEQ_DIFF(cur_seq, l5p->rcv_nxt),
+                           added_ooo_bytes);
+
+                    /* if OoO queue increased, send direct ACK */
+                    px_l5_direct_ack(port_id, queue_id, cur_pkt, l5p);
                 }
 
-                assert(get_data_len(cur_pkt) == target_len);
+                // if (px_chained_trim(cur_pkt, cur_len) < 0)
+                // {
+                //     rte_exit(EXIT_FAILURE,
+                //              "px_chained_trim failed\n");
+                // }
 
-                /* now this packet will be sent */
-                px_l5_advance_pdu(port_id, queue_id, cur_pkt, l5p, pool);
+                // goto No_delay_tcp;
 
-                goto No_delay_tcp;
+                continue;
             Normal_delay_path:
 #endif
                 /* check if current packet should be delayed */
                 if (get_data_len(cur_pkt) + orig_segsz <= target_segsz)
                 {
-                    /*
+                    /**
                      * size of this packet is R < 9K
                      * delay current packet (R) to merge more
                      */
@@ -2209,7 +2330,7 @@ link_and_flush(struct px_ctx *pctx,
                 if (last_segsz &&
                     ((last_segsz + orig_segsz) <= target_segsz))
                 {
-                    /*
+                    /**
                      * size of this packet is 9K * N + R
                      * flush complete packets (N)
                      * stash duplicated edge (R) to merge more
@@ -2297,7 +2418,7 @@ link_and_flush(struct px_ctx *pctx,
                     /* check if current packet should be delayed */
                     if (get_data_len(cur_pkt) + orig_segsz <= target_segsz)
                     {
-                        /*
+                        /**
                          * size of this packet < 9K
                          * stash current packet to merge more
                          */
@@ -2381,6 +2502,7 @@ link_and_flush(struct px_ctx *pctx,
                     fprintf(stderr, "[line %d] RX ring overflow in %s\n",
                             __LINE__, __func__);
                     rte_pktmbuf_free(cur_pkt);
+                    rte_exit(EXIT_FAILURE, "RX ring overflow\n");
                     cur_pkt = NULL;
                 }
             }
@@ -2681,6 +2803,7 @@ int px_init(uint16_t port_id,
         pctx->imtu_size = px_dev->imtu_size;
         pctx->emtu_size = px_dev->emtu_size;
         pctx->nb_seg_max = px_dev->dev_info.tx_desc_lim.nb_seg_max;
+        pctx->bytes_max = 1024 * 1024; // 1MB
         pctx->initialized = 1;
         pctx->sgdma = px_dev->sgdma;
         pctx->do_link = do_link;
@@ -3195,9 +3318,9 @@ int px_eth_dev_configure(uint16_t port_id,
         g_pctx[port_id][queue_id].queue_id = queue_id;
     }
 
-    // fprintf(stdout,
-    //         "num_rxq: %u, max_rxq: %u, max_lxq_per_rxq: %u\n",
-    //         num_rxq, max_rxq, max_lxq_per_rxq);
+    fprintf(stdout,
+            "num_rxq: %u, max_rxq: %u, max_lxq_per_rxq: %u\n",
+            num_rxq, max_rxq, max_lxq_per_rxq);
 
     /* initialize ReTa entry */
     px_latent_configure(port_id,
@@ -3841,6 +3964,8 @@ px_eth_tx_burst(uint16_t port_id,
                 "rte_eth_tx_burst (1): %d/%d sent\n",
                 port_id, queue_id,
                 offset, nb_pkts_after_uso);
+        rte_exit(EXIT_FAILURE,
+                 "TX burst failed (1): not all packets sent\n");
     }
     for (i = offset; i < nb_pkts_after_uso; i++)
     {
@@ -3877,6 +4002,8 @@ px_eth_tx_burst(uint16_t port_id,
                     "rte_eth_tx_burst (2): %d/%d sent\n",
                     port_id, queue_id,
                     offset, read_px_tx_ring);
+            rte_exit(EXIT_FAILURE,
+                     "TX burst failed (2): not all packets sent\n");
         }
         for (i = offset; i < read_px_tx_ring; i++)
         {

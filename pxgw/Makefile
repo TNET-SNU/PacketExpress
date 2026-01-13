@@ -101,10 +101,10 @@ CFLAGS += -D USE_PX=1
 # Choose one of below
 
 # 1. Dynamic RXQ scaling on
-CFLAGS += -D USE_DYNRXQ=1
+# CFLAGS += -D USE_DYNRXQ=1
 
 # 2. Dynamic RXQ scaling off
-# CFLAGS += -D USE_DYNRXQ=0
+CFLAGS += -D USE_DYNRXQ=0
 
 ################################################################################
 
@@ -121,10 +121,10 @@ CFLAGS += -D CUTOFF_NS=120000
 # Choose one of below
 
 # 1. NICMEM on (To use nicmem, make sure to use DPDK version 20.11)
-CFLAGS += -D NICMEM=1
+# CFLAGS += -D NICMEM=1
 
 # 2. NICMEM off
-# CFLAGS += -D NICMEM=0
+CFLAGS += -D NICMEM=0
 
 ################################################################################
 

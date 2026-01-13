@@ -22,7 +22,7 @@ void px_l5_dump_table(uint16_t port_id,
         const struct l5_flow *entry = (const struct l5_flow *)data;
         const struct four_tuple *k = (const struct four_tuple *)key;
 
-        printf("%u.%u.%u.%u:%u -> %u.%u.%u.%u:%u, esn=%u\n",
+        printf("%u.%u.%u.%u:%u -> %u.%u.%u.%u:%u, snd_nxt=%u\n",
                k->src_ip & 0xFF,
                (k->src_ip >> 8) & 0xFF,
                (k->src_ip >> 16) & 0xFF,
@@ -33,7 +33,7 @@ void px_l5_dump_table(uint16_t port_id,
                (k->dst_ip >> 16) & 0xFF,
                (k->dst_ip >> 24) & 0xFF,
                rte_be_to_cpu_16(k->dst_port),
-               entry->esn);
+               entry->snd_nxt);
     }
     printf("\n");
 }
@@ -103,22 +103,22 @@ int px_l5_init(uint16_t port_id,
         return -1;
     }
 
-    /* create stall pool */
-    ctx->stall_pool = rte_mempool_create(stall_pool_name, 132072,
-                                         sizeof(struct stalled_pkt), 0, 0,
-                                         NULL, NULL, NULL, NULL,
-                                         rte_socket_id(), 0);
-    if (ctx->stall_pool == NULL)
+    /* create ooo pool */
+    ctx->ooo_pool = rte_mempool_create(stall_pool_name, 132072,
+                                       sizeof(struct px_ooo), 0, 0,
+                                       NULL, NULL, NULL, NULL,
+                                       rte_socket_id(), 0);
+    if (ctx->ooo_pool == NULL)
     {
-        printf("px_l5_init: failed to create stall pool\n");
+        printf("px_l5_init: failed to create OoO pool\n");
         rte_hash_free(ctx->hash);
         rte_mempool_free(ctx->pool);
         rte_mempool_free(ctx->pdu_pool);
         return -1;
     }
 
-    printf("hash: %p, pool: %p, pdu_pool: %p, stall_pool: %p\n",
-           ctx->hash, ctx->pool, ctx->pdu_pool, ctx->stall_pool);
+    printf("hash: %p, pool: %p, pdu_pool: %p, ooo_pool: %p\n",
+           ctx->hash, ctx->pool, ctx->pdu_pool, ctx->ooo_pool);
 
     return 0;
 }
@@ -149,11 +149,11 @@ void px_l5_destroy(uint16_t port_id,
         ctx->pdu_pool = NULL;
     }
 
-    /* free stall pool */
-    if (ctx->stall_pool)
+    /* free OoO pool */
+    if (ctx->ooo_pool)
     {
-        rte_mempool_free(ctx->stall_pool);
-        ctx->stall_pool = NULL;
+        rte_mempool_free(ctx->ooo_pool);
+        ctx->ooo_pool = NULL;
     }
 }
 /*----------------------------------------------------------------------------*/
@@ -189,7 +189,8 @@ px_l5_insert(uint16_t port_id,
     memset(entry, 0, sizeof(struct l5_flow));
 
     entry->key = *key;
-    TAILQ_INIT(&entry->unacked_pdus);
+    TAILQ_INIT(&entry->una_pdus);
+    TAILQ_INIT(&entry->ooo_pkts);
 
     ret = rte_hash_add_key_data(ctx->hash, key, entry);
     if (ret < 0)
@@ -338,6 +339,42 @@ px_l5_put_pdu(uint16_t port_id,
     rte_mempool_put(ctx->pdu_pool, pdu);
 }
 /*----------------------------------------------------------------------------*/
+/**
+ * Dump PDUs for a flow.
+ * All fields are host-byte order.
+ */
+static inline void
+px_pdu_dump(struct l5_flow *l5p)
+{
+    if (!l5p)
+    {
+        return;
+    }
+
+    struct px_pdu *b;
+    uint32_t cnt = 0;
+
+    px_dump_tuple(&l5p->key);
+    printf("[PDU] una_bytes=%" PRIu64 "\n", l5p->una_bytes);
+
+    TAILQ_FOREACH(b, &l5p->una_pdus, link)
+    {
+        uint32_t s = b->seq;
+        uint32_t e = b->seq + b->len;
+
+        printf("  [%02u] [%10u, %10u) len=%10u\n",
+               cnt, SEQ_DIFF(s, l5p->isn), SEQ_DIFF(e, l5p->isn), b->len);
+        cnt++;
+    }
+
+    if (cnt == 0)
+    {
+        printf("  (empty)\n");
+    }
+
+    fflush(stdout);
+}
+/*----------------------------------------------------------------------------*/
 static inline void
 px_l5_buffer_pdu(uint16_t port_id,
                  uint16_t queue_id,
@@ -345,6 +382,7 @@ px_l5_buffer_pdu(uint16_t port_id,
                  struct l5_flow *l5p,
                  struct rte_mempool *pool)
 {
+    // printf("px_l5_buffer_pdu\n");
     struct rte_mbuf *clone;
     struct px_pdu *pdu;
 
@@ -363,157 +401,324 @@ px_l5_buffer_pdu(uint16_t port_id,
     pdu->seq = rte_be_to_cpu_32(*get_tcp_seq(pkt));
     pdu->len = get_data_len(pkt);
     pdu->mbuf = clone;
-    TAILQ_INSERT_TAIL(&l5p->unacked_pdus, pdu, link);
-    l5p->unacked_bytes += pdu->len;
-    l5p->snd_nxt = pdu->seq + pdu->len;
+    TAILQ_INSERT_TAIL(&l5p->una_pdus, pdu, link);
+    l5p->una_bytes += pdu->len;
+
+    // px_pdu_dump(l5p);
 }
 /*----------------------------------------------------------------------------*/
 static void
 px_l5_free_pdus(uint16_t port_id,
                 uint16_t queue_id,
-                struct l5_flow *l5p,
-                uint32_t ack)
+                struct l5_flow *l5p)
 {
     // printf("px_l5_free_pdus\n");
-    struct l5_flow *peer = l5p->peer;
     struct px_pdu *pdu, *tmp;
-    if (!peer)
-    {
-        rte_exit(EXIT_FAILURE, "[line %d] no peer l5 flow\n", __LINE__);
-    }
-    if (!SEQ_GT(ack, peer->snd_una))
-    {
-        return;
-    }
 
-    TAILQ_FOREACH_SAFE(pdu, &peer->unacked_pdus, link, tmp)
+    TAILQ_FOREACH_SAFE(pdu, &l5p->una_pdus, link, tmp)
     {
-        if (SEQ_LEQ(pdu->seq + pdu->len, ack))
+        if (SEQ_LEQ(pdu->seq + pdu->len, l5p->snd_una))
         {
-            TAILQ_REMOVE(&peer->unacked_pdus, pdu, link);
-            peer->unacked_bytes -= pdu->len;
+            TAILQ_REMOVE(&l5p->una_pdus, pdu, link);
+            l5p->una_bytes -= pdu->len;
 
             rte_pktmbuf_free(pdu->mbuf);
             px_l5_put_pdu(port_id, queue_id, pdu);
         }
         else
         {
-            break; // PDUs are sorted by seq in increasing order
+            // continue;
+            /* if PDUs are sorted by seq in increasing order, we can break */
+            break;
         }
     }
-
-    peer->snd_una = ack;
 }
 /*----------------------------------------------------------------------------*/
 static void
-px_l5_put_stall(uint16_t port_id,
-                uint16_t queue_id,
-                struct stalled_pkt *pkts)
+px_l5_put_ooo(uint16_t port_id,
+              uint16_t queue_id,
+              struct px_ooo *ooo)
 {
     struct px_l5_ctx *ctx = &g_l5_ctx[port_id][queue_id];
 
     /* check if initialized first */
-    if (!ctx->stall_pool)
+    if (!ctx->ooo_pool)
     {
         return;
     }
 
     /* free a new one */
-    rte_mempool_put(ctx->stall_pool, pkts);
+    rte_mempool_put(ctx->ooo_pool, ooo);
 }
 /*----------------------------------------------------------------------------*/
-static struct stalled_pkt *
-px_l5_get_stall(uint16_t port_id,
-                uint16_t queue_id)
+static struct px_ooo *
+px_l5_get_ooo(uint16_t port_id,
+              uint16_t queue_id)
 {
     struct px_l5_ctx *ctx = &g_l5_ctx[port_id][queue_id];
-    struct stalled_pkt *pkts;
+    struct px_ooo *ooo;
     int ret;
 
     /* check if initialized first */
-    if (!ctx->stall_pool)
+    if (!ctx->ooo_pool)
     {
         return NULL;
     }
 
     /* make a new one */
-    ret = rte_mempool_get(ctx->stall_pool, (void **)&pkts);
+    ret = rte_mempool_get(ctx->ooo_pool, (void **)&ooo);
     if (ret < 0)
     {
+        rte_exit(EXIT_FAILURE, "px_l5_get_ooo: failed to get OoO from pool\n");
         if (ret == -ENOENT)
         {
-            printf("px_l5_get_stall: stall pool empty\n");
+            printf("px_l5_get_ooo: OoO pool empty\n");
         }
         else
         {
-            printf("px_l5_get_stall: failed to get stall from pool\n");
+            printf("px_l5_get_ooo: failed to get OoO from pool\n");
         }
         return NULL;
     }
 
-    return pkts;
+    return ooo;
 }
 /*----------------------------------------------------------------------------*/
+/**
+ * Dump OoO range blocks for a flow.
+ * Assumes l5p->ooo_pkts stores coalesced ranges: [seq, seq+len).
+ * All fields are host-byte order.
+ */
 static inline void
-px_l5_stall_pkts(uint16_t port_id,
-                 uint16_t queue_id,
-                 struct rte_mbuf *first,
-                 struct rte_mbuf *last,
-                 struct l5_flow *l5p)
+px_ooo_dump(struct l5_flow *l5p)
 {
-    struct stalled_pkt *pkts;
-
-    pkts = px_l5_get_stall(port_id, queue_id);
-    if (!pkts)
-    {
-        rte_exit(EXIT_FAILURE, "get pdu meta failed\n");
-    }
-
-    pkts->seq = rte_be_to_cpu_32(*get_tcp_seq(first));
-    pkts->len = get_data_len(first);
-    pkts->first = first;
-    pkts->last = last;
-    TAILQ_INSERT_TAIL(&l5p->stalled_pkts, pkts, link);
-    l5p->stalled_bytes += pkts->len;
-
-    px_l5_direct_ack(port_id, queue_id, first, l5p, first->pool);
-}
-/*----------------------------------------------------------------------------*/
-static void
-px_l5_release_pkts(uint16_t port_id,
-                   uint16_t queue_id,
-                   struct l5_flow *l5p,
-                   uint32_t ack)
-{
-    // printf("px_l5_free_pdus\n");
-    struct l5_flow *peer = l5p->peer;
-    struct stalled_pkt *pkts, *tmp;
-    if (!peer)
-    {
-        rte_exit(EXIT_FAILURE, "[line %d] no peer l5 flow\n", __LINE__);
-    }
-    if (!SEQ_GT(ack, peer->snd_una))
+    if (!l5p)
     {
         return;
     }
 
-    TAILQ_FOREACH_SAFE(pkts, &peer->stalled_pkts, link, tmp)
-    {
-        if (SEQ_LEQ(pkts->seq + pkts->len, ack))
-        {
-            TAILQ_REMOVE(&peer->stalled_pkts, pkts, link);
-            peer->stalled_bytes -= pkts->len;
+    struct px_ooo *b;
+    uint32_t cnt = 0;
 
-            rte_pktmbuf_free(pkts->first);
-            px_l5_put_stall(port_id, queue_id, pkts);
-        }
-        else
-        {
-            break; // PDUs are sorted by seq in increasing order
-        }
+    px_dump_tuple(&l5p->key);
+    printf("[OoO] ooo_bytes=%" PRIu64 "\n", l5p->ooo_bytes);
+
+    TAILQ_FOREACH(b, &l5p->ooo_pkts, link)
+    {
+        uint32_t s = b->seq;
+        uint32_t e = b->seq + b->len;
+
+        printf("  [%02u] [%10u, %10u) len=%10u\n",
+               cnt, SEQ_DIFF(s, l5p->isn), SEQ_DIFF(e, l5p->isn), b->len);
+        cnt++;
     }
 
-    peer->snd_una = ack;
+    if (cnt == 0)
+    {
+        printf("  (empty)\n");
+    }
+
+    fflush(stdout);
+}
+/*----------------------------------------------------------------------------*/
+/* Maintain ooo_pkts as a list of non-overlapping, coalesced ranges.
+ * Only ranges are tracked here (mbufs are buffered elsewhere).
+ *
+ * Returns: added_new_bytes (can be 0).
+ */
+uint32_t px_l5_buffer_ooo(uint16_t port_id,
+                          uint16_t queue_id,
+                          struct rte_mbuf *pkt,
+                          struct l5_flow *l5p)
+{
+    uint32_t seq = rte_be_to_cpu_32(*get_tcp_seq(pkt));
+    uint32_t len = get_data_len(pkt);
+    uint32_t end = seq + len;
+
+    if (len == 0)
+    {
+        return 0;
+    }
+
+    struct px_ooo *it;
+
+    /* 1) find a block that overlaps or is adjacent */
+    TAILQ_FOREACH(it, &l5p->ooo_pkts, link)
+    {
+        uint32_t s = it->seq;
+        uint32_t e = it->seq + it->len;
+
+        /* if new range is completely before this block (and not adjacent), stop */
+        if (SEQ_LT(end, s) && end != s)
+        {
+            break;
+        }
+
+        /* if new range is completely after this block (and not adjacent), continue */
+        if (SEQ_GT(seq, e) && seq != e)
+        {
+            continue;
+        }
+
+        /* now: overlap or adjacent with this block */
+        uint32_t new_s = (SEQ_LT(seq, s) ? seq : s);
+        uint32_t new_e = (SEQ_GT(end, e) ? end : e);
+
+        /* calculate only newly added bytes */
+        uint32_t added = 0;
+        if (SEQ_LT(new_s, s))
+        {
+            added += (s - new_s);
+        }
+        if (SEQ_GT(new_e, e))
+        {
+            added += (new_e - e);
+        }
+
+        /* update this block */
+        it->seq = new_s;
+        it->len = new_e - new_s;
+
+        /* 2) after expansion, merge any subsequent blocks that now overlap/adjacent */
+        struct px_ooo *nxt = TAILQ_NEXT(it, link);
+        while (nxt)
+        {
+            uint32_t ns = nxt->seq;
+            uint32_t ne = nxt->seq + nxt->len;
+            uint32_t cur_s = it->seq;
+            uint32_t cur_e = it->seq + it->len;
+
+            /* if next is strictly after current and not adjacent, done */
+            if (SEQ_GT(ns, cur_e) && ns != cur_e)
+            {
+                break;
+            }
+
+            /* merge nxt into it */
+            uint32_t merged_s = cur_s; /* ns cannot be < cur_s here if list is sorted;
+                                          but we don't assume sorted, so be safe */
+            if (SEQ_LT(ns, merged_s))
+            {
+                merged_s = ns;
+            }
+
+            uint32_t merged_e = cur_e;
+            if (SEQ_GT(ne, merged_e))
+            {
+                merged_e = ne;
+            }
+
+            /* account only truly new bytes contributed by nxt beyond current block */
+            if (SEQ_GT(ne, cur_e))
+            {
+                added += (ne - cur_e);
+            }
+            /* if nxt extends to left (rare if unsorted), account that too */
+            if (SEQ_LT(ns, cur_s))
+            {
+                added += (cur_s - ns);
+            }
+
+            /* apply merge */
+            it->seq = merged_s;
+            it->len = merged_e - merged_s;
+
+            /* remove nxt */
+            struct px_ooo *to_free = nxt;
+            nxt = TAILQ_NEXT(nxt, link);
+            TAILQ_REMOVE(&l5p->ooo_pkts, to_free, link);
+            px_l5_put_ooo(port_id, queue_id, to_free);
+        }
+
+        l5p->ooo_bytes += added;
+
+        // px_ooo_dump(l5p);
+
+        return added;
+    }
+
+    /* 3) no overlap/adjacent found => new block */
+    struct px_ooo *ooo = px_l5_get_ooo(port_id, queue_id);
+    if (!ooo)
+    {
+        rte_exit(EXIT_FAILURE, "get ooo meta failed\n");
+    }
+    ooo->seq = seq;
+    ooo->len = len;
+
+    /* keep list roughly ordered by seq (helps merge); optional but recommended */
+    struct px_ooo *pos;
+    TAILQ_FOREACH(pos, &l5p->ooo_pkts, link)
+    {
+        if (SEQ_LT(seq, pos->seq))
+        {
+            TAILQ_INSERT_BEFORE(pos, ooo, link);
+            l5p->ooo_bytes += len;
+            return len;
+        }
+    }
+    TAILQ_INSERT_TAIL(&l5p->ooo_pkts, ooo, link);
+    l5p->ooo_bytes += len;
+
+    // px_ooo_dump(l5p);
+
+    return len;
+}
+/*----------------------------------------------------------------------------*/
+/**
+ * Remove OoO ranges that are now covered by in-order progress up to rcv_nxt.
+ * ooo_pkts list is assumed to store coalesced ranges: [seq, seq+len).
+ */
+void px_l5_free_ooos(uint16_t port_id,
+                     uint16_t queue_id,
+                     struct l5_flow *l5p)
+{
+    struct px_ooo *b, *tmp;
+
+    if (unlikely(!l5p))
+    {
+        return;
+    }
+
+    TAILQ_FOREACH_SAFE(b, &l5p->ooo_pkts, link, tmp)
+    {
+        uint32_t s = b->seq;
+        uint32_t e = b->seq + b->len;
+
+        /* case 1: fully before rcv_nxt => delete whole block */
+        if (SEQ_LEQ(e, l5p->rcv_nxt))
+        {
+            l5p->ooo_bytes -= b->len;
+            TAILQ_REMOVE(&l5p->ooo_pkts, b, link);
+            px_l5_put_ooo(port_id, queue_id, b);
+            continue;
+        }
+
+        /* case 2: overlaps prefix => trim head to rcv_nxt */
+        if (SEQ_LT(s, l5p->rcv_nxt) && SEQ_LT(l5p->rcv_nxt, e))
+        {
+            /* safe under normal window assumptions */
+            uint32_t removed = (uint32_t)(l5p->rcv_nxt - s);
+            if (removed > b->len)
+            {
+                removed = b->len; /* defensive */
+            }
+
+            b->seq = l5p->rcv_nxt;
+            b->len -= removed;
+            l5p->ooo_bytes -= removed;
+            /* since list is coalesced, only one block can straddle rcv_nxt */
+            break;
+        }
+
+        /* case 3: rcv_nxt <= s => nothing more to remove (if list sorted) */
+        if (SEQ_LEQ(l5p->rcv_nxt, s))
+        {
+            // continue;
+            /* if list is guaranteed sorted by seq, we can break here */
+            break;
+        }
+    }
 }
 /*----------------------------------------------------------------------------*/
 void px_l5_rtx(uint16_t port_id,
@@ -528,7 +733,7 @@ void px_l5_rtx(uint16_t port_id,
     struct tcp_timestamp *timestamp;
     int found = 0; // go-back-N style retransmission
 
-    TAILQ_FOREACH(pdu, &l5p->unacked_pdus, link)
+    TAILQ_FOREACH(pdu, &l5p->una_pdus, link)
     {
         if (!found &&
             !SEQ_RANGE_OVERLAP(pdu->seq, pdu->seq + pdu->len, seq, seq + len))
@@ -546,7 +751,8 @@ void px_l5_rtx(uint16_t port_id,
         if (unlikely(tx_m == NULL))
         {
             printf("px_l5_rtx: Failed to clone mbuf for retransmit\n");
-            continue;
+            rte_exit(EXIT_FAILURE,
+                     "[line %d] Failed to clone mbuf\n", __LINE__);
         }
 
         /* update to latest timestamp */
@@ -561,9 +767,9 @@ void px_l5_rtx(uint16_t port_id,
         advwnd = get_tcp_advwnd(tx_m);
         *advwnd = rte_cpu_to_be_16(l5p->advwnd);
 
-        /* update to latest ACK */
+        /* update to peer's receive next */
         ack = get_tcp_ack(tx_m);
-        *ack = rte_cpu_to_be_32(l5p->ack);
+        *ack = rte_cpu_to_be_32(l5p->peer->rcv_nxt);
 
         /* send */
         uint16_t sent = rte_eth_tx_burst(port_id, queue_id, &tx_m, 1);
@@ -571,6 +777,8 @@ void px_l5_rtx(uint16_t port_id,
         {
             printf("px_l5_rtx: TX failed on retransmit\n");
             rte_pktmbuf_free(tx_m);
+            rte_exit(EXIT_FAILURE,
+                     "[line %d] TX failed on retransmit\n", __LINE__);
         }
     }
 }
@@ -604,11 +812,9 @@ void px_l5_handle_syn(uint16_t port_id,
     {
         rte_exit(EXIT_FAILURE, "[line %d] l5 flow insert failed\n", __LINE__);
     }
-    l5p->isn = l5p->seq = cur_seq;
-    l5p->esn = l5p->isn + 1;
-    l5p->recvd = l5p->isn + 1;
-    l5p->snd_una = l5p->isn;
-    l5p->snd_nxt = l5p->isn + 1;
+    l5p->isn = cur_seq;
+    l5p->snd_nxt = cur_seq + 1;
+    l5p->rcv_nxt = cur_seq + 1;
     l5p->advwnd = cur_advwnd;
     timestamp = get_tcp_timestamp(pkt);
     if (timestamp)
@@ -620,13 +826,6 @@ void px_l5_handle_syn(uint16_t port_id,
     else
     {
         l5p->ts_enabled = 0;
-    }
-
-    /* if SYNACK, use ACK */
-    if (*flags & RTE_TCP_ACK_FLAG)
-    {
-        /* initialize ACK */
-        l5p->ack = cur_ack;
     }
 
     /* find the peer flow */
@@ -645,12 +844,18 @@ void px_l5_handle_syn(uint16_t port_id,
     peer->peer = l5p;
     l5p->peer = peer;
 
+    /* if SYNACK, use ACK */
+    if (*flags & RTE_TCP_ACK_FLAG)
+    {
+        /* initialize ACK */
+        l5p->peer->snd_una = cur_ack;
+    }
+
     /* check ARP table first */
     new_dst_mac = px_arp_search(*get_dst_ip(pkt));
     if (!new_dst_mac)
     {
-        printf("[line %d] ARP lookup failed\n", __LINE__);
-        return;
+        rte_exit(EXIT_FAILURE, "[line %d] ARP lookup failed\n", __LINE__);
     }
 
     /* prepare a single pure ACK packet for each flow */
@@ -711,6 +916,7 @@ void px_l5_handle_ack(uint16_t port_id,
     uint16_t cur_advwnd;
     uint32_t cur_tsval;
     uint32_t cur_tsecr;
+    struct l5_flow *peer;
 
     if (!l5p)
     {
@@ -743,17 +949,17 @@ void px_l5_handle_ack(uint16_t port_id,
         }
     }
 
+    peer = l5p->peer;
+
     /* first non-SYN packet from client */
     if (cur_seq == (l5p->isn + 1))
     {
-        /* initialize ACK */
-        l5p->ack = cur_ack;
-
-        return;
+        /* initialize peer's last unacked sequence */
+        peer->snd_una = cur_ack;
     }
 
     /* if ACK is equal, update ADV WND */
-    if (cur_ack == l5p->ack)
+    if (cur_ack == peer->snd_una)
     {
         if (cur_advwnd > l5p->advwnd)
         {
@@ -765,21 +971,40 @@ void px_l5_handle_ack(uint16_t port_id,
     }
 
     /* if ACK advanced, update ACK and ADV WND, and free buffered PDUs */
-    if (SEQ_GT(cur_ack, l5p->ack))
+    if (SEQ_GT(cur_ack, peer->snd_una))
     {
-        l5p->ack = cur_ack;
+        peer->snd_una = cur_ack;
         l5p->advwnd = cur_advwnd;
 
-        /* free buffered PDUs */
-        px_l5_free_pdus(port_id, queue_id, l5p, cur_ack);
+        /* free peer's buffered PDUs */
+        px_l5_free_pdus(port_id, queue_id, peer);
     }
 }
 /*----------------------------------------------------------------------------*/
-void px_l5_advance_pdu(uint16_t port_id,
-                       uint16_t queue_id,
-                       struct rte_mbuf *pkt,
-                       struct l5_flow *l5p,
-                       struct rte_mempool *pool)
+void px_l5_advance_rcvnxt(uint16_t port_id,
+                          uint16_t queue_id,
+                          struct rte_mbuf *pkt,
+                          struct l5_flow *l5p)
+{
+    uint32_t cur_seq;
+    uint32_t cur_len;
+
+    /* advance receive next */
+    cur_seq = rte_be_to_cpu_32(*get_tcp_seq(pkt));
+    cur_len = get_data_len(pkt);
+    if (SEQ_GT(cur_seq + cur_len, l5p->rcv_nxt))
+    {
+        l5p->rcv_nxt = cur_seq + cur_len;
+
+        /* free OoOs */
+        px_l5_free_ooos(port_id, queue_id, l5p);
+    }
+}
+/*----------------------------------------------------------------------------*/
+void px_l5_advance_sndnxt(uint16_t port_id,
+                          uint16_t queue_id,
+                          struct rte_mbuf *pkt,
+                          struct l5_flow *l5p)
 {
     // uint8_t *doff;
     // if (l5p->offset_on_pdu == 0)
@@ -788,43 +1013,54 @@ void px_l5_advance_pdu(uint16_t port_id,
     //         (rte_be_to_cpu_16(*(uint16_t *)get_payload(pkt)) == 0x0500))
     //     {
     //         doff = get_tcp_doff(pkt);
-    //         *doff += (l5p->hdr_len >> 2) << 4;
+    //         *doff += (l5p->pdu_hdr_len >> 2) << 4;
     //     }
     // }
 
-    /* now this packet will be sent */
+    /* advance L5 PDU */
     l5p->offset_on_pdu += get_data_len(pkt);
     if (l5p->offset_on_pdu == l5p->pdu_len)
     {
-        /* got a complete, new PDU, move seq */
-        l5p->esn += l5p->pdu_len;
+        /* got a complete and new PDU, move to new PDU */
+        l5p->pdu_start_seq += l5p->pdu_len;
         l5p->offset_on_pdu = 0;
     }
 
+    /* advance snd_nxt */
+    l5p->snd_nxt += get_data_len(pkt);
+
     /* buffer PDU to unacked PDU list */
-    px_l5_buffer_pdu(port_id, queue_id, pkt, l5p, pool);
+    px_l5_buffer_pdu(port_id, queue_id, pkt, l5p, pkt->pool);
 }
 /*----------------------------------------------------------------------------*/
+void px_l5_rewrite_ack(uint16_t port_id,
+                       uint16_t queue_id,
+                       struct rte_mbuf *pkt,
+                       struct l5_flow *l5p)
+{
+    RTE_SET_USED(port_id);
+    RTE_SET_USED(queue_id);
+    uint32_t *ack;
+    ack = get_tcp_ack(pkt);
+    *ack = rte_cpu_to_be_32(l5p->rcv_nxt);
+}
+/*----------------------------------------------------------------------------*/
+/* directly send ACK packet from PXGW */
 void px_l5_direct_ack(uint16_t port_id,
                       uint16_t queue_id,
                       struct rte_mbuf *pkt,
-                      struct l5_flow *l5p,
-                      struct rte_mempool *pool)
+                      struct l5_flow *l5p)
 {
     struct l5_flow *peer;
     struct rte_mbuf *last_ack;
-    struct rte_mbuf *cloned_for_tx;
+    struct rte_mbuf *clone;
     uint32_t *seq;
     uint32_t *ack;
     uint16_t *advwnd;
 
     if (!l5p)
     {
-        l5p = px_l5_search(port_id, queue_id, get_four_tuple(pkt));
-        if (!l5p)
-        {
-            rte_exit(EXIT_FAILURE, "[line %d] no l5 flow\n", __LINE__);
-        }
+        rte_exit(EXIT_FAILURE, "[line %d] no l5 flow\n", __LINE__);
     }
 
     peer = l5p->peer;
@@ -833,389 +1069,44 @@ void px_l5_direct_ack(uint16_t port_id,
         rte_exit(EXIT_FAILURE, "[line %d] no peer l5 flow\n", __LINE__);
     }
 
-    /* directly send ACK packet from PXGW */
-    // px_dump_tuple(&peer->key);
-    printf(
-        "direct ACK from PXGW: %10u "
-        //    "(%10u), "
-        "original ACK: %10u "
-        //    "(%10u), "
-        "last rewritten ACK: %10u "
-        //    "(%10u)\n"
-        ,
-        SEQ_DIFF(l5p->recvd, l5p->isn),
-        //    l5p->recvd,
-        SEQ_DIFF(peer->ack, l5p->isn),
-        //    peer->ack,
-        SEQ_DIFF(peer->last_rewritten_ack, l5p->isn)
-        //    peer->last_rewritten_ack
-    );
-
-    /* get last ACK packet of peer */
+    /* get peer's last ACK packet */
     last_ack = peer->last_ack;
     if (!last_ack)
     {
         rte_exit(EXIT_FAILURE, "[line %d] no last ACK mbuf\n", __LINE__);
     }
 
-    /* modify SEQ */
+    /* update peer's SEQ to peer's latest SEQ */
     seq = get_tcp_seq(last_ack);
-    *seq = rte_cpu_to_be_32(peer->recvd);
+    *seq = rte_cpu_to_be_32(peer->snd_nxt);
 
-    /* modify ACK */
+    /* update peer's ACK to my latest RCV_NXT */
     ack = get_tcp_ack(last_ack);
-    *ack = rte_cpu_to_be_32(l5p->recvd);
-    peer->last_rewritten_ack = l5p->recvd;
+    *ack = rte_cpu_to_be_32(l5p->rcv_nxt);
+    peer->last_rewritten_ack = l5p->rcv_nxt;
 
-    /* modify ADV WND */
+    /* update peer's ADV WND to peer's latest ADV WND */
     advwnd = get_tcp_advwnd(last_ack);
     *advwnd = rte_cpu_to_be_16(peer->advwnd);
 
     /* clone last ACK packet for TX */
-    cloned_for_tx = rte_pktmbuf_clone(last_ack, pool);
-    if (unlikely(!cloned_for_tx))
+    clone = rte_pktmbuf_clone(last_ack, pkt->pool);
+    if (unlikely(!clone))
     {
         rte_exit(EXIT_FAILURE, "[line %d] Failed to clone mbuf for ACK TX\n", __LINE__);
     }
 
     /* send */
-    if (rte_eth_tx_burst(port_id, queue_id, &cloned_for_tx, 1) < 1)
+    if (rte_eth_tx_burst(port_id, queue_id, &clone, 1) < 1)
     {
-        rte_pktmbuf_free(cloned_for_tx);
+        rte_pktmbuf_free(clone);
         rte_exit(EXIT_FAILURE, "[line %d] TX failed for ACK packet\n", __LINE__);
     }
-}
-/*----------------------------------------------------------------------------*/
-void px_l5_rewrite_ack(uint16_t port_id,
-                       uint16_t queue_id,
-                       struct rte_mbuf *pkt)
-{
-    struct l5_flow *l5p = px_l5_search(port_id, queue_id, get_four_tuple(pkt));
-    if (!l5p)
-    {
-        return;
-    }
-    struct l5_flow *peer = l5p->peer;
-    if (!peer)
-    {
-        return;
-    }
 
-    uint32_t *ack = get_tcp_ack(pkt);
-    uint32_t cur_ack = rte_be_to_cpu_32(*ack);
-
-    /* check whether receiver wants PDU held by PXGW */
-    // if (cur_ack == (peer->esn + peer->offset_on_pdu) &&
-    // if (SEQ_LT(cur_ack, peer->esn + peer->offset_on_pdu) &&
-    if (peer->stalled &&
-        SEQ_LT(cur_ack, peer->recvd))
-    {
-        /* rewrite receiver ACK to PXGW ACK */
-        printf("rewrote ACK from %10u to %10u, peer->ack: %10u, "
-               "unacked_bytes: %lu, %lu\n",
-               SEQ_DIFF(cur_ack, peer->isn),
-               SEQ_DIFF(peer->recvd, peer->isn),
-               SEQ_DIFF(l5p->ack, peer->isn),
-               peer->unacked_bytes,
-               l5p->unacked_bytes);
-        *ack = rte_cpu_to_be_32(peer->recvd);
-        l5p->last_rewritten_ack = peer->recvd;
-    }
-}
-/*----------------------------------------------------------------------------*/
-// int px_l5_core(uint16_t port_id,
-//                uint16_t queue_id,
-//                struct rte_mbuf *pkt,
-//                struct l5_flow *l5p,
-//                struct rte_mempool *pool)
-// {
-//     uint32_t cur_seq, cur_len, target_len, adj_len, last_segsz;
-//     uint8_t *flags, *doff, increase_doff;
-//     struct rte_mbuf *cur_pkt, *edge;
-
-//     cur_seq = rte_be_to_cpu_32(*get_tcp_seq(cur_pkt));
-//     cur_len = get_data_len(cur_pkt);
-
-//     increase_doff = 0;
-
-//     /* check RTX pkt */
-//     if (SEQ_GEQ(l5p->peer->ack, cur_seq + cur_len))
-//     {
-//         /* this packet is already acked by peer */
-//         px_dump_l5p("RTX1", l5p, cur_seq, cur_len, 0);
-//         rte_pktmbuf_free(cur_pkt);
-//         continue;
-//     }
-
-//     /* update received SEQ */
-//     if (SEQ_GEQ(l5p->recvd, cur_seq) &&
-//         SEQ_LT(l5p->recvd, cur_seq + cur_len))
-//     {
-//         l5p->recvd = cur_seq + cur_len;
-//     }
-
-//     px_l5_handle_ack(port_id, queue_id, l5p, cur_pkt);
-
-//     /* check out-of-order */
-//     if (SEQ_LT(l5p->esn + l5p->offset_on_pdu, cur_seq))
-//     {
-//         /*
-//          * Out of order detected
-//          * stall current packet to merge more
-//          */
-//         px_dump_l5p("stall1", l5p, cur_seq, cur_len, 0);
-//         px_l5_direct_ack(port_id, queue_id, cur_pkt, l5p, pool);
-//         if (insert_stash(pctx,
-//                          cur_pkt,
-//                          rte_pktmbuf_lastseg(cur_pkt),
-//                          cur_item->timestamp) < 0)
-//         {
-//             rte_exit(EXIT_FAILURE,
-//                      "insert_stash failed\n");
-//         }
-
-//         continue;
-//     }
-
-//     /* check RTX pkt */
-//     if (SEQ_GEQ(l5p->esn + l5p->offset_on_pdu, cur_seq + cur_len))
-//     {
-//         px_dump_l5p("RTX2", l5p, cur_seq, cur_len, target_len);
-//         px_l5_rtx(port_id, queue_id, l5p, cur_seq, cur_len);
-//         rte_pktmbuf_free(cur_pkt);
-//         continue;
-//     }
-
-//     /* check if head adjustment is needed */
-//     if (SEQ_GT(l5p->esn + l5p->offset_on_pdu, cur_seq))
-//     {
-//         /* adjust head of packet (l5p->esn + l5p->ofset_on_pdu - cur_seq) */
-//         adj_len = (l5p->esn + l5p->offset_on_pdu) - cur_seq;
-//         printf("adj_len: %u, esn: %10u, offset: %7u, "
-//                "seq: %10u, len: %10u\n",
-//                adj_len, SEQ_DIFF(l5p->esn, l5p->isn), l5p->offset_on_pdu,
-//                SEQ_DIFF(cur_seq, l5p->isn), cur_len);
-//         assert(cur_pkt->pkt_len > adj_len + get_hdr_len(cur_pkt));
-//         last_segsz = cur_len - adj_len;
-//         edge = separate_edge_seg(cur_pkt, last_segsz, pool);
-//         if (!edge)
-//         {
-//             printf("[separate] esn: %9u (%9u), "
-//                    "offset: %u, "
-//                    "seq: %10u (%10u), "
-//                    "diff: %6u, "
-//                    "trim_len: %u, len: %u, "
-//                    "pkt_len: %u, l2_len: %u, "
-//                    "l3_len: %u, l4_len: %u, "
-//                    "data_len: %u\n",
-//                    SEQ_DIFF(l5p->esn, l5p->isn),
-//                    l5p->esn,
-//                    l5p->offset_on_pdu,
-//                    SEQ_DIFF(cur_seq, l5p->isn),
-//                    cur_seq,
-//                    SEQ_DIFF(l5p->esn + l5p->offset_on_pdu, cur_seq),
-//                    adj_len + get_hdr_len(cur_pkt), cur_len,
-//                    cur_pkt->pkt_len, cur_pkt->l2_len,
-//                    cur_pkt->l3_len, cur_pkt->l4_len,
-//                    cur_pkt->data_len);
-//             rte_pktmbuf_dump(stdout, cur_pkt, cur_pkt->pkt_len);
-//             rte_exit(EXIT_FAILURE, "adjusting head failed\n");
-//         }
-//         printf("[adj] seq: %10u (%10u) -> %10u (%10u), "
-//                "len: %10u -> %10u\n",
-//                SEQ_DIFF(cur_seq, l5p->isn),
-//                cur_seq,
-//                SEQ_DIFF(l5p->esn + l5p->offset_on_pdu, l5p->isn),
-//                l5p->esn + l5p->offset_on_pdu,
-//                cur_len, last_segsz);
-//         rte_pktmbuf_free(cur_pkt);
-
-//         /* now cur_pkt is edge */
-//         cur_pkt = edge;
-//         cur_seq = rte_be_to_cpu_32(*get_tcp_seq(cur_pkt));
-//         assert(cur_seq == (l5p->esn + l5p->offset_on_pdu));
-//         cur_len = get_data_len(cur_pkt);
-//         assert(cur_len == last_segsz);
-//     }
-
-//     /* now cur_seq == l5p->esn + l5p->offset_on_pdu */
-
-//     if (l5p->esn == cur_seq)
-//     {
-//         pdu_hdr_len = get_nvme_tcp_hdr_len(cur_pkt);
-//         pdu_len = get_nvme_tcp_pdu_len(cur_pkt);
-//         if (!pdu_hdr_len || !pdu_len)
-//         {
-//             px_dump_l5p("stall3", l5p, cur_seq, cur_len, target_len);
-//             if (insert_stash(pctx,
-//                              cur_pkt,
-//                              rte_pktmbuf_lastseg(cur_pkt),
-//                              cur_item->timestamp) < 0)
-//             {
-//                 rte_exit(EXIT_FAILURE,
-//                          "insert_stash failed\n");
-//             }
-
-//             continue;
-//         }
-
-//         /* now we can update pdu len and pdu hdr len */
-//         l5p->hdr_len = pdu_hdr_len;
-//         l5p->pdu_len = pdu_len;
-//         // if ((rte_be_to_cpu_16(*(uint16_t *)get_payload(cur_pkt)) == 0x0704) ||
-//         //     (rte_be_to_cpu_16(*(uint16_t *)get_payload(cur_pkt)) == 0x0500))
-//         // {
-//         //     increase_doff = 1;
-//         // }
-//     }
-
-//     /* check if remaining pdu_len is larger than iMTU */
-//     target_len = l5p->pdu_len - l5p->offset_on_pdu;
-//     if (target_len > (PAGE_SIZE * 2 + l5p->hdr_len))
-//     {
-//         /* this packet is too large, so separate to multiple 8K PDUs */
-//         target_len = PAGE_SIZE * 2;
-//         if (l5p->offset_on_pdu == 0)
-//         {
-//             target_len += l5p->hdr_len;
-//         }
-//     }
-
-//     /* check if current packet should be stalled */
-//     if (cur_len < target_len)
-//     {
-//         /*
-//          * size of this packet is R < target_len
-//          * stall current packet (R) to merge more
-//          */
-//         // px_dump_l5p("stall2", l5p, cur_seq, cur_len, target_len);
-//         if (insert_stash(pctx,
-//                          cur_pkt,
-//                          rte_pktmbuf_lastseg(cur_pkt),
-//                          cur_item->timestamp) < 0)
-//         {
-//             rte_exit(EXIT_FAILURE,
-//                      "insert_stash failed\n");
-//         }
-
-//         continue;
-//     }
-
-//     return 0;
-// }
-/*----------------------------------------------------------------------------*/
-static inline void
-px_stall_insert_sorted(struct stalled_pkt_list *lst,
-                       struct stalled_pkt *item)
-{
-    struct stalled_pkt *it;
-
-    TAILQ_FOREACH(it, lst, link) {
-        if (SEQ_LT(item->seq, it->seq)) {
-            TAILQ_INSERT_BEFORE(it, item, link);
-            return;
-        }
-    }
-    TAILQ_INSERT_TAIL(lst, item, link);
-}
-/*----------------------------------------------------------------------------*/
-static inline void
-px_stall_merge_right(struct stalled_pkt *left,
-                     struct stalled_pkt *right)
-{
-    /* left covers [L, L+len), right covers [R, R+len) and L+len == R */
-    if (left->last)
-        left->last->next = right->first;
-
-    left->first->pkt_len += right->first->pkt_len;
-    left->first->nb_segs += right->first->nb_segs;
-
-    left->last = right->last;
-    left->len += right->len;
-}
-/*----------------------------------------------------------------------------*/
-static inline struct stalled_pkt *
-px_stall_coalesce_neighbors(uint16_t port_id,
-                            uint16_t queue_id,
-                            struct l5_flow *l5p,
-                            struct stalled_pkt *item)
-{
-    int merged;
-
-    do {
-        merged = 0;
-
-        /* 1) left neighbor와 연속이면 left로 흡수 */
-        struct stalled_pkt *prev = TAILQ_PREV(item, stalled_pkt_list, link);
-        if (prev) {
-            uint32_t prev_end = prev->seq + prev->len;
-            if (prev_end == item->seq) {
-                /* prev + item merge into prev */
-                px_stall_merge_right(prev, item);
-
-                TAILQ_REMOVE(&l5p->stalled_pkts, item, link);
-                px_l5_put_stall(port_id, queue_id, item);
-                item = prev;
-                merged = 1;
-            }
-        }
-
-        /* 2) right neighbor와 연속이면 item으로 흡수 */
-        struct stalled_pkt *next = TAILQ_NEXT(item, link);
-        if (next) {
-            uint32_t item_end = item->seq + item->len;
-            if (item_end == next->seq) {
-                px_stall_merge_right(item, next);
-
-                TAILQ_REMOVE(&l5p->stalled_pkts, next, link);
-                px_l5_put_stall(port_id, queue_id, next);
-                merged = 1;
-            }
-        }
-
-        /* 병합이 한번이라도 일어나면 다시 반복 (연쇄 병합) */
-
-    } while (merged);
-
-    return item;
-}
-/*----------------------------------------------------------------------------*/
-static inline struct stalled_pkt *
-px_l5_stall_insert_and_coalesce(uint16_t port_id,
-                                uint16_t queue_id,
-                                struct rte_mbuf *first,
-                                struct rte_mbuf *last,
-                                struct l5_flow *l5p)
-{
-    struct stalled_pkt *pkts = px_l5_get_stall(port_id, queue_id);
-    if (!pkts)
-        rte_exit(EXIT_FAILURE, "stall pool empty\n");
-
-    pkts->seq   = rte_be_to_cpu_32(*get_tcp_seq(first));
-    pkts->len   = px_mbuf_chain_payload_len(first, last);
-    pkts->first = first;
-    pkts->last  = last;
-
-    /* sorted insert */
-    px_stall_insert_sorted(&l5p->stalled_pkts, pkts);
-    l5p->stalled_bytes += pkts->len;
-
-    /* coalesce with neighbors (may change pkts pointer) */
-    pkts = px_stall_coalesce_neighbors(port_id, queue_id, l5p, pkts);
-
-    return pkts;
-}
-/*----------------------------------------------------------------------------*/
-static inline struct stalled_pkt *
-px_stall_find_by_seq(struct l5_flow *l5p, uint32_t target_seq)
-{
-    struct stalled_pkt *it;
-    TAILQ_FOREACH(it, &l5p->stalled_pkts, link) {
-        if (it->seq == target_seq)
-            return it;
-        if (SEQ_LT(target_seq, it->seq))
-            break;
-    }
-    return NULL;
+    px_dump_tuple(&peer->key);
+    printf("direct ACK: %10u, snd_una: %10u, snd_nxt: %10u\n",
+           SEQ_DIFF(l5p->rcv_nxt, l5p->isn),
+           SEQ_DIFF(l5p->snd_una, l5p->isn),
+           SEQ_DIFF(l5p->snd_nxt, l5p->isn));
 }
 /*----------------------------------------------------------------------------*/

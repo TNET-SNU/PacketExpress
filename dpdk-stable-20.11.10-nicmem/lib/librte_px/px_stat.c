@@ -563,7 +563,7 @@ void px_stat_monitor(uint16_t main_core_id)
     /* print total stat */
     fprintf(stdout, "SYN/SYNACK: %lu/%lu\n",
             tcp_total.syn_cnt, tcp_total.synack_cnt);
-    
+
     /* print port stat */
     struct rte_eth_stats port_stat;
     memset(&port_stat, 0, sizeof(port_stat));
@@ -571,14 +571,41 @@ void px_stat_monitor(uint16_t main_core_id)
     // if (port_stat.imissed || port_stat.oerrors)
     {
         printf("[ PORT %2d ] "
-                "RX: %5lu pkts, %5lu bytes; "
-                "TX: %5lu pkts, %5lu bytes; "
-                "RX dropped: %5lu pkts, TX dropped: %5lu pkts\n",
-                1,
-                port_stat.ipackets, port_stat.ibytes,
-                port_stat.opackets, port_stat.obytes,
-                port_stat.imissed, port_stat.oerrors);
+               "RX: %5lu pkts, %5lu bytes; "
+               "TX: %5lu pkts, %5lu bytes; "
+               "RX dropped: %5lu pkts, TX dropped: %5lu pkts\n",
+               1,
+               port_stat.ipackets, port_stat.ibytes,
+               port_stat.opackets, port_stat.obytes,
+               port_stat.imissed, port_stat.oerrors);
     }
+    int n = rte_eth_xstats_get_names(1, NULL, 0);
+    struct rte_eth_xstat_name *names =
+        calloc(n, sizeof(struct rte_eth_xstat_name));
+
+    rte_eth_xstats_get_names(1, names, n);
+
+    struct rte_eth_xstat *xstats =
+        calloc(n, sizeof(struct rte_eth_xstat));
+
+    rte_eth_xstats_get(1, xstats, n);
+
+    for (int i = 0; i < n; i++)
+    {
+        const char *name = names[i].name;
+        uint64_t val = xstats[i].value;
+
+        if (strstr(name, "drop") ||
+            strstr(name, "miss") ||
+            strstr(name, "err") ||
+            strstr(name, "nombuf") ||
+            strstr(name, "out_of_buffer") ||
+            strstr(name, "discard"))
+        {
+            printf("xstat: %-40s = %lu\n", name, val);
+        }
+    }
+
     fprintf(stdout,
             "[ TOTAL ] "
             "%4u Gbps "

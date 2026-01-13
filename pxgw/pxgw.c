@@ -80,6 +80,7 @@ const struct px_arp_entry g_arp_entries_normal[] = {
 
     {"10.1.95.2", "a0:88:c2:d6:9d:d2"}, // stream2
     {"10.2.95.2", "58:a2:e1:a7:a8:b6"}, // stream4
+    // {"10.2.95.2", "58:a2:e1:a7:7c:d6"}, // rapids1.eth1
     {"10.3.95.2", "58:a2:e1:a7:aa:7e"}, // stream6
     {"10.4.95.2", "58:a2:e1:a7:aa:86"}, // stream8
 

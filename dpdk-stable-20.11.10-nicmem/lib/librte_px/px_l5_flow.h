@@ -35,7 +35,7 @@ struct px_l5_ctx
     struct rte_mempool *pool;
 
     struct rte_mempool *pdu_pool;
-    struct rte_mempool *stall_pool;
+    struct rte_mempool *ooo_pool;
 };
 /*----------------------------------------------------------------------------*/
 struct nvme_tcp_common_pdu_hdr
@@ -63,61 +63,70 @@ struct px_pdu
     uint32_t len;          // length of this PDU (exclusive: [seq, seq + len))
     struct rte_mbuf *mbuf; // cloned PDU as a packet
 
+    /* parsed PDU info */
+    uint32_t pdu_len;
+    uint32_t pdu_hdr_len;
+    uint32_t offset_on_pdu;
+
     TAILQ_ENTRY(px_pdu)
     link;
 };
 /*----------------------------------------------------------------------------*/
 TAILQ_HEAD(px_pdu_list, px_pdu);
 /*----------------------------------------------------------------------------*/
-struct stalled_pkt
+struct px_ooo
 {
     /* below fields are all host-byte order */
     uint32_t seq; // start seq of this segment
     uint32_t len; // length of this segment (exclusive: [seq, seq + len))
-    struct rte_mbuf *first; // first segment
-    struct rte_mbuf *last;  // last segment
 
-    TAILQ_ENTRY(stalled_pkt)
+    /**
+     * since mbufs are in the stash,
+     * it is enough to manage sequence and len here
+     */
+
+    TAILQ_ENTRY(px_ooo)
     link;
 };
 /*----------------------------------------------------------------------------*/
-TAILQ_HEAD(stalled_pkt_list, stalled_pkt);
+TAILQ_HEAD(px_ooo_list, px_ooo);
 /*----------------------------------------------------------------------------*/
 struct l5_flow
 {
     /* below fields are all host-byte order */
     struct four_tuple key;
+
+    /* for TCP buffer */
     uint32_t isn; // initial sequence number
+    uint32_t snd_una; // the oldest unacked seq
+    uint32_t snd_nxt; // the next seq to send
+    uint32_t rcv_nxt; // the next seq to receive
 
-    uint32_t esn; // expected sequence number
-    uint32_t seq;
-    uint32_t ack;
-    uint16_t advwnd;
-    int stalled;
-    uint32_t recvd;
-    uint32_t pdu_len; // pdu total length
-    uint32_t hdr_len; // pdu header length
+    /* for current PDU */
+    uint32_t pdu_start_seq; // expected sequence number
     uint32_t offset_on_pdu;
+    uint32_t pdu_len;     // pdu total length
+    uint32_t pdu_hdr_len; // pdu header length
+
+    /* for unacknowledged PDUs */
+    struct px_pdu_list una_pdus; // sorted by seq increasing order
+    uint64_t una_bytes;
+
+    /* for out-of-order packets */
+    struct px_ooo_list ooo_pkts; // sorted by seq increasing order
+    uint64_t ooo_bytes;
     uint32_t last_rewritten_ack;
-    int ack_rewritten;
-    uint8_t last_hdr[MAX_NVME_TCP_HDR_LEN];
 
-    uint32_t snd_una; // the oldest unacked seq (similar to TCP SND.UNA)
-    uint32_t snd_nxt; // the next seq to send (if any, otherwise not used)
-
-    struct px_pdu_list unacked_pdus; // sorted by seq increasing order
-    uint64_t unacked_bytes;
-
-    struct stalled_pkt_list stalled_pkts; // sorted by seq increasing order
-    uint64_t stalled_bytes;
-
+    /* for direct ACK */
     struct rte_mbuf *last_ack;
+    uint16_t advwnd;
     uint32_t ts_enabled;
     uint32_t tsval;
     uint32_t tsecr;
+    uint32_t sack_enabled;
+    // add sack blocks here
 
-    uint32_t ooo_cnt;
-
+    /* linked peer flow */
     struct l5_flow *peer;
 };
 /*----------------------------------------------------------------------------*/
@@ -163,77 +172,95 @@ void px_l5_handle_ack(uint16_t port_id,
                       struct rte_mbuf *pkt,
                       struct l5_flow *l5p);
 /*----------------------------------------------------------------------------*/
+uint32_t px_l5_buffer_ooo(uint16_t port_id,
+                          uint16_t queue_id,
+                          struct rte_mbuf *pkt,
+                          struct l5_flow *l5p);
+/*----------------------------------------------------------------------------*/
+void px_l5_free_ooos(uint16_t port_id,
+                     uint16_t queue_id,
+                     struct l5_flow *l5p);
+/*----------------------------------------------------------------------------*/
+void px_l5_advance_rcvnxt(uint16_t port_id,
+                          uint16_t queue_id,
+                          struct rte_mbuf *pkt,
+                          struct l5_flow *l5p);
+/*----------------------------------------------------------------------------*/
+void px_l5_advance_sndnxt(uint16_t port_id,
+                          uint16_t queue_id,
+                          struct rte_mbuf *pkt,
+                          struct l5_flow *l5p);
+/*----------------------------------------------------------------------------*/
 void px_l5_direct_ack(uint16_t port_id,
                       uint16_t queue_id,
                       struct rte_mbuf *pkt,
-                      struct l5_flow *l5p,
-                      struct rte_mempool *pool);
+                      struct l5_flow *l5p);
 /*----------------------------------------------------------------------------*/
 void px_l5_rewrite_ack(uint16_t port_id,
                        uint16_t queue_id,
-                       struct rte_mbuf *pkt);
-/*----------------------------------------------------------------------------*/
-void px_l5_advance_pdu(uint16_t port_id,
-                       uint16_t queue_id,
                        struct rte_mbuf *pkt,
-                       struct l5_flow *l5p,
-                       struct rte_mempool *pool);
+                       struct l5_flow *l5p);
+/*----------------------------------------------------------------------------*/
+static inline void
+px_read_bytes_from_chain(struct rte_mbuf *pkt,
+                         uint32_t offset,
+                         uint8_t *out,
+                         uint32_t len)
+{
+    struct rte_mbuf *m = pkt;
+    uint32_t off = offset;
+    uint32_t copied = 0;
+
+    while (m && copied < len)
+    {
+        if (off >= m->data_len)
+        {
+            off -= m->data_len;
+            m = m->next;
+            continue;
+        }
+
+        uint32_t avail = m->data_len - off;
+        uint32_t take = (len - copied < avail) ? (len - copied) : avail;
+
+        const uint8_t *src = rte_pktmbuf_mtod_offset(m, const uint8_t *, off);
+        rte_memcpy(out + copied, src, take);
+
+        copied += take;
+        off = 0;
+        m = m->next;
+    }
+
+    if (copied != len)
+    {
+        rte_exit(EXIT_FAILURE,
+                 "px_read_bytes_from_chain: not enough data in mbuf chain\n");
+    }
+
+    return;
+}
 /*----------------------------------------------------------------------------*/
 static inline uint32_t
 get_nvme_tcp_pdu_len(struct rte_mbuf *pkt)
 {
-    uint8_t byte1, byte2, byte3, byte4;
     uint32_t hdr_len = get_hdr_len(pkt);
 
-    /* 4: offset of plen field */
-    if (pkt->pkt_len < hdr_len + 4 + sizeof(uint32_t))
+    /* 4: offset of plen field (NVMe/TCP common header plen) */
+    uint32_t off = hdr_len + 4;
+
+    if (pkt->pkt_len < off + 4)
     {
-        /* not enough data */
-        return 0;
+        return 0; /* not enough data in whole packet */
     }
 
-    if (pkt->data_len >= hdr_len + 4 + sizeof(uint32_t))
-    {
-        /* 0 bytes are in the next segment */
-        return *rte_pktmbuf_mtod_offset(pkt, uint32_t *, hdr_len + 4);
-    }
+    uint8_t b[4];
+    px_read_bytes_from_chain(pkt, off, b, 4);
 
-    assert(pkt->next);
-
-    if (pkt->data_len <= hdr_len + 4)
-    {
-        /* 4 bytes are in the next segment */
-        return *rte_pktmbuf_mtod_offset(pkt->next, uint32_t *,
-                                        hdr_len + 4 - pkt->data_len);
-    }
-
-    if (pkt->data_len == hdr_len + 5)
-    {
-        /* 3 bytes are in the next segment */
-        byte1 = *rte_pktmbuf_mtod_offset(pkt, uint8_t *, hdr_len + 4);
-        byte2 = *rte_pktmbuf_mtod_offset(pkt->next, uint8_t *, 0);
-        byte3 = *rte_pktmbuf_mtod_offset(pkt->next, uint8_t *, 1);
-        byte4 = *rte_pktmbuf_mtod_offset(pkt->next, uint8_t *, 2);
-    }
-    else if (pkt->data_len == hdr_len + 6)
-    {
-        /* 2 bytes are in the next segment */
-        byte1 = *rte_pktmbuf_mtod_offset(pkt, uint8_t *, hdr_len + 4);
-        byte2 = *rte_pktmbuf_mtod_offset(pkt, uint8_t *, hdr_len + 5);
-        byte3 = *rte_pktmbuf_mtod_offset(pkt->next, uint8_t *, 0);
-        byte4 = *rte_pktmbuf_mtod_offset(pkt->next, uint8_t *, 1);
-    }
-    else // if (pkt->data_len == hdr_len + 7)
-    {
-        /* 1 bytes are in the next segment */
-        byte1 = *rte_pktmbuf_mtod_offset(pkt, uint8_t *, hdr_len + 4);
-        byte2 = *rte_pktmbuf_mtod_offset(pkt, uint8_t *, hdr_len + 5);
-        byte3 = *rte_pktmbuf_mtod_offset(pkt, uint8_t *, hdr_len + 6);
-        byte4 = *rte_pktmbuf_mtod_offset(pkt->next, uint8_t *, 0);
-    }
-
-    /* pdu length is little-endian */
-    return (byte4 << 24) | (byte3 << 16) | (byte2 << 8) | (byte1);
+    /* plen is little-endian */
+    return ((uint32_t)b[0]) |
+           ((uint32_t)b[1] << 8) |
+           ((uint32_t)b[2] << 16) |
+           ((uint32_t)b[3] << 24);
 }
 /*----------------------------------------------------------------------------*/
 static inline uint8_t
@@ -242,23 +269,17 @@ get_nvme_tcp_hdr_len(struct rte_mbuf *pkt)
     uint32_t hdr_len = get_hdr_len(pkt);
 
     /* 2: offset of pdu_hlen field */
-    if (pkt->pkt_len < hdr_len + 2 + sizeof(uint8_t))
+    uint32_t off = hdr_len + 2;
+
+    if (pkt->pkt_len < off + 1)
     {
-        /* not enough data */
-        return 0;
+        return 0; /* not enough data in whole packet */
     }
 
-    if (pkt->data_len >= hdr_len + 2 + sizeof(uint8_t))
-    {
-        /* 0 byte is in the next segment */
-        return *rte_pktmbuf_mtod_offset(pkt, uint8_t *, hdr_len + 2);
-    }
+    uint8_t v = 0;
+    px_read_bytes_from_chain(pkt, off, &v, 1);
 
-    assert(pkt->next);
-
-    /* 1 byte is in the next segment */
-    return *rte_pktmbuf_mtod_offset(pkt->next, uint8_t *,
-                                    hdr_len + 2 - pkt->data_len);
+    return v;
 }
 /*----------------------------------------------------------------------------*/
 static inline void
@@ -271,49 +292,32 @@ px_dump_l5p(const char *name,
     px_dump_tuple(&l5p->key);
     fprintf(stdout,
             "[%s] "
-            // "esn: %10u "
-            // "(%10u), "
-            // "pdu_len: %7u, "
-            // "hdr_len: %3u, "
-            // "offset: %7u, "
-            "esn+offset: %10u "
-            // "(%10u), "
-            "seq: %10u "
-            // "(%10u), "
-            "seq+len: %10u "
-            // "(%10u), "
+            "pdu_len: %7u, "
+            "hdr_len: %3u, "
+            "snd_nxt: %10u "
+            "seq: [%10u ~ %10u), "
             "diff: %7d, "
-            "len: %10u, "
-            // "target_len : %4u, "
-            "peer->ack: %10u "
-            // "(%10u), "
+            "target_len : %4u, "
+            "snd_una: %10u "
+            "rcv_nxt: %10u, "
             // "rewritten_ack: %10u "
             // "(%10u), "
-            "recvd: %10u "
-            // "(%10u), "
-            "unacked_bytes: %lu\n",
+            "una_bytes: %lu, "
+            "ooo_bytes: %lu\n",
             name,
-            // SEQ_DIFF(l5p->esn, l5p->isn),
-            // l5p->esn,
-            // l5p->pdu_len,
-            // l5p->hdr_len,
-            // l5p->offset_on_pdu,
-            SEQ_DIFF(l5p->esn + l5p->offset_on_pdu, l5p->isn),
-            // l5p->esn + l5p->offset_on_pdu,
-            SEQ_DIFF(cur_seq, l5p->isn),
-            // cur_seq,
-            SEQ_DIFF(cur_seq + cur_len, l5p->isn),
-            // cur_seq + cur_len,
-            cur_seq - (l5p->esn + l5p->offset_on_pdu),
-            cur_len,
-            // target_len,
-            SEQ_DIFF(l5p->peer->ack, l5p->isn),
-            // l5p->peer->ack,
+            l5p->pdu_len,
+            l5p->pdu_hdr_len,
+            SEQ_DIFF(l5p->snd_nxt, l5p->isn),
+            SEQ_DIFF(cur_seq, l5p->isn), SEQ_DIFF(cur_seq + cur_len, l5p->isn),
+            SEQ_DIFF(cur_seq, l5p->snd_nxt),
+            target_len,
+            SEQ_DIFF(l5p->snd_una, l5p->isn),
+            SEQ_DIFF(l5p->rcv_nxt, l5p->isn),
             // SEQ_DIFF(l5p->peer->last_rewritten_ack, l5p->isn),
             // l5p->peer->last_rewritten_ack,
-            SEQ_DIFF(l5p->recvd, l5p->isn),
-            // l5p->recvd,
-            l5p->unacked_bytes);
+            l5p->una_bytes,
+            l5p->ooo_bytes);
+    fflush(stdout);
 }
 /*----------------------------------------------------------------------------*/
 #ifdef __cplusplus

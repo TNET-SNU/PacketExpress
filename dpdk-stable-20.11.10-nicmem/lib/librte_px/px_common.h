@@ -116,7 +116,7 @@ extern "C"
 // #define FIXED_TIMEOUT 180000 /* 180us */ /* 400Mbps */
 /*----------------------------------------------------------------------------*/
 #define TEST_RSS_ATOMICITY 0
-#define LOG_IAT_ENTRIES 1
+#define LOG_IAT_ENTRIES 0
 #define USE_JUMP_RULE 0
 /*----------------------------------------------------------------------------*/
 #define USE_USO 0
@@ -253,6 +253,12 @@ SEQ_GEQ(uint32_t a, uint32_t b)
     return (int32_t)(a - b) >= 0;
 }
 /*----------------------------------------------------------------------------*/
+static inline bool
+SEQ_EQ(uint32_t a, uint32_t b)
+{
+    return a == b;
+}
+/*----------------------------------------------------------------------------*/
 static inline uint32_t
 SEQ_DIFF(uint32_t a, uint32_t b)
 {
@@ -263,12 +269,7 @@ static inline int
 SEQ_RANGE_OVERLAP(uint32_t s1, uint32_t e1,
                   uint32_t s2, uint32_t e2)
 {
-    /* s1 < e2 && s2 < e1 */
-    if (SEQ_LT(s1, e2) && SEQ_LT(s2, e1))
-    {
-        return 1;
-    }
-    return 0;
+    return SEQ_LT(s1, e2) && SEQ_LT(s2, e1);
 }
 /*----------------------------------------------------------------------------*/
 static inline bool
@@ -299,6 +300,18 @@ static inline uint16_t
 ID_DIFF(uint16_t a, uint16_t b)
 {
     return (uint16_t)((int16_t)(a - b));
+}
+/*----------------------------------------------------------------------------*/
+static inline uint32_t
+px_u32_min(uint32_t a, uint32_t b)
+{
+    return a < b ? a : b;
+}
+/*----------------------------------------------------------------------------*/
+static inline uint32_t
+px_u32_max(uint32_t a, uint32_t b)
+{
+    return a > b ? a : b;
 }
 /*----------------------------------------------------------------------------*/
 struct four_tuple
@@ -444,57 +457,6 @@ px_hexdump(const char *title,
     fprintf(stdout, "\n");
 }
 /*----------------------------------------------------------------------------*/
-static inline int
-px_chained_trim(struct rte_mbuf *pkt, uint32_t len)
-{
-    uint32_t target_size = pkt->pkt_len - len;
-    struct rte_mbuf *edge = pkt;
-    uint32_t acc = 0;
-    uint32_t trim_size = 0;
-    uint16_t seg_idx;
-
-    if (!pkt || !len || len >= pkt->pkt_len)
-    {
-        /* invalid parameters */
-        return -1;
-    }
-
-    /* find edge segment (the last segment to keep) */
-    for (seg_idx = 0; seg_idx < pkt->nb_segs; seg_idx++)
-    {
-        acc += edge->data_len;
-        if (acc >= target_size)
-        {
-            /* bytes to trim from edge tail */
-            trim_size = acc - target_size;
-            break;
-        }
-        edge = edge->next;
-    }
-
-    if (seg_idx >= pkt->nb_segs || trim_size > edge->data_len)
-    {
-        /* should not happen */
-        return -1;
-    }
-
-    /* free from edge->next */
-    if (edge->next)
-    {
-        rte_pktmbuf_free(edge->next);
-        edge->next = NULL;
-    }
-
-    /* trim edge segment */
-    edge->data_len -= trim_size;
-
-    /* update head */
-    pkt->pkt_len = target_size;
-    pkt->nb_segs = seg_idx + 1;
-
-    return 0;
-}
-/*----------------------------------------------------------------------------*/
 static inline void
 busy_wait_for(unsigned int ns)
 {
@@ -523,6 +485,8 @@ get_firstseg_clone(struct rte_mbuf *pkt)
     next = pkt->next;
     nb_segs = pkt->nb_segs;
     pkt_len = pkt->pkt_len;
+
+    /* unchain next segments */
     pkt->next = NULL;
     pkt->nb_segs = 1;
     pkt->pkt_len = pkt->data_len;
@@ -748,7 +712,7 @@ get_tcp_ack(struct rte_mbuf *pkt)
                                        pkt->l3_len +
                                        sizeof(uint16_t) + // src port
                                        sizeof(uint16_t) + // dst port
-                                       sizeof(uint32_t));
+                                       sizeof(uint32_t)); // seq
 }
 /*----------------------------------------------------------------------------*/
 static inline uint8_t *
@@ -1459,24 +1423,6 @@ is_single_pkt(struct rte_mbuf *pkt)
 }
 /*----------------------------------------------------------------------------*/
 static inline int
-is_decaped(struct rte_mbuf *pkt)
-{
-    return (pkt->ol_flags & (IND_ATTACHED_MBUF << 1)) > 0ULL;
-}
-/*----------------------------------------------------------------------------*/
-static inline void
-mark_decaped(struct rte_mbuf *pkt)
-{
-    pkt->ol_flags |= (IND_ATTACHED_MBUF << 1);
-}
-/*----------------------------------------------------------------------------*/
-static inline void
-unmark_decaped(struct rte_mbuf *pkt)
-{
-    pkt->ol_flags &= ~(IND_ATTACHED_MBUF << 1);
-}
-/*----------------------------------------------------------------------------*/
-static inline int
 is_uso_needed(struct rte_mbuf *pkt)
 {
     struct px_caravan_hdr *pxh;
@@ -2106,18 +2052,39 @@ inc_update_tcp_cksum(struct rte_mbuf *m,
     tcp_hdr->cksum = rte_cpu_to_be_16(~(uint16_t)cksum);
 }
 /*----------------------------------------------------------------------------*/
-/* ToDo: reflect TCP flags to edge */
+static inline void
+px_assert_chain(struct rte_mbuf *m)
+{
+    uint32_t sum = 0;
+    uint16_t n = 0;
+    for (struct rte_mbuf *t = m; t; t = t->next)
+    {
+        sum += t->data_len;
+        n++;
+    }
+    assert(m->pkt_len == sum);
+    assert(m->nb_segs == n);
+}
+/*----------------------------------------------------------------------------*/
 static inline struct rte_mbuf *
 separate_edge_seg(struct rte_mbuf *pkt,
                   uint32_t last_segsz,
                   struct rte_mempool *pool)
 {
     struct rte_mbuf *edge = pkt, *edge_tail = NULL, *edge_head;
-    struct rte_mbuf *hdr = pkt, *prev = NULL, *next;
+    struct rte_mbuf *hdr = pkt, *next;
     uint32_t hdr_size = get_hdr_len(pkt);
     uint32_t target_size = pkt->pkt_len - last_segsz;
-    uint32_t seq_diff, trim_size = 0, pkt_size = 0;
+    uint32_t trim_size = 0, pkt_size = 0;
     uint16_t seg_idx;
+    int edge_tail_cloned = 0;
+
+    if (last_segsz == 0 || target_size <= hdr_size)
+    {
+        /* invalid parameters */
+        rte_exit(EXIT_FAILURE,
+                 "[line %d] px_separate_edge_seg: invalid parameters\n", __LINE__);
+    }
 
     /* find edge segment */
     for (seg_idx = 0; seg_idx < pkt->nb_segs; seg_idx++)
@@ -2128,7 +2095,6 @@ separate_edge_seg(struct rte_mbuf *pkt,
             trim_size = pkt_size - target_size;
             break;
         }
-        prev = edge;
         edge = edge->next;
     }
 
@@ -2137,7 +2103,6 @@ separate_edge_seg(struct rte_mbuf *pkt,
 
     next = edge->next;
     edge->next = NULL;
-
     if (!trim_size)
     {
         /* already separated */
@@ -2145,113 +2110,302 @@ separate_edge_seg(struct rte_mbuf *pkt,
     }
     else
     {
-        /* trim edge segment */
-        edge->data_len -= trim_size;
-
         /* make edge_tail segment */
         edge_tail = rte_pktmbuf_clone(edge, pool);
         if (!edge_tail)
         {
-            goto Error;
+            edge->next = next;
+            rte_exit(EXIT_FAILURE,
+                     "[line %d] px_separate_edge_seg: duplication failed\n", __LINE__);
         }
-        edge_tail->data_off += edge->data_len;
+        edge_tail->data_off += edge->data_len - trim_size;
         edge_tail->data_len = trim_size;
         edge_tail->next = next;
-        mark_decaped(edge_tail);
+        edge_tail_cloned = 1;
     }
 
     /* make edge_head segment */
-    if (edge->ol_flags & EXT_ATTACHED_MBUF)
+    edge_head = rte_pktmbuf_copy(hdr, pool, 0, hdr_size);
+    if (!edge_head)
     {
-        /* if edge segment is NICMEM */
-
-        /* destroy the chain to next mbuf first */
-        prev->next = NULL;
-        if (is_decaped(prev))
+        edge->next = next;
+        if (edge_tail_cloned)
         {
-            unmark_decaped(prev);
-            /* prev segment is decapsulated */
-            edge_head = rte_pktmbuf_clone(prev, pool);
-            if (!edge_head)
-            {
-                goto Error;
-            }
-            /* rollback headers */
-            edge_head->data_off -= hdr_size;
-            seq_diff = prev->data_len + edge->data_len;
+            edge_tail->next = NULL;
+            rte_pktmbuf_free(edge_tail);
         }
-        else
-        {
-            /* prev segment still has valid header */
-            edge_head = rte_pktmbuf_copy(prev, pool, 0, hdr_size);
-            if (!edge_head)
-            {
-                goto Error;
-            }
-            seq_diff = prev->data_len - hdr_size + edge->data_len;
-            put_sw_timestamp(edge_head, get_sw_timestamp(pkt));
-            copy_orig_four_tuple(edge_head, pkt);
-        }
-        /* restore the chain to next mbuf */
-        prev->next = edge;
+        rte_exit(EXIT_FAILURE,
+                 "[line %d] px_separate_edge_seg: duplication failed\n", __LINE__);
     }
-    else
-    {
-        /*
-         * edge header is valid when transmitted
-         * so, we cannot modify header fields without deep copy
-         */
-        edge_head = rte_pktmbuf_copy(hdr, pool, 0, hdr_size);
-        if (!edge_head)
-        {
-            goto Error;
-        }
-
-        /* get sequence difference */
-        seq_diff = target_size - hdr_size;
-        put_sw_timestamp(edge_head, get_sw_timestamp(pkt));
-        copy_orig_four_tuple(edge_head, pkt);
-    }
-
-    unmark_decaped(edge_head);
+    put_sw_timestamp(edge_head, get_sw_timestamp(pkt));
+    copy_orig_four_tuple(edge_head, pkt);
     edge_head->data_len = hdr_size;
     edge_head->next = edge_tail;
     edge_head->pkt_len = hdr_size + last_segsz;
-    if (!trim_size)
+    edge_head->nb_segs = pkt->nb_segs - seg_idx;
+    if (trim_size)
     {
-        edge_head->nb_segs = pkt->nb_segs - seg_idx;
-    }
-    else
-    {
-        edge_head->nb_segs = pkt->nb_segs - (seg_idx - 1);
+        edge_head->nb_segs += 1;
     }
 
     /* update header (e.g., TCP seq) */
-    update_tcpseq(edge_head, seq_diff);
+    update_tcpseq(edge_head, target_size - hdr_size);
     update_ipid(edge_head, rte_be_to_cpu_16(*get_ipv4_id(pkt)) + 1);
+
+    /* trim original edge segment */
+    edge->data_len -= trim_size;
 
     /* setup first segment */
     pkt->pkt_len = target_size;
     pkt->nb_segs = seg_idx + 1;
 
+    px_assert_chain(pkt);
+    px_assert_chain(edge_head);
+    assert(pkt->pkt_len + edge_head->pkt_len ==
+           target_size + (hdr_size + last_segsz));
+
     return edge_head;
-
-Error:
-    fprintf(stderr, "duplication failed\n");
-    edge->data_len += trim_size;
-    edge->next = next;
-    if (prev)
-    {
-        prev->next = edge;
-    }
-    if (edge_tail)
-    {
-        edge_tail->next = NULL;
-        rte_pktmbuf_free(edge_tail);
-    }
-
-    return NULL;
 }
+/*----------------------------------------------------------------------------*/
+/**
+ * Build a new chained mbuf that represents payload slice:
+ * payload offset `poff` bytes from payload start, length `plen`.
+ * Return head of cloned payload chain (no L2/L3/L4 header).
+ */
+static inline struct rte_mbuf *
+px_clone_payload_slice_zc(struct rte_mbuf *pkt,
+                          uint32_t hdr_len,
+                          uint32_t poff,
+                          uint32_t plen,
+                          struct rte_mempool *pool)
+{
+    uint32_t skip = hdr_len + poff; /* bytes from pkt start */
+    uint32_t need = plen;
+
+    struct rte_mbuf *m = pkt;
+    struct rte_mbuf *out_head = NULL, *out_tail = NULL;
+
+    /* walk to the segment that contains 'skip' */
+    while (m && skip >= m->data_len)
+    {
+        skip -= m->data_len;
+        m = m->next;
+    }
+    if (!m)
+    {
+        return NULL;
+    }
+
+    while (m && need > 0)
+    {
+        uint32_t take = m->data_len - skip;
+        if (take > need)
+        {
+            take = need;
+        }
+
+        struct rte_mbuf *c = rte_pktmbuf_clone(m, pool);
+        if (!c)
+        {
+            if (out_head) 
+            {
+                rte_pktmbuf_free(out_head);
+            }
+            return NULL;
+        }
+
+        /* adjust clone to [skip, skip+take) within this segment */
+        c->data_off += skip;
+        c->data_len  = take;
+        c->pkt_len   = take;
+        c->nb_segs   = 1;
+        c->next      = NULL;
+
+        if (!out_head)
+        {
+            out_head = c;
+        }
+        else
+        {
+            out_tail->next = c;
+        }
+        out_tail = c;
+
+        need -= take;
+        skip = 0;
+        m = m->next;
+    }
+
+    if (need != 0)
+    {
+        if (out_head)
+        {
+            rte_pktmbuf_free(out_head);
+        }
+        return NULL;
+    }
+
+    /* Fix pkt_len/nb_segs for payload chain head */
+    uint32_t tot = 0;
+    uint16_t nsegs = 0;
+    for (struct rte_mbuf *t = out_head; t; t = t->next)
+    {
+        tot += t->data_len;
+        nsegs++;
+    }
+    out_head->pkt_len = tot;
+    out_head->nb_segs = nsegs;
+
+    return out_head;
+}
+/*----------------------------------------------------------------------------*/
+static inline int
+px_chained_trim(struct rte_mbuf *pkt, uint32_t len)
+{
+    uint32_t target_size = pkt->pkt_len - len;
+    struct rte_mbuf *edge = pkt;
+    uint32_t acc = 0;
+    uint32_t trim_size = 0;
+    uint16_t seg_idx;
+
+    if (!pkt || !len || len >= pkt->pkt_len)
+    {
+        /* invalid parameters */
+        rte_exit(EXIT_FAILURE,
+                 "[line %d] px_chained_trim: invalid parameters\n", __LINE__);
+    }
+
+    /* find edge segment (the last segment to keep) */
+    for (seg_idx = 0; seg_idx < pkt->nb_segs; seg_idx++)
+    {
+        acc += edge->data_len;
+        if (acc >= target_size)
+        {
+            /* bytes to trim from edge tail */
+            trim_size = acc - target_size;
+            break;
+        }
+        edge = edge->next;
+    }
+
+    if (seg_idx >= pkt->nb_segs || trim_size > edge->data_len)
+    {
+        /* should not happen */
+        rte_exit(EXIT_FAILURE,
+                 "[line %d] px_chained_trim: internal error\n", __LINE__);
+    }
+
+    /* free from edge->next */
+    if (edge->next)
+    {
+        rte_pktmbuf_free(edge->next);
+        edge->next = NULL;
+    }
+
+    /* trim edge segment */
+    edge->data_len -= trim_size;
+
+    /* update head */
+    pkt->pkt_len = target_size;
+    pkt->nb_segs = seg_idx + 1;
+
+    return 0;
+}
+/*----------------------------------------------------------------------------*/
+// static inline struct rte_mbuf *
+// px_chained_adj(struct rte_mbuf *pkt,
+//                uint32_t adj_segsz,
+//                struct rte_mempool *pool)
+// {
+//     struct rte_mbuf *edge = pkt, *edge_tail = NULL, *edge_head;
+//     struct rte_mbuf *hdr = pkt, *next;
+//     uint32_t hdr_size = get_hdr_len(pkt);
+//     uint32_t target_size = adj_segsz + hdr_size;
+//     uint32_t first_trim_size = 0, edge_adj_size = 0, pkt_size = 0;
+//     uint16_t seg_idx;
+//     int edge_tail_cloned = 0;
+
+//     /* find edge segment */
+//     for (seg_idx = 0; seg_idx < pkt->nb_segs; seg_idx++)
+//     {
+//         pkt_size += edge->data_len;
+//         if (pkt_size >= target_size)
+//         {
+//             edge_adj_size = edge->data_len - (pkt_size - target_size);
+//             break;
+//         }
+//         edge = edge->next;
+//     }
+
+//     assert(seg_idx < pkt->nb_segs);
+//     assert(edge_adj_size <= adj_segsz);
+
+//     next = edge->next;
+//     edge->next = NULL;
+//     if (edge_adj_size == edge->data_len)
+//     {
+//         /* already separated */
+//         if (seg_idx)
+//         {
+//             rte_pktmbuf_free(hdr->next);
+//         }
+//         hdr->data_len = hdr_size;
+//         hdr->next = next;
+//         hdr->pkt_len -= adj_segsz;
+//         hdr->nb_segs = pkt->nb_segs - seg_idx + 1;
+//         update_tcpseq(hdr, adj_segsz);
+
+//         return hdr;
+//     }
+
+//     /* make edge_tail segment */
+//     edge->data_off += edge_adj_size;
+//     edge->data_len = edge->data_len - edge_adj_size;
+//     if (seg_idx)
+//     {
+//         rte_pktmbuf_free(hdr->next);
+//     }
+//     hdr->next = edge;
+
+
+
+//     /* make edge_head segment */
+//     edge_head = rte_pktmbuf_copy(hdr, pool, 0, hdr_size);
+//     if (!edge_head)
+//     {
+//         edge->next = next;
+//         if (edge_tail_cloned)
+//         {
+//             edge_tail->next = NULL;
+//             rte_pktmbuf_free(edge_tail);
+//         }
+//         rte_exit(EXIT_FAILURE,
+//                  "px_separate_edge_seg: duplication failed\n");
+//     }
+//     put_sw_timestamp(edge_head, get_sw_timestamp(pkt));
+//     copy_orig_four_tuple(edge_head, pkt);
+//     edge_head->data_len = hdr_size;
+//     edge_head->next = edge_tail;
+//     edge_head->pkt_len = hdr_size + last_segsz;
+//     edge_head->nb_segs = pkt->nb_segs - seg_idx;
+//     if (trim_size)
+//     {
+//         edge_head->nb_segs += 1;
+//     }
+
+//     /* update header (e.g., TCP seq) */
+//     update_tcpseq(edge_head, target_size - hdr_size);
+//     update_ipid(edge_head, rte_be_to_cpu_16(*get_ipv4_id(pkt)) + 1);
+
+//     /* setup first segment */
+//     pkt->pkt_len = target_size;
+//     pkt->nb_segs = seg_idx + 1;
+
+//     /* trim original edge segment */
+//     edge->data_len -= trim_size;
+
+//     return edge_head;
+// }
 /*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 }
