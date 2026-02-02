@@ -177,7 +177,7 @@ px_unlink_and_uso0(struct rte_mbuf **pkts,
                 /* update header */
                 pkt->data_len = get_hdr_len(pkt);
                 iplen = get_ipv4_len(pkt);
-                unmark_px(pkt);
+                unmark_px_caravan(pkt);
                 *iplen = rte_cpu_to_be_16(pkt->l3_len + pkt->l4_len + seglen);
                 udplen = get_udp_len(pkt);
                 *udplen = rte_cpu_to_be_16(pkt->l4_len + seglen);
@@ -409,7 +409,7 @@ px_unlink_and_uso(struct rte_mbuf **pkts,
                 /* update header */
                 pkt->data_len = get_hdr_len(pkt);
                 iplen = get_ipv4_len(pkt);
-                unmark_px(pkt);
+                unmark_px_caravan(pkt);
                 *iplen = rte_cpu_to_be_16(pkt->l3_len + pkt->l4_len + seglen);
                 udplen = get_udp_len(pkt);
                 *udplen = rte_cpu_to_be_16(pkt->l4_len + seglen);

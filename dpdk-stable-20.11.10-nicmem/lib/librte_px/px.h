@@ -62,6 +62,7 @@ struct px_item
 
     /* for stash timeout */
     uint64_t timestamp;
+    uint32_t stash_cnt;
 
     int sent_ack;
 };
@@ -127,9 +128,6 @@ struct px_ctx
 
     /* per-latent-queue stash arrays */
     struct px_stash *stash_array;
-
-    /* for timing measurement */
-    uint64_t queue_time;
 
     /* for stash timeout */
     uint64_t now_ns;
@@ -220,7 +218,7 @@ px_uso_burst0(struct rte_mbuf **pkts,
         /* update header */
         pkt->data_len = get_hdr_len(pkt);
         iplen = get_ipv4_len(pkt);
-        unmark_px(pkt);
+        unmark_px_caravan(pkt);
         *iplen = rte_cpu_to_be_16(pkt->l3_len + pkt->l4_len + seglen);
         udplen = get_udp_len(pkt);
         *udplen = rte_cpu_to_be_16(pkt->l4_len + seglen);
@@ -380,7 +378,7 @@ px_uso_burst(struct rte_mbuf **pkts,
         /* update header */
         pkt->data_len = get_hdr_len(pkt);
         iplen = get_ipv4_len(pkt);
-        unmark_px(pkt);
+        unmark_px_caravan(pkt);
         *iplen = rte_cpu_to_be_16(pkt->l3_len + pkt->l4_len + seglen);
         udplen = get_udp_len(pkt);
         *udplen = rte_cpu_to_be_16(pkt->l4_len + seglen);
@@ -569,12 +567,6 @@ void px_pktmbuf_free_bulk(struct rte_mbuf **pkts,
                           uint16_t nb_pkts);
 /*----------------------------------------------------------------------------*/
 /* below are for testing baselines (e.g., DPDK GRO) */
-int px_parse_packet(struct px_ctx *pctx,
-                    struct rte_mbuf *pkt,
-                    uint8_t *tcp_flags,
-                    int hwcsum);
-/*----------------------------------------------------------------------------*/
-/* below are for testing baselines (e.g., DPDK GRO) */
 void px_parse_batch(uint16_t port_id,
                     uint16_t queue_id,
                     struct rte_mbuf **pkts,
@@ -583,6 +575,7 @@ void px_parse_batch(uint16_t port_id,
                     int hwcsum,
                     int is_semantic_test);
 /*----------------------------------------------------------------------------*/
+/* below are for testing baselines (e.g., DPDK GRO) */
 void px_setup_tso_burst(uint16_t port_id,
                         uint16_t queue_id,
                         struct rte_mbuf **pkts,

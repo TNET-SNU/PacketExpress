@@ -344,7 +344,7 @@ px_l5_put_pdu(uint16_t port_id,
  * All fields are host-byte order.
  */
 static inline void
-px_pdu_dump(struct l5_flow *l5p)
+px_dump_pdu(struct l5_flow *l5p)
 {
     if (!l5p)
     {
@@ -385,26 +385,71 @@ px_l5_buffer_pdu(uint16_t port_id,
     // printf("px_l5_buffer_pdu\n");
     struct rte_mbuf *clone;
     struct px_pdu *pdu;
+    uint32_t hdr_len = get_hdr_len(pkt);
 
     clone = rte_pktmbuf_clone(pkt, pool);
     if (!clone)
     {
         rte_exit(EXIT_FAILURE, "clone pkt failed\n");
     }
-    pdu = px_l5_get_pdu(port_id, queue_id);
-    if (!pdu)
+
+    /* decap header */
+    if (clone->data_len > hdr_len)
     {
+        rte_pktmbuf_adj(clone, hdr_len);
+    }
+    else
+    {
+        uint32_t first_seg_len = clone->data_len;
+        struct rte_mbuf *next = clone->next;
+        clone->next = NULL;
+        next->nb_segs = clone->nb_segs - 1;
+        next->pkt_len = clone->pkt_len - first_seg_len;
         rte_pktmbuf_free(clone);
-        rte_exit(EXIT_FAILURE, "get pdu meta failed\n");
+        clone = next;
+        rte_pktmbuf_adj(clone, hdr_len - first_seg_len);
+    }
+    clone->l2_len = clone->l3_len = clone->l4_len = 0;
+
+    pdu = TAILQ_LAST(&l5p->una_pdus, px_pdu_list);
+    if (!pdu || (pdu->len == pdu->pdu_len))
+    {
+        /*first sub-PDU of this PDU */
+        pdu = px_l5_get_pdu(port_id, queue_id);
+        if (!pdu)
+        {
+            rte_pktmbuf_free(clone);
+            rte_exit(EXIT_FAILURE, "get pdu meta failed\n");
+        }
+
+        /* fill pdu */
+        pdu->seq = rte_be_to_cpu_32(*get_tcp_seq(pkt));
+        pdu->len = get_data_len(pkt);
+        pdu->first = clone;
+        pdu->last = rte_pktmbuf_lastseg(clone);
+        pdu->pdu_len = l5p->pdu_len;
+        pdu->pdu_hdr_len = l5p->pdu_hdr_len;
+        TAILQ_INSERT_TAIL(&l5p->una_pdus, pdu, link);
+        l5p->una_bytes += pdu->len;
+
+        // px_dump_pdu(l5p);
+
+        return;
     }
 
-    pdu->seq = rte_be_to_cpu_32(*get_tcp_seq(pkt));
-    pdu->len = get_data_len(pkt);
-    pdu->mbuf = clone;
-    TAILQ_INSERT_TAIL(&l5p->una_pdus, pdu, link);
-    l5p->una_bytes += pdu->len;
+    assert((pdu->seq + pdu->len) == rte_be_to_cpu_32(*get_tcp_seq(pkt)));
 
-    // px_pdu_dump(l5p);
+    /* append to the last PDU */
+    pdu->len += get_data_len(clone);
+    pdu->last->next = clone;
+    pdu->last = rte_pktmbuf_lastseg(clone);
+    pdu->first->pkt_len += get_data_len(clone);
+    pdu->first->nb_segs += clone->nb_segs;
+    l5p->una_bytes += get_data_len(clone);
+
+    // px_dump_pdu(l5p);
+
+    return;
 }
 /*----------------------------------------------------------------------------*/
 static void
@@ -422,7 +467,7 @@ px_l5_free_pdus(uint16_t port_id,
             TAILQ_REMOVE(&l5p->una_pdus, pdu, link);
             l5p->una_bytes -= pdu->len;
 
-            rte_pktmbuf_free(pdu->mbuf);
+            rte_pktmbuf_free(pdu->first);
             px_l5_put_pdu(port_id, queue_id, pdu);
         }
         else
@@ -721,17 +766,20 @@ void px_l5_free_ooos(uint16_t port_id,
     }
 }
 /*----------------------------------------------------------------------------*/
-void px_l5_rtx(uint16_t port_id,
-               uint16_t queue_id,
-               struct l5_flow *l5p,
-               uint32_t seq,
-               uint32_t len)
+int px_l5_rtx(struct l5_flow *l5p,
+              uint32_t seq,
+              uint32_t len,
+              struct rte_mbuf **tx_pkts,
+              uint16_t tx_max)
 {
     struct px_pdu *pdu;
     uint16_t *advwnd;
     uint32_t *ack;
     struct tcp_timestamp *timestamp;
     int found = 0; // go-back-N style retransmission
+    int tx_cnt = 0;
+
+    /* ToDo: select sub-PDU [off, off + len) among the total PDU */
 
     TAILQ_FOREACH(pdu, &l5p->una_pdus, link)
     {
@@ -742,12 +790,70 @@ void px_l5_rtx(uint16_t port_id,
         }
         found = 1;
 
+        uint32_t a = pdu->seq;
+        uint32_t b = pdu->seq + pdu->pdu_hdr_len;
+        uint32_t c = pdu->seq + pdu->len;
+        uint32_t start = 0;
+        uint32_t end = 0;
+
+        uint32_t d = seq;
+        uint32_t e = seq + len;
+
+        const uint32_t SUB = 2 * PAGE_SIZE;
+
+        /**
+         *  Phdr              8K sub-PDUs
+         * |----|------------|------------|------------|
+         * a    b                                      c
+         *
+         *                 RTX
+         *         |-----------------|
+         *         d                 e
+         */
+        if (pdu->pdu_len > (SUB + pdu->pdu_hdr_len))
+        {
+            /* determine start */
+            if (SEQ_LT(d, b + SUB))
+            {
+                start = a;
+            }
+            else
+            {
+                start = b + FLOOR_DIV(d - b, SUB) * SUB;
+            }
+            /* determine end */
+            if (SEQ_LT(e, b + SUB))
+            {
+                end = b + SUB;
+            }
+            else
+            {
+                end = MIN(b + CEIL_DIV(e - b, SUB) * SUB, c);
+            }
+        }
+        /**
+         *  Phdr     PDU
+         * |----|------------|
+         * a    b            c
+         *
+         *                 RTX
+         *         |-----------------|
+         *         d                 e
+         */
+        else
+        {
+            start = a;
+            end = c;
+        }
+
         /*
          * This PDU overlaps with the retransmission segment range,
          * resend to receiver
          */
-        struct rte_mbuf *tx_m = rte_pktmbuf_clone(pdu->mbuf,
-                                                  pdu->mbuf->pool);
+        struct rte_mbuf *tx_m = px_clone_slice(pdu->first,
+                                               start - a,
+                                               end - start,
+                                               pdu->first->pool);
         if (unlikely(tx_m == NULL))
         {
             printf("px_l5_rtx: Failed to clone mbuf for retransmit\n");
@@ -772,15 +878,14 @@ void px_l5_rtx(uint16_t port_id,
         *ack = rte_cpu_to_be_32(l5p->peer->rcv_nxt);
 
         /* send */
-        uint16_t sent = rte_eth_tx_burst(port_id, queue_id, &tx_m, 1);
-        if (unlikely(sent == 0))
+        tx_pkts[tx_cnt++] = tx_m;
+        if (tx_cnt >= tx_max)
         {
-            printf("px_l5_rtx: TX failed on retransmit\n");
-            rte_pktmbuf_free(tx_m);
-            rte_exit(EXIT_FAILURE,
-                     "[line %d] TX failed on retransmit\n", __LINE__);
+            break;
         }
     }
+
+    return tx_cnt;
 }
 /*----------------------------------------------------------------------------*/
 void px_l5_handle_syn(uint16_t port_id,
@@ -790,7 +895,6 @@ void px_l5_handle_syn(uint16_t port_id,
 {
     struct l5_flow *l5p, *peer;
     struct rte_mbuf *last_ack;
-    struct rte_ether_addr *dst_mac, *src_mac, *new_dst_mac;
     uint8_t *flags, *doff;
     struct tcp_timestamp *timestamp;
     uint32_t cur_seq;
@@ -827,6 +931,7 @@ void px_l5_handle_syn(uint16_t port_id,
     {
         l5p->ts_enabled = 0;
     }
+    l5p->sack_enabled = is_sack_permitted(pkt);
 
     /* find the peer flow */
     reverse_key = (struct four_tuple){
@@ -851,13 +956,6 @@ void px_l5_handle_syn(uint16_t port_id,
         l5p->peer->snd_una = cur_ack;
     }
 
-    /* check ARP table first */
-    new_dst_mac = px_arp_search(*get_dst_ip(pkt));
-    if (!new_dst_mac)
-    {
-        rte_exit(EXIT_FAILURE, "[line %d] ARP lookup failed\n", __LINE__);
-    }
-
     /* prepare a single pure ACK packet for each flow */
     last_ack = rte_pktmbuf_copy((const struct rte_mbuf *)pkt, pool,
                                 0, get_hdr_len(pkt) - get_tcp_optlen(pkt));
@@ -866,11 +964,9 @@ void px_l5_handle_syn(uint16_t port_id,
         rte_exit(EXIT_FAILURE, "[line %d] Failed to copy mbuf for ACK TX\n", __LINE__);
     }
 
-    /* modify MAC addresses */
-    dst_mac = get_macs(last_ack);
-    src_mac = dst_mac + 1;
-    rte_ether_addr_copy(dst_mac, src_mac);
-    rte_ether_addr_copy(new_dst_mac, dst_mac);
+    /* reset headroom data */
+    reset_sw_timestamp(last_ack);
+    reset_orig_four_tuple(last_ack);
 
     /* modify TCP doff and flags to pure ACK */
     doff = get_tcp_doff(last_ack);
@@ -1024,13 +1120,13 @@ void px_l5_advance_sndnxt(uint16_t port_id,
         /* got a complete and new PDU, move to new PDU */
         l5p->pdu_start_seq += l5p->pdu_len;
         l5p->offset_on_pdu = 0;
+
+        /* buffer PDU to unacked PDU list */
+        px_l5_buffer_pdu(port_id, queue_id, pkt, l5p, pkt->pool);
     }
 
     /* advance snd_nxt */
     l5p->snd_nxt += get_data_len(pkt);
-
-    /* buffer PDU to unacked PDU list */
-    px_l5_buffer_pdu(port_id, queue_id, pkt, l5p, pkt->pool);
 }
 /*----------------------------------------------------------------------------*/
 void px_l5_rewrite_ack(uint16_t port_id,

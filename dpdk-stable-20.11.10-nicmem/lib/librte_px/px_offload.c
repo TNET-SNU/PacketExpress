@@ -60,7 +60,7 @@ int px_flow_create(uint16_t core_id,
             else
             {
                 /* this rule should to be updated */
-                clone = get_firstseg_clone(node.pkt);
+                clone = get_firstseg_clone(node.pkt, NULL);
                 if (!clone)
                 {
                     fprintf(stdout, "get_firstseg_clone failed!\n");
@@ -92,7 +92,7 @@ int px_flow_create(uint16_t core_id,
 
         /* copy key */
         new->key = node.key;
-        clone = get_firstseg_clone(node.pkt);
+        clone = get_firstseg_clone(node.pkt, NULL);
         if (!clone)
         {
             fprintf(stdout, "get_firstseg_clone failed!\n");

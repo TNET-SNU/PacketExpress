@@ -4,7 +4,6 @@
 struct px_dev g_px_dev[RTE_MAX_ETHPORTS] = {0};
 static struct px_ctx g_pctx[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
 static struct rte_mempool *g_clone_pool[RTE_MAX_NUMA_NODES] = {NULL};
-uint64_t g_bubble_tsc[RTE_MAX_LCORE] = {0};
 #if LOG_RX_HW_TIMESTAMP
 char g_log_buffer[RTE_MAX_LCORE][LOG_BUFFER_SIZE] = {0};
 size_t g_log_offset[RTE_MAX_LCORE] = {0};
@@ -160,13 +159,9 @@ compare_seq(struct rte_mbuf *pkt1,
             return 3; // free latter
         }
 
-        if (px_chained_trim(pkt1, SEQ_DIFF(end1, seq2)) < 0)
-        {
-            printf("2 cannot trim, treat as not related\n");
-            return 2; // cannot trim, treat as not related
-        }
+        px_chained_trim(pkt1, SEQ_DIFF(end1, seq2));
 
-        printf("[line %d] trimmed: pkt1 end %u, pkt2 start %u\n", __LINE__, end1, seq2);
+        // printf("[line %d] trimmed: pkt1 end %u, pkt2 start %u\n", __LINE__, end1, seq2);
 
         return 4;
     }
@@ -176,13 +171,9 @@ compare_seq(struct rte_mbuf *pkt1,
         return -3; // free former
     }
 
-    if (px_chained_trim(pkt2, SEQ_DIFF(end2, seq1)) < 0)
-    {
-        printf("-2 cannot trim, treat as not related\n");
-        return -2; // cannot trim, treat as not related
-    }
+    px_chained_trim(pkt2, SEQ_DIFF(end2, seq1));
 
-    printf("[line %d] trimmed: pkt2 end %u, pkt1 start %u\n", __LINE__, end2, seq1);
+    // printf("[line %d] trimmed: pkt2 end %u, pkt1 start %u\n", __LINE__, end2, seq1);
 
     return -4;
 }
@@ -309,34 +300,28 @@ merge_tcp(struct px_item *cur_item,
     RTE_SET_USED(sgdma);
     RTE_SET_USED(bytes_max);
 #else
-    /* check if nb_segs is smaller than is nb_seg_max supported by the device */
+    /* check if nb_segs exceeds nb_seg_max supported by the device */
     if (unlikely(pkt_head->nb_segs + pkt_tail->nb_segs > nb_seg_max))
+    {
+        return 0;
+    }
+    /**
+     * our device rejects packets larger than 1MB
+     *
+     * ToDo: how to know the hardware limit?
+     * For now, we just manually measured by several experiments
+     */
+    if (unlikely(pkt_head->pkt_len + get_data_len(pkt_tail) > bytes_max))
     {
         return 0;
     }
 
     /* check if the length of merged IPv4 packet is greater than 65535 */
-    if (!sgdma)
+    if (!sgdma &&
+        (pkt_head->pkt_len + get_data_len(pkt_tail) >
+         UINT16_MAX + sizeof(struct rte_ether_hdr)))
     {
-        if (unlikely(pkt_head->pkt_len + get_data_len(pkt_tail) >
-                     UINT16_MAX + sizeof(struct rte_ether_hdr)))
-        {
-            return 0;
-        }
-    }
-    else
-    {
-        /**
-         * if SG DMA is on, we do not need it when no application above cares about it
-         * however, our device rejects packets larger than 1MB
-         *
-         * ToDo: how to know the hardware limit?
-         * For now, we just assume 1MB
-         */
-        if (unlikely(pkt_head->pkt_len + get_data_len(pkt_tail) > bytes_max))
-        {
-            return 0;
-        }
+        return 0;
     }
 #endif
 
@@ -376,6 +361,7 @@ merge_tcp(struct px_item *cur_item,
         *head_ack = *tail_ack;
         *head_advwnd = *tail_advwnd;
     }
+
     /* merge TCP timestamp */
     struct tcp_timestamp *tail_timestamp = get_tcp_timestamp(pkt_tail);
     if (tail_timestamp)
@@ -528,14 +514,14 @@ merge_tcp(struct px_item *cur_item,
     if (cmp == 3)
     {
         /* free latter */
-        printf("merge_tcp: free latter pkt\n");
+        // printf("merge_tcp: free latter pkt\n");
         rte_pktmbuf_free(firstseg);
         goto Merged;
     }
     if (cmp == -3)
     {
         /* free former and replace to latter */
-        printf("merge_tcp: free former pkt\n");
+        // printf("merge_tcp: free former pkt\n");
         rte_pktmbuf_free(cur_item->firstseg);
         cur_item->firstseg = firstseg;
         cur_item->lastseg = lastseg;
@@ -560,8 +546,8 @@ merge_tcp(struct px_item *cur_item,
         pkt_tail->next = NULL;
         rte_pktmbuf_free(pkt_tail);
         pkt_tail = next;
-        printf("pkt_tail data_len %u == hdr_len %u\n",
-               pkt_tail->data_len, get_hdr_len(pkt_tail));
+        // printf("pkt_tail data_len %u == hdr_len %u\n",
+        //        pkt_tail->data_len, get_hdr_len(pkt_tail));
     }
     else
     {
@@ -604,8 +590,84 @@ merge_udp(struct px_item *cur_item,
           uint16_t nb_seg_max,
           uint32_t bytes_max,
           uint64_t timestamp,
-          int cmp,
           int sgdma)
+{
+    struct rte_mbuf *pkt_head, *pkt_tail;
+
+    pkt_head = cur_item->firstseg;
+    pkt_tail = firstseg;
+
+    /* check if the IPv4 packet length is greater than imtu_size */
+    if (pkt_head->pkt_len + get_l3_sdu_len(pkt_tail) >
+        imtu_size + sizeof(struct rte_ether_hdr))
+    {
+        return 0;
+    }
+
+    /* check if nb_segs exceeds nb_seg_max supported by the device */
+    if (unlikely(pkt_head->nb_segs + pkt_tail->nb_segs > nb_seg_max))
+    {
+        return 0;
+    }
+    /**
+     * our device rejects packets larger than 1MB
+     *
+     * ToDo: how to know the hardware limit?
+     * For now, we just manually measured by several experiments
+     */
+    if (unlikely(pkt_head->pkt_len + get_l3_sdu_len(pkt_tail) > bytes_max))
+    {
+        return 0;
+    }
+
+    /* check if the length of merged IPv4 packet is greater than 65535 */
+    if (!sgdma &&
+        (pkt_head->pkt_len + get_l3_sdu_len(pkt_tail) >
+         UINT16_MAX + sizeof(struct rte_ether_hdr)))
+    {
+        return 0;
+    }
+
+    // /* check if pktlen is same */
+    // if (*get_udp_len(pkt_head) != *get_udp_len(pkt_tail))
+    // {
+    //     return 0;
+    // }
+
+    /* Concatenation removes the ETH|IP hdr of tail packet */
+    if (!rte_pktmbuf_adj(pkt_tail, pkt_tail->l2_len + pkt_tail->l3_len))
+    {
+        fprintf(stdout, "rte_pktmbuf_adj failed\n");
+        return 0;
+    }
+
+    /* chain two packets together */
+    cur_item->lastseg->next = pkt_tail;
+    cur_item->lastseg = lastseg;
+
+    /* update number of segments for the merged packet */
+    pkt_head->nb_segs += pkt_tail->nb_segs;
+    pkt_head->pkt_len += pkt_tail->pkt_len;
+
+    /* update timestamp of merged item */
+    if (cur_item->timestamp > timestamp)
+    {
+        cur_item->timestamp = timestamp;
+    }
+
+    return 1;
+}
+/*----------------------------------------------------------------------------*/
+static inline int
+merge_udp_ipid(struct px_item *cur_item,
+               struct rte_mbuf *firstseg,
+               struct rte_mbuf *lastseg,
+               uint16_t imtu_size,
+               uint16_t nb_seg_max,
+               uint32_t bytes_max,
+               uint64_t timestamp,
+               int cmp,
+               int sgdma)
 {
     struct rte_mbuf *pkt_head, *pkt_tail;
 
@@ -621,42 +683,36 @@ merge_udp(struct px_item *cur_item,
     }
     else
     {
-        rte_exit(EXIT_FAILURE, "Invalid cmp value %d in merge_udp\n", cmp);
+        rte_exit(EXIT_FAILURE, "Invalid cmp value %d in merge_udp_ipid\n", cmp);
     }
 
-    /* check if nb_segs is smaller than is nb_seg_max supported by the device */
+    /* check if the IPv4 packet length is greater than imtu_size */
+    if (pkt_head->pkt_len + get_l3_sdu_len(pkt_tail) >
+        imtu_size + sizeof(struct rte_ether_hdr))
+    {
+        return 0;
+    }
+
+    /* check if nb_segs exceeds nb_seg_max supported by the device */
     if (unlikely(pkt_head->nb_segs + pkt_tail->nb_segs > nb_seg_max))
+    {
+        return 0;
+    }
+    /**
+     * our device rejects packets larger than 1MB
+     *
+     * ToDo: how to know the hardware limit?
+     * For now, we just manually measured by several experiments
+     */
+    if (unlikely(pkt_head->pkt_len + get_l3_sdu_len(pkt_tail) > bytes_max))
     {
         return 0;
     }
 
     /* check if the length of merged IPv4 packet is greater than 65535 */
-    if (!sgdma)
-    {
-        if (unlikely(pkt_head->pkt_len + get_data_len(pkt_tail) >
-                     UINT16_MAX + sizeof(struct rte_ether_hdr)))
-        {
-            return 0;
-        }
-    }
-    else
-    {
-        /**
-         * if SG DMA is on, we do not need it when no application above cares about it
-         * however, our device rejects packets larger than 1MB
-         *
-         * ToDo: how to know the hardware limit?
-         * For now, we just assume 1MB
-         */
-        if (unlikely(pkt_head->pkt_len + get_data_len(pkt_tail) > bytes_max))
-        {
-            return 0;
-        }
-    }
-
-    /* check if the IPv4 packet length is greater than imtu_size */
-    if (pkt_head->pkt_len + get_data_len(pkt_tail) >
-        imtu_size + sizeof(struct rte_ether_hdr))
+    if (!sgdma &&
+        (pkt_head->pkt_len + get_l3_sdu_len(pkt_tail) >
+         UINT16_MAX + sizeof(struct rte_ether_hdr)))
     {
         return 0;
     }
@@ -767,9 +823,13 @@ encap_px_hdr(struct rte_mbuf *pkt)
     rte_pktmbuf_prepend(pkt, sizeof(struct rte_udp_hdr));
     memmove(rte_pktmbuf_mtod(pkt, uint8_t *), orig_data_off,
             pkt->l2_len + pkt->l3_len + sizeof(uint16_t) * 2);
-    mark_px(pkt);
 
     /* at this point, outer UDP header is same as the first inner UDP header */
+    update_iplen(pkt);
+    update_udplen(pkt);
+
+    /* mark as PX caravan */
+    mark_px_caravan(pkt);
 }
 /*----------------------------------------------------------------------------*/
 /*
@@ -788,7 +848,7 @@ decap_px_hdr(struct rte_mbuf *pkt)
     rte_pktmbuf_append(pkt, sizeof(struct rte_udp_hdr));
     memmove(rte_pktmbuf_mtod(pkt, uint8_t *), orig_data_off,
             pkt->l2_len + pkt->l3_len);
-    unmark_px(pkt);
+    unmark_px_caravan(pkt);
 
     /* at this point, outer UDP header is same as the first inner UDP header */
 }
@@ -906,7 +966,7 @@ insert_flow(struct px_ctx *pctx,
 {
     struct px_flow *cur_flow;
 
-    if ((pctx->flow_num + 2) >= pctx->array_size)
+    if (pctx->flow_num >= pctx->array_size)
     {
         fprintf(stderr, "flow table overflow\n");
         rte_exit(EXIT_FAILURE, "flow table overflow\n");
@@ -944,11 +1004,12 @@ insert_item(struct px_ctx *pctx,
             struct rte_mbuf *firstseg,
             struct rte_mbuf *lastseg,
             struct px_item *prev_item,
-            uint64_t timestamp)
+            uint64_t timestamp,
+            uint32_t stash_cnt)
 {
     struct px_item *cur_item;
 
-    if ((pctx->item_num + 2) >= pctx->array_size)
+    if (pctx->item_num >= pctx->array_size)
     {
         fprintf(stderr, "item table overflow\n");
         rte_exit(EXIT_FAILURE, "item table overflow\n");
@@ -972,6 +1033,9 @@ insert_item(struct px_ctx *pctx,
     /* save timestamp */
     cur_item->timestamp = timestamp;
 
+    /* save stash count */
+    cur_item->stash_cnt = stash_cnt;
+
     /* increment item array index */
     pctx->item_num++;
 
@@ -983,13 +1047,14 @@ static inline int
 insert_stash(struct px_ctx *pctx,
              struct rte_mbuf *firstseg,
              struct rte_mbuf *lastseg,
-             uint64_t timestamp)
+             uint64_t timestamp,
+             uint32_t stash_cnt)
 {
     struct px_stash *stash;
     struct px_item *cur_stash;
 
     stash = &pctx->stash_array[pctx->latent_id];
-    if ((stash->num + 2) >= pctx->array_size)
+    if (stash->num >= pctx->array_size)
     {
         fprintf(stderr, "stash table overflow\n");
         rte_exit(EXIT_FAILURE, "stash table overflow\n");
@@ -1008,6 +1073,9 @@ insert_stash(struct px_ctx *pctx,
     /* copy timestamp */
     cur_stash->timestamp = timestamp;
 
+    /* save stash count */
+    cur_stash->stash_cnt = stash_cnt + 1;
+
     return 0;
 }
 /*----------------------------------------------------------------------------*/
@@ -1017,20 +1085,37 @@ insert_stash(struct px_ctx *pctx,
  */
 static inline int
 is_delay_needed(struct px_ctx *pctx,
-                struct four_tuple *key,
+                struct flow_iat_entry *entry,
                 uint16_t data_len,
+                uint8_t proto_id,
                 uint64_t timestamp,
+                uint32_t stash_cnt,
                 uint16_t orig_segsz,
                 uint16_t target_segsz)
 {
+    /* if you want to enable count-based delayed merging, uncomment below */
+#if COUNT_BASED_DELAYED_MERGING
+    RTE_SET_USED(pctx);
+    RTE_SET_USED(entry);
+    RTE_SET_USED(data_len);
+    RTE_SET_USED(proto_id);
+    RTE_SET_USED(timestamp);
+    RTE_SET_USED(orig_segsz);
+    RTE_SET_USED(target_segsz);
+    if (stash_cnt < 1)
+    {
+        /* already delayed */
+        return 1;
+    }
+#else
+    RTE_SET_USED(stash_cnt);
     uint32_t timeout_ns;
     /* get stochastic timeout */
-    timeout_ns = iat_get_timeout(pctx->port_id,
-                                 pctx->queue_id,
-                                 key,
+    timeout_ns = iat_get_timeout(entry,
                                  data_len,
                                  orig_segsz,
                                  target_segsz,
+                                 proto_id,
                                  pctx->now_ns,
                                  g_px_dev[pctx->port_id].cutoff_ns);
 
@@ -1040,20 +1125,83 @@ is_delay_needed(struct px_ctx *pctx,
         //        pctx->now_ns, timestamp, timeout_ns);
         return 1;
     }
+#endif
 
     return 0;
 }
 /*----------------------------------------------------------------------------*/
-/*
+/**
  * Try assemble UDP packets to one of existing flows and items.
- * returns the number of reduced packets after assemble.
- * is also works for multi-segments pkt.
+ * It compares 4-tuple to find same flow.
+ * It also works for multi-segments pkt.
  */
 static inline void
 assemble_udp(struct px_ctx *pctx,
              struct rte_mbuf *firstseg,
              struct rte_mbuf *lastseg,
-             uint64_t timestamp)
+             uint64_t timestamp,
+             uint32_t stash_cnt)
+{
+    struct px_item *cur_item;
+    struct px_flow *cur_flow;
+    uint16_t bucket_idx, start_flow_idx;
+
+    /* get pointer to key (4-tuple) */
+    bucket_idx = get_rss_hash(firstseg) % pctx->bucket_size;
+    start_flow_idx = pctx->buckets[bucket_idx];
+    if (start_flow_idx == INVALID_INDEX)
+    {
+        /* nothing in the bucket; allocate new bucket */
+        pctx->buckets[bucket_idx] = pctx->flow_num;
+        insert_flow(pctx, firstseg, bucket_idx, NULL);
+        insert_item(pctx, firstseg, lastseg, NULL, timestamp, stash_cnt);
+        return;
+    }
+
+    /* find flow for the input pkt */
+    cur_flow = &pctx->flows[start_flow_idx];
+    while (!has_same_key(firstseg, cur_flow, pctx->rule))
+    {
+        /* this flow is not for input pkt; collision */
+        if (cur_flow->next_flow_idx == INVALID_INDEX)
+        {
+            /* end of flow list; no flow matched */
+            insert_flow(pctx, firstseg, INVALID_INDEX, cur_flow);
+            insert_item(pctx, firstseg, lastseg, NULL, timestamp, stash_cnt);
+            return;
+        }
+        cur_flow = &pctx->flows[cur_flow->next_flow_idx];
+    }
+
+    /* find the last item of this flow */
+    cur_item = &pctx->items[cur_flow->start_item_idx];
+    while (cur_item->next_item_idx != INVALID_INDEX)
+    {
+        cur_item = &pctx->items[cur_item->next_item_idx];
+    }
+
+    /* try merge this packet to the last item */
+    if (!merge_udp(cur_item, firstseg, lastseg,
+                   pctx->imtu_size, pctx->nb_seg_max, pctx->bytes_max,
+                   timestamp, pctx->sgdma))
+    {
+        /* bigger than 9KB; store this packet as a new item in the given flow */
+        insert_item(pctx, firstseg, lastseg, cur_item, timestamp, stash_cnt);
+        return;
+    }
+}
+/*----------------------------------------------------------------------------*/
+/**
+ * Try assemble UDP packets to one of existing flows and items.
+ * It compares IP ID to find neighbor packets.
+ * It also works for multi-segments pkt.
+ */
+static inline void
+assemble_udp_ipid(struct px_ctx *pctx,
+                  struct rte_mbuf *firstseg,
+                  struct rte_mbuf *lastseg,
+                  uint64_t timestamp,
+                  uint32_t stash_cnt)
 {
     struct px_item *cur_item, *prev_item, *merged_item;
     struct px_flow *cur_flow;
@@ -1068,7 +1216,7 @@ assemble_udp(struct px_ctx *pctx,
         /* nothing in the bucket; allocate new bucket */
         pctx->buckets[bucket_idx] = pctx->flow_num;
         insert_flow(pctx, firstseg, bucket_idx, NULL);
-        insert_item(pctx, firstseg, lastseg, NULL, timestamp);
+        insert_item(pctx, firstseg, lastseg, NULL, timestamp, stash_cnt);
         return;
     }
 
@@ -1081,7 +1229,7 @@ assemble_udp(struct px_ctx *pctx,
         {
             /* end of flow list; no flow matched */
             insert_flow(pctx, firstseg, INVALID_INDEX, cur_flow);
-            insert_item(pctx, firstseg, lastseg, NULL, timestamp);
+            insert_item(pctx, firstseg, lastseg, NULL, timestamp, stash_cnt);
             return;
         }
         cur_flow = &pctx->flows[cur_flow->next_flow_idx];
@@ -1095,7 +1243,7 @@ assemble_udp(struct px_ctx *pctx,
         if (cur_item->next_item_idx == INVALID_INDEX)
         {
             /* end of item list; no neighbor items matched */
-            insert_item(pctx, firstseg, lastseg, cur_item, timestamp);
+            insert_item(pctx, firstseg, lastseg, cur_item, timestamp, stash_cnt);
             return;
         }
         prev_item = cur_item;
@@ -1103,12 +1251,12 @@ assemble_udp(struct px_ctx *pctx,
     }
 
     /* found first neighbor item */
-    if (!merge_udp(cur_item, firstseg, lastseg,
-                   pctx->imtu_size, pctx->nb_seg_max, pctx->bytes_max,
-                   timestamp, cmp, pctx->sgdma))
+    if (!merge_udp_ipid(cur_item, firstseg, lastseg,
+                        pctx->imtu_size, pctx->nb_seg_max, pctx->bytes_max,
+                        timestamp, cmp, pctx->sgdma))
     {
         /* bigger than 9KB; store this packet as a new item in the given flow */
-        insert_item(pctx, firstseg, lastseg, cur_item, timestamp);
+        insert_item(pctx, firstseg, lastseg, cur_item, timestamp, stash_cnt);
         return;
     }
 
@@ -1132,9 +1280,9 @@ assemble_udp(struct px_ctx *pctx,
     } while (!(cmp = compare_ipid(merged_item->firstseg, cur_item->firstseg)));
 
     /* found second neighbor item */
-    if (!merge_udp(merged_item, cur_item->firstseg, cur_item->lastseg,
-                   pctx->imtu_size, pctx->nb_seg_max, pctx->bytes_max,
-                   cur_item->timestamp, cmp, pctx->sgdma))
+    if (!merge_udp_ipid(merged_item, cur_item->firstseg, cur_item->lastseg,
+                        pctx->imtu_size, pctx->nb_seg_max, pctx->bytes_max,
+                        cur_item->timestamp, cmp, pctx->sgdma))
     {
         /* current item length is bigger than 9KB */
         return;
@@ -1153,7 +1301,8 @@ static inline void
 assemble_tcp(struct px_ctx *pctx,
              struct rte_mbuf *firstseg,
              struct rte_mbuf *lastseg,
-             uint64_t timestamp)
+             uint64_t timestamp,
+             uint32_t stash_cnt)
 {
     struct px_item *cur_item, *prev_item, *merged_item;
     struct px_flow *cur_flow;
@@ -1168,7 +1317,7 @@ assemble_tcp(struct px_ctx *pctx,
         /* nothing in the bucket; allocate new bucket */
         pctx->buckets[bucket_idx] = pctx->flow_num;
         insert_flow(pctx, firstseg, bucket_idx, NULL);
-        insert_item(pctx, firstseg, lastseg, NULL, timestamp);
+        insert_item(pctx, firstseg, lastseg, NULL, timestamp, stash_cnt);
         return;
     }
 
@@ -1181,7 +1330,7 @@ assemble_tcp(struct px_ctx *pctx,
         {
             /* end of flow list; no flow matched */
             insert_flow(pctx, firstseg, INVALID_INDEX, cur_flow);
-            insert_item(pctx, firstseg, lastseg, NULL, timestamp);
+            insert_item(pctx, firstseg, lastseg, NULL, timestamp, stash_cnt);
             return;
         }
         cur_flow = &pctx->flows[cur_flow->next_flow_idx];
@@ -1194,10 +1343,10 @@ assemble_tcp(struct px_ctx *pctx,
     {
         if (cmp == -2)
         {
-            printf("Warning: out-of-order TCP segments detected\n");
+            // printf("Warning: out-of-order TCP segments detected\n");
 
             /* insert it as next item of prev_item */
-            insert_item(pctx, firstseg, lastseg, prev_item, timestamp);
+            insert_item(pctx, firstseg, lastseg, prev_item, timestamp, stash_cnt);
 
             /* check if cur_item is the first item */
             if (prev_item == cur_item)
@@ -1218,7 +1367,7 @@ assemble_tcp(struct px_ctx *pctx,
         if (cur_item->next_item_idx == INVALID_INDEX)
         {
             /* end of item list; no neighbor items matched */
-            insert_item(pctx, firstseg, lastseg, cur_item, timestamp);
+            insert_item(pctx, firstseg, lastseg, cur_item, timestamp, stash_cnt);
             return;
         }
         prev_item = cur_item;
@@ -1246,7 +1395,7 @@ assemble_tcp(struct px_ctx *pctx,
                    timestamp, cmp, pctx->sgdma))
     {
         /* could not merge, so insert this packet as a new item */
-        insert_item(pctx, firstseg, lastseg, cur_item, timestamp);
+        insert_item(pctx, firstseg, lastseg, cur_item, timestamp, stash_cnt);
         return;
     }
 
@@ -1457,10 +1606,11 @@ parse_for_tcp_gro(struct rte_mbuf *pkt,
  * Returns -1, if this packet is (unlikely) not supported format.
  */
 /*----------------------------------------------------------------------------*/
-int px_parse_packet(struct px_ctx *pctx,
-                    struct rte_mbuf *pkt,
-                    uint8_t *tcp_flags,
-                    int hwcsum)
+static int
+px_parse_packet(struct px_ctx *pctx,
+                struct rte_mbuf *pkt,
+                uint8_t *tcp_flags,
+                int hwcsum)
 {
     struct px_dev *px_dev = &g_px_dev[pctx->port_id];
     struct rte_ipv4_hdr *ipv4_hdr;
@@ -1623,18 +1773,20 @@ Skip_log_rx_hw_timestamp:
             return ret;
         }
 
+#if USE_RX_HW_TIMESTAMP
         /* mark uplink and update IAT for delayed merging */
         if (pctx->stash_array)
         {
             /* check if delayed merging is needed */
             if (!(g_is_semantic_test && pctx->is_uplink(pkt)))
             {
-                iat_update_entry(pctx->port_id,
-                                 pctx->queue_id,
-                                 pkt,
-                                 pctx->now_ns);
+                iat_update_entry_iat(pctx->port_id,
+                                     pctx->queue_id,
+                                     pkt,
+                                     pctx->now_ns);
             }
         }
+#endif
 
         /* log for NICMEM packet */
         // if (pkt->next && pkt->next->ol_flags & EXT_ATTACHED_MBUF)
@@ -1672,9 +1824,10 @@ Skip_log_rx_hw_timestamp:
          * for generating PX-caravan header from them
          * during evaluation of UDP semantic case.
          */
-        if (g_is_semantic_test && pctx->is_uplink(pkt))
+        if (g_is_semantic_test && pctx->is_uplink(pkt) &&
+            ((int)pkt->pkt_len > (pctx->emtu_size + pkt->l2_len)))
         {
-            mark_px(pkt);
+            mark_px_caravan(pkt);
         }
 
         /* parse for UDP GRO */
@@ -1684,18 +1837,20 @@ Skip_log_rx_hw_timestamp:
             return ret;
         }
 
+#if USE_RX_HW_TIMESTAMP
         /* mark uplink and update IAT for delayed merging */
         if (pctx->stash_array)
         {
             /* check if delayed merging is needed */
             if (!(g_is_semantic_test && pctx->is_uplink(pkt)))
             {
-                iat_update_entry(pctx->port_id,
-                                 pctx->queue_id,
-                                 pkt,
-                                 pctx->now_ns);
+                iat_update_entry_iat(pctx->port_id,
+                                     pctx->queue_id,
+                                     pkt,
+                                     pctx->now_ns);
             }
         }
+#endif
 
         /* log for NICMEM packet */
         // if (pkt->next && pkt->next->ol_flags & EXT_ATTACHED_MBUF)
@@ -1796,6 +1951,16 @@ void px_parse_batch(uint16_t port_id,
             }
             if (tcp_flags & RTE_TCP_SYN_FLAG)
             {
+                /* count SYN/SYNACK packets */
+                if (tcp_flags & RTE_TCP_ACK_FLAG)
+                {
+                    px_stat_count_synack(port_id, queue_id);
+                }
+                else
+                {
+                    px_stat_count_syn(port_id, queue_id);
+                }
+
                 /* mss parsing */
                 mss_ptr = get_tcp_mss(pkt);
                 if (!mss_ptr)
@@ -1897,6 +2062,10 @@ void px_setup_tso_burst(uint16_t port_id,
         {
             unset_tso(pkt);
         }
+        // printf("pkt_len: %d, l2_len: %d, l3_len: %d, l4_len: %d, tso_segsz: %d, "
+        //        "data_len: %d, segsz: %d, nb_segs: %d\n",
+        //        pkt->pkt_len, pkt->l2_len, pkt->l3_len, pkt->l4_len, pkt->tso_segsz,
+        //        get_data_len(pkt), segsz, pkt->nb_segs);
     }
 }
 /*----------------------------------------------------------------------------*/
@@ -1909,6 +2078,7 @@ link_and_flush(struct px_ctx *pctx,
     struct rte_mbuf *start_pkt, *prev_pkt, *cur_pkt, *edge;
     struct px_flow *cur_flow;
     struct px_item *cur_item;
+    struct flow_iat_entry *iat_entry;
     uint32_t last_segsz;
     uint16_t item_idx, idx = 0, *start_id, id_diff;
     uint16_t saved_segsz, target_segsz, orig_segsz;
@@ -1923,6 +2093,7 @@ link_and_flush(struct px_ctx *pctx,
     uint32_t pdu_len;
     uint8_t pdu_hdr_len;
     uint32_t adj_len;
+    int insufficient_l5_header = 0;
 #endif
 
     for (i = 0; i < pctx->flow_num; i++)
@@ -1942,6 +2113,7 @@ link_and_flush(struct px_ctx *pctx,
         start_id = NULL;
         saved_segsz = 0; // for TCP uplink
         id_diff = 1;     // for UDP downlink
+        iat_entry = NULL;
 #if NVME_TCP_PX
         l5p = NULL;
 #endif
@@ -1953,6 +2125,7 @@ link_and_flush(struct px_ctx *pctx,
             cur_item = &pctx->items[item_idx];
 #if NVME_TCP_PX
             prev_idx = item_idx;
+            insufficient_l5_header = 0;
 #endif
             item_idx = cur_item->next_item_idx;
             cur_pkt = cur_item->firstseg;
@@ -2013,9 +2186,18 @@ link_and_flush(struct px_ctx *pctx,
                       cur_pkt->l4_len) /
                      orig_segsz);
 
+                /* check if delayed merging enabled */
                 if (!pctx->stash_array)
                 {
                     goto No_delay_tcp;
+                }
+
+                /* iat lookup */
+                if (!iat_entry)
+                {
+                    iat_entry = iat_search_entry(port_id,
+                                                 queue_id,
+                                                 get_four_tuple(cur_pkt));
                 }
 #if NVME_TCP_PX
                 if (!is_nvme_tcp(cur_pkt))
@@ -2037,15 +2219,19 @@ link_and_flush(struct px_ctx *pctx,
                 cur_seq = rte_be_to_cpu_32(*get_tcp_seq(cur_pkt));
                 cur_len = get_data_len(cur_pkt);
 
+                /**
+                 * below are upper half of L4 logic
+                 */
+
                 px_l5_handle_ack(port_id, queue_id, cur_pkt, l5p);
                 if (!cur_len)
                 {
                     px_dump_tuple(get_four_tuple(cur_pkt));
                     rte_pktmbuf_dump(stdout, cur_pkt, cur_pkt->pkt_len);
-                    printf("[L5PX] zero data len pkt, seq: [%u ~ %u)\n",
-                           SEQ_DIFF(cur_seq, l5p->isn), SEQ_DIFF(cur_seq + cur_len, l5p->isn));
-
-                    rte_exit(EXIT_FAILURE, "zero data len pkt\n");
+                    printf("[line %d] ???, no data pkt, seq: %u\n",
+                           __LINE__,
+                           SEQ_DIFF(cur_seq, l5p->isn));
+                    rte_exit(EXIT_FAILURE, "no data pkt\n");
                     // goto No_delay_tcp;
                 }
 
@@ -2071,19 +2257,8 @@ link_and_flush(struct px_ctx *pctx,
                 /* check OLD pkt */
                 if (SEQ_GEQ(l5p->snd_una, cur_seq + cur_len))
                 {
-                    /**
-                     * this packet is already acked by peer
-                     * trim payload to zero length
-                     * and send as a pure ACK only
-                     */
-                    // if (px_chained_trim(cur_pkt, cur_len) < 0)
-                    // {
-                    //     rte_exit(EXIT_FAILURE,
-                    //              "px_chained_trim failed\n");
-                    // }
-
-                    // goto No_delay_tcp;
-
+                    /* this packet is already acked by peer  */
+                    px_dump_l5p("OLD", l5p, cur_seq, cur_len, target_len);
                     rte_pktmbuf_free(cur_pkt);
                     continue;
                 }
@@ -2097,18 +2272,47 @@ link_and_flush(struct px_ctx *pctx,
                      * trim payload to zero length,
                      * and send as a pure ACK only
                      */
-                    px_l5_rtx(port_id, queue_id, l5p, cur_seq, cur_len);
-                    // if (px_chained_trim(cur_pkt, cur_len) < 0)
-                    // {
-                    //     rte_exit(EXIT_FAILURE,
-                    //              "px_chained_trim failed\n");
-                    // }
+                    px_dump_l5p("RTX", l5p, cur_seq, cur_len, target_len);
+                    struct rte_mbuf *batch[PX_RX_BURST];
+                    int rtx_cnt = px_l5_rtx(l5p, cur_seq, cur_len, batch, PX_RX_BURST);
+                    for (int j = 0; j < rtx_cnt; j++)
+                    {
+                        struct rte_mbuf *rtx_pkt = batch[j];
 
-                    // goto No_delay_tcp;
+                        /* flush */
+                        if (idx == nb_pkts)
+                        {
+                            /* given batch is full, so enqueue to RX ring */
+                            if (px_ring_enqueue(&pctx->rx_ring, &rtx_pkt, 1) != 1)
+                            {
+                                /* enqueue failed, drop the packet */
+                                fprintf(stderr, "[line %d] RX ring overflow in %s\n",
+                                        __LINE__, __func__);
+                                rte_pktmbuf_free(rtx_pkt);
+                                rte_exit(EXIT_FAILURE, "RX ring overflow\n");
+                                rtx_pkt = NULL;
+                            }
+                        }
+                        else
+                        {
+                            out[idx++] = rtx_pkt;
+                        }
+                    }
 
                     rte_pktmbuf_free(cur_pkt);
                     continue;
                 }
+
+                /**
+                 * now cur_pkt has valid new data after snd_nxt
+                 * although it might be OoO,
+                 * it might be possible to find L5 header from it
+                 * so try L5 header parsing first
+                 */
+
+                /**
+                 * below are bottom half of L4 logic
+                 */
 
                 /* check if head adjustment is needed */
                 if (SEQ_GT(l5p->snd_nxt, cur_seq))
@@ -2152,7 +2356,8 @@ link_and_flush(struct px_ctx *pctx,
                             if (insert_stash(pctx,
                                              cur_pkt,
                                              rte_pktmbuf_lastseg(cur_pkt),
-                                             cur_item->timestamp) < 0)
+                                             cur_item->timestamp,
+                                             cur_item->stash_cnt) < 0)
                             {
                                 rte_exit(EXIT_FAILURE,
                                          "insert_stash failed\n");
@@ -2192,7 +2397,8 @@ link_and_flush(struct px_ctx *pctx,
                         if (insert_stash(pctx,
                                          cur_pkt,
                                          rte_pktmbuf_lastseg(cur_pkt),
-                                         cur_item->timestamp) < 0)
+                                         cur_item->timestamp,
+                                         cur_item->stash_cnt) < 0)
                         {
                             rte_exit(EXIT_FAILURE,
                                      "insert_stash failed\n");
@@ -2257,7 +2463,8 @@ link_and_flush(struct px_ctx *pctx,
                 if (insert_stash(pctx,
                                  cur_pkt,
                                  rte_pktmbuf_lastseg(cur_pkt),
-                                 cur_item->timestamp) < 0)
+                                 cur_item->timestamp,
+                                 cur_item->stash_cnt) < 0)
                 {
                     rte_exit(EXIT_FAILURE,
                              "insert_stash failed\n");
@@ -2281,14 +2488,126 @@ link_and_flush(struct px_ctx *pctx,
                            added_ooo_bytes);
 
                     /* if OoO queue increased, send direct ACK */
-                    px_l5_direct_ack(port_id, queue_id, cur_pkt, l5p);
+                    struct l5_flow *peer = l5p->peer;
+                    if (!peer)
+                        rte_exit(EXIT_FAILURE, "[line %d] no peer l5 flow\n", __LINE__);
+
+                    struct rte_mbuf *tmpl = peer->last_ack;
+                    if (!tmpl)
+                        rte_exit(EXIT_FAILURE, "[line %d] no last ACK mbuf\n", __LINE__);
+
+                    uint32_t hdr_base_len = get_hdr_len(tmpl); /* l2 + l3 + l4 (no options) */
+                    if (unlikely(tmpl->pkt_len < hdr_base_len))
+                        rte_exit(EXIT_FAILURE, "tmpl too short\n");
+
+                    /* ---- build options: TS first, then SACK, then padding to 4B ---- */
+                    uint8_t opt[40];
+                    uint32_t opt_w = 0;
+
+                    /* Timestamp option (kind=8 len=10) MUST be first */
+                    if (l5p->ts_enabled)
+                    {
+                        opt[opt_w++] = TCPOPT_TIMESTAMP;
+                        opt[opt_w++] = 10;
+
+                        uint32_t tsval_be = rte_cpu_to_be_32(peer->tsval);
+                        uint32_t tsecr_be = rte_cpu_to_be_32(peer->tsecr);
+
+                        rte_memcpy(&opt[opt_w], &tsval_be, 4);
+                        opt_w += 4;
+                        rte_memcpy(&opt[opt_w], &tsecr_be, 4);
+                        opt_w += 4;
+                    }
+
+                    /* SACK block */
+                    if (l5p->sack_enabled)
+                    {
+                        opt[opt_w++] = TCPOPT_SACK;
+                        opt[opt_w++] = (uint8_t)(2 + 8);
+
+                        uint32_t l = rte_cpu_to_be_32(cur_seq);
+                        uint32_t r = rte_cpu_to_be_32(cur_seq + cur_len);
+                        rte_memcpy(&opt[opt_w], &l, 4);
+                        opt_w += 4;
+                        rte_memcpy(&opt[opt_w], &r, 4);
+                        opt_w += 4;
+                    }
+
+                    /* Padding to 4B boundary */
+                    while (opt_w & 3)
+                    {
+                        if (opt_w >= sizeof(opt))
+                            break;
+                        opt[opt_w++] = TCPOPT_NOP;
+                    }
+
+                    if (opt_w > 40)
+                        opt_w = 40;
+
+                    uint32_t tcp_hlen = tmpl->l4_len + opt_w;
+                    if (tcp_hlen > 60)
+                        tcp_hlen = 60; /* defensive */
+
+                    /* ---- allocate new mbuf, copy base headers, append options ---- */
+                    struct rte_mbuf *m = rte_pktmbuf_copy(tmpl, pool, 0, hdr_base_len);
+                    if (!m)
+                        rte_exit(EXIT_FAILURE, "[line %d] rte_pktmbuf_alloc failed\n", __LINE__);
+
+                    /* write options right after tcp base */
+                    if (opt_w)
+                    {
+                        char *p = rte_pktmbuf_append(m, opt_w);
+                        if (!p)
+                        {
+                            rte_pktmbuf_free(m);
+                            rte_exit(EXIT_FAILURE, "pktmbuf_append failed (no tailroom)\n");
+                        }
+                        rte_memcpy(p, opt, opt_w);
+                    }
+
+                    /* ---- patch fields (seq/ack/advwnd/doff/len/cksum) ---- */
+
+                    /* update TCP doff and flags */
+                    uint8_t *doff = get_tcp_doff(m);
+                    *doff = ((uint8_t)tcp_hlen >> 2 << 4);
+                    uint8_t *flags = get_tcp_flags(m);
+                    *flags = RTE_TCP_ACK_FLAG;
+
+                    /* update seq/ack/advwnd */
+                    uint32_t *seq = get_tcp_seq(m);
+                    *seq = rte_cpu_to_be_32(peer->snd_nxt);
+                    uint32_t *ack = get_tcp_ack(m);
+                    *ack = rte_cpu_to_be_32(l5p->rcv_nxt);
+                    uint16_t *advwnd = get_tcp_advwnd(m);
+                    *advwnd = rte_cpu_to_be_16(peer->advwnd);
+
+                    /* update mbuf fields */
+                    m->l4_len = tcp_hlen;
+                    m->pkt_len = m->data_len = get_hdr_len(m);
+
+                    /* IPv4 total_length = ip_hlen + tcp_hlen (no payload) */
+                    update_iplen(m);
+
+                    setup_ipv4_tx_cksum(m);
+                    setup_tcp_tx_cksum(m);
+
+                    uint32_t cur_seq = rte_be_to_cpu_32(*get_tcp_seq(m));
+                    uint32_t cur_ack = rte_be_to_cpu_32(*get_tcp_ack(m));
+                    uint32_t cur_advwnd = rte_be_to_cpu_16(*get_tcp_advwnd(m));
+
+                    printf("direct ACK: seq: %u ack=%u advwnd=%u\n",
+                           SEQ_DIFF(cur_seq, l5p->peer->isn),
+                           SEQ_DIFF(cur_ack, l5p->isn),
+                           cur_advwnd);
+                    px_dump_tuple(get_four_tuple(m));
+                    rte_pktmbuf_dump(stdout, m, m->pkt_len);
+
+                    cur_pkt = m;
+
+                    goto No_delay_tcp;
                 }
 
-                // if (px_chained_trim(cur_pkt, cur_len) < 0)
-                // {
-                //     rte_exit(EXIT_FAILURE,
-                //              "px_chained_trim failed\n");
-                // }
+                // px_chained_trim(cur_pkt, cur_len);
 
                 // goto No_delay_tcp;
 
@@ -2305,9 +2624,12 @@ link_and_flush(struct px_ctx *pctx,
                     /* if this item is the last item and delay nsec is marginal */
                     if ((item_idx == INVALID_INDEX) &&
                         is_delay_needed(pctx,
-                                        get_four_tuple(cur_pkt),
+                                        // if (is_delay_needed(pctx,
+                                        iat_entry,
                                         get_data_len(cur_pkt),
+                                        IPPROTO_TCP,
                                         cur_item->timestamp,
+                                        cur_item->stash_cnt,
                                         orig_segsz,
                                         target_segsz))
                     {
@@ -2315,7 +2637,8 @@ link_and_flush(struct px_ctx *pctx,
                         if (insert_stash(pctx,
                                          cur_pkt,
                                          cur_item->lastseg,
-                                         cur_item->timestamp) < 0)
+                                         cur_item->timestamp,
+                                         cur_item->stash_cnt) < 0)
                         {
                             fprintf(stdout, "stash table overflow\n");
                             goto No_delay_tcp;
@@ -2338,9 +2661,11 @@ link_and_flush(struct px_ctx *pctx,
                     /* if this item is the last item and delay nsec is marginal */
                     if ((item_idx == INVALID_INDEX) &&
                         is_delay_needed(pctx,
-                                        get_four_tuple(cur_pkt),
+                                        iat_entry,
                                         last_segsz,
+                                        IPPROTO_TCP,
                                         cur_item->timestamp,
+                                        cur_item->stash_cnt,
                                         orig_segsz,
                                         target_segsz))
                     {
@@ -2356,12 +2681,19 @@ link_and_flush(struct px_ctx *pctx,
                         if (insert_stash(pctx,
                                          edge,
                                          rte_pktmbuf_lastseg(edge),
-                                         cur_item->timestamp) < 0)
+                                         cur_item->timestamp,
+                                         cur_item->stash_cnt) < 0)
                         {
                             /* ToDo: in this case we should merge again... */
                             /* this should not happen */
                             rte_exit(EXIT_FAILURE,
                                      "stash table overflow\n");
+                        }
+                        if (cur_pkt->pkt_len > pctx->bytes_max)
+                        {
+                            fprintf(stderr,
+                                    "Warning: very large pkt_len after edge separation: %d\n",
+                                    cur_pkt->pkt_len);
                         }
                     }
                 }
@@ -2387,74 +2719,84 @@ link_and_flush(struct px_ctx *pctx,
                  * ToDo: find orig_segsz by looking up
                  * MSS table using reverse four tuple.
                  */
-                if (cur_pkt->next && cur_pkt->next->ol_flags & EXT_ATTACHED_MBUF)
+                if (cur_pkt->next &&
+                    cur_pkt->next->ol_flags & EXT_ATTACHED_MBUF)
                 {
                     /* if NICMEM packet */
                     // fprintf(stdout, "is nicmem\n");
                     orig_segsz =
                         cur_pkt->data_len +
                         cur_pkt->next->data_len -
-                        get_hdr_len(cur_pkt);
+                        cur_pkt->l2_len -
+                        cur_pkt->l3_len;
                 }
                 else
                 {
                     // fprintf(stdout, "is not nicmem\n");
                     orig_segsz =
                         cur_pkt->data_len -
-                        get_hdr_len(cur_pkt);
+                        cur_pkt->l2_len -
+                        cur_pkt->l3_len;
                 }
 
                 /* make target segment size to be multiple of orig_segsz */
                 target_segsz =
                     orig_segsz *
                     ((pctx->imtu_size -
-                      cur_pkt->l3_len -
-                      cur_pkt->l4_len) /
+                      cur_pkt->l3_len) /
                      orig_segsz);
 
-                /* only for incoming packets when delayed merging enabled */
-                if (pctx->stash_array)
+                /* check if delayed merging enabled */
+                if (!pctx->stash_array)
                 {
-                    /* check if current packet should be delayed */
-                    if (get_data_len(cur_pkt) + orig_segsz <= target_segsz)
+                    goto No_delay_udp;
+                }
+
+                /* iat lookup */
+                if (!iat_entry)
+                {
+                    iat_entry = iat_search_entry(port_id,
+                                                 queue_id,
+                                                 get_four_tuple(cur_pkt));
+                }
+
+                /* check if current packet should be delayed */
+                if (get_l3_sdu_len(cur_pkt) + orig_segsz <= target_segsz)
+                {
+                    /**
+                     * size of this packet < 9K
+                     * stash current packet to merge more
+                     */
+                    /* if this item is the last item and delay nsec is marginal */
+                    if ((item_idx == INVALID_INDEX) &&
+                        is_delay_needed(pctx,
+                                        iat_entry,
+                                        get_l3_sdu_len(cur_pkt),
+                                        IPPROTO_UDP,
+                                        cur_item->timestamp,
+                                        cur_item->stash_cnt,
+                                        orig_segsz,
+                                        target_segsz))
                     {
-                        /**
-                         * size of this packet < 9K
-                         * stash current packet to merge more
-                         */
-                        /* if this item is the last item and delay nsec is marginal */
-                        if ((item_idx == INVALID_INDEX) &&
-                            is_delay_needed(pctx,
-                                            get_four_tuple(cur_pkt),
-                                            get_data_len(cur_pkt),
-                                            cur_item->timestamp,
-                                            orig_segsz,
-                                            target_segsz))
+                        /* can delay, so insert to stash item array */
+                        if (insert_stash(pctx,
+                                         cur_pkt,
+                                         cur_item->lastseg,
+                                         cur_item->timestamp,
+                                         cur_item->stash_cnt) < 0)
                         {
-                            /* can delay, so insert to stash item array */
-                            if (insert_stash(pctx,
-                                             cur_pkt,
-                                             cur_item->lastseg,
-                                             cur_item->timestamp) < 0)
-                            {
-                                fprintf(stderr, "stash table overflow\n");
-                                goto No_delay_udp;
-                            }
-                            continue;
+                            fprintf(stderr, "stash table overflow\n");
+                            goto No_delay_udp;
                         }
-                        goto No_delay_udp;
+                        continue;
                     }
+                    goto No_delay_udp;
                 }
             No_delay_udp:
                 if (!is_single_pkt(cur_pkt))
                 {
                     /* encapsulate with PX caravan header */
                     encap_px_hdr(cur_pkt);
-                    update_iplen(cur_pkt);
-                    update_udplen(cur_pkt);
-
-                    /* mark as PX caravan */
-                    mark_px(cur_pkt);
                 }
 
                 /* make UDP packets continuous to enable UDP_GRO at endpoints */
@@ -2510,6 +2852,10 @@ link_and_flush(struct px_ctx *pctx,
             {
                 out[idx++] = cur_pkt;
             }
+
+            /* if downlink flow, update throughput and yield */
+            iat_update_entry(pctx->port_id, pctx->queue_id,
+                             iat_entry, cur_pkt, pctx->now_ns);
         }
     }
 
@@ -2543,12 +2889,14 @@ px_core(struct px_ctx *pctx,
             if (is_tcp(item->firstseg))
             {
                 assemble_tcp(pctx, item->firstseg, item->lastseg,
-                             item->timestamp);
+                             item->timestamp, item->stash_cnt);
             }
             else if (is_udp(item->firstseg))
             {
+                // assemble_udp_ipid(pctx, item->firstseg, item->lastseg,
+                //                   item->timestamp, item->stash_cnt);
                 assemble_udp(pctx, item->firstseg, item->lastseg,
-                             item->timestamp);
+                             item->timestamp, item->stash_cnt);
             }
         }
         stash->num = 0;
@@ -2633,14 +2981,17 @@ px_core(struct px_ctx *pctx,
             /* check FIN/RST */
             else if (tcp_flags & (RTE_TCP_FIN_FLAG | RTE_TCP_RST_FLAG))
             {
-                /* evict MSS from this flow */
-                if (mss_evict_entry(pkt->port,
-                                    pctx->queue_id,
-                                    pkt->hash.rss,
-                                    get_four_tuple(pkt)) < 0)
+                /* if uplink flow, evict MSS */
+                if (g_is_semantic_test && pctx->is_uplink(pkt))
                 {
-                    rte_exit(EXIT_FAILURE,
-                             "mss_evict_entry: MSS table is not initialized\n");
+                    if (mss_evict_entry(pkt->port,
+                                        pctx->queue_id,
+                                        pkt->hash.rss,
+                                        get_four_tuple(pkt)) < 0)
+                    {
+                        rte_exit(EXIT_FAILURE,
+                                 "mss_evict_entry: MSS table is not initialized\n");
+                    }
                 }
 #if NVME_TCP_PX
                 if (is_nvme_tcp(pkt))
@@ -2649,16 +3000,16 @@ px_core(struct px_ctx *pctx,
                 }
 #endif
             }
-#if NVME_TCP_PX
             /* pure ACK */
             else if (tcp_flags & RTE_TCP_ACK_FLAG)
             {
+#if NVME_TCP_PX
                 if (is_nvme_tcp(pkt))
                 {
                     px_l5_handle_ack(pctx->port_id, pctx->queue_id, pkt, NULL);
                 }
-            }
 #endif
+            }
         Skip_tcp_mss:
             pkts[cnt++] = pkt;
             continue;
@@ -2667,16 +3018,20 @@ px_core(struct px_ctx *pctx,
         /* try GRO */
         if (is_tcp(pkt))
         {
-            assemble_tcp(pctx, pkt, rte_pktmbuf_lastseg(pkt), pctx->now_ns);
+            assemble_tcp(pctx, pkt, rte_pktmbuf_lastseg(pkt),
+                         pctx->now_ns, 0);
         }
         else if (is_udp(pkt))
         {
-            assemble_udp(pctx, pkt, rte_pktmbuf_lastseg(pkt), pctx->now_ns);
+            // assemble_udp_ipid(pctx, pkt, rte_pktmbuf_lastseg(pkt),
+            //                   pctx->now_ns, 0);
+            assemble_udp(pctx, pkt, rte_pktmbuf_lastseg(pkt),
+                         pctx->now_ns, 0);
         }
     }
 
     *nb_flows = pctx->flow_num;
-    *nb_items = pctx->item_num;
+    *nb_items = pctx->item_num + cnt;
     cnt += link_and_flush(pctx, pkts + cnt, nb_pkts - cnt);
 
     return cnt;
@@ -2688,8 +3043,6 @@ void px_deinit(uint16_t port_id)
     struct px_ctx *pctx;
     int i;
     uint16_t queue_id;
-
-    px_stat_stop_monitor();
 
     px_async_stop();
 
@@ -2810,19 +3163,22 @@ int px_init(uint16_t port_id,
         pctx->is_uplink = is_uplink ? is_uplink : is_uplink_default;
         pctx->is_downlink = is_downlink ? is_downlink : is_downlink_default;
 
-        ret = mss_init_ctx(port_id,
-                           queue_id,
-                           mss_table_size);
-        if (ret < 0)
+        if (mss_table_size)
         {
-            rte_exit(EXIT_FAILURE, "Cannot init MSS ctx\n");
+            ret = mss_init_ctx(port_id,
+                               queue_id,
+                               mss_table_size / px_dev->num_rxq);
+            if (ret < 0)
+            {
+                rte_exit(EXIT_FAILURE, "Cannot init MSS ctx\n");
+            }
         }
 
-        if (px_dev->cutoff_ns)
+        if (iat_table_size && px_dev->cutoff_ns)
         {
             ret = iat_init_ctx(port_id,
                                queue_id,
-                               iat_table_size,
+                               iat_table_size / px_dev->num_rxq,
                                pctx->imtu_size,
                                pctx->emtu_size,
                                px_dev->cutoff_ns,
@@ -2837,7 +3193,7 @@ int px_init(uint16_t port_id,
         }
 #if NVME_TCP_PX
         /* initiate l5 flow context */
-        ret = px_l5_init(port_id, queue_id, mss_table_size);
+        ret = px_l5_init(port_id, queue_id, mss_table_size / px_dev->num_rxq);
         if (ret < 0)
         {
             rte_exit(EXIT_FAILURE, "px_l5_init() failed\n");
@@ -3040,18 +3396,18 @@ int px_init(uint16_t port_id,
     //     return -1;
     // }
 
-    /* start stat printing */
-    ret = px_stat_start_monitor(STAT_INTERVAL,
-                                rte_eth_dev_count_avail(),
-                                px_dev->num_rxq,
-                                px_dev->num_txq,
-                                px_dev->imtu_size,
-                                px_dev->emtu_size,
-                                is_uplink,
-                                is_downlink);
+    /* configure stat monitor */
+    ret = px_stat_configure(STAT_INTERVAL,
+                            port_id,
+                            px_dev->num_rxq,
+                            px_dev->num_txq,
+                            px_dev->imtu_size,
+                            px_dev->emtu_size,
+                            is_uplink,
+                            is_downlink);
     if (ret < 0)
     {
-        rte_exit(EXIT_FAILURE, "Error creating stat thread: %d\n", ret);
+        rte_exit(EXIT_FAILURE, "Error configuring stat monitor: %d\n", ret);
     }
 
     fprintf(stdout, "[port %d] px_init finished\n", port_id);
@@ -3149,6 +3505,8 @@ px_eth_conf(uint16_t port_id,
         conf->rxmode.offloads |= DEV_RX_OFFLOAD_BUFFER_SPLIT |
 #endif
                                  DEV_RX_OFFLOAD_SCATTER;
+        /* do not remove below! nicmem uses max_lro_pkt_size */
+        conf->rxmode.max_lro_pkt_size = pkt_size;
     }
 #else
     conf->link_speeds = RTE_ETH_LINK_SPEED_AUTONEG;
@@ -3204,6 +3562,8 @@ px_eth_conf(uint16_t port_id,
     {
         conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT |
                                  RTE_ETH_RX_OFFLOAD_SCATTER;
+        /* do not remove below! nicmem uses max_lro_pkt_size */
+        conf->rxmode.max_lro_pkt_size = pkt_size;
     }
 #endif
 
@@ -3555,13 +3915,10 @@ rx_and_px(uint16_t port_id,
           uint16_t nb_pkts,
           uint16_t *num_flows_per_rxq,
           uint16_t *num_items_per_rxq,
-          uint16_t *active_rxq_cnt,
-          uint64_t *queue_time)
+          uint16_t *active_rxq_cnt)
 {
     struct px_dev *px_dev = &g_px_dev[port_id];
     struct px_ctx *pctx = &g_pctx[port_id][queue_id];
-    uint64_t now_ns;
-    static uint64_t bubble_start = 0;
     uint16_t recv = 0, total = 0;
     uint16_t inner_qid;
     uint16_t num_flows_per_latent;
@@ -3570,10 +3927,6 @@ rx_and_px(uint16_t port_id,
     *active_rxq_cnt = 0;
     int i, is_transient = 0;
 
-    now_ns = PX_GETTIME(CLOCK_CPUTSC_PRECISE);
-    *queue_time = pctx->queue_time ? now_ns - pctx->queue_time : 0;
-    pctx->queue_time = now_ns;
-
     /* transient state */
     if (px_dev->num_lxq_scaled_down)
     {
@@ -3581,26 +3934,18 @@ rx_and_px(uint16_t port_id,
         for (i = 0; i < px_dev->prev_num_lxq_per_rxq; i++)
         {
             inner_qid = queue_id * px_dev->max_lxq_per_rxq + pctx->latent_id;
-            recv = rte_eth_rx_burst(port_id,
-                                    inner_qid,
-                                    rx_pkts + total,
-                                    nb_pkts - total);
-            pctx->now_ns = !i ? now_ns : PX_GETTIME(CLOCK_CPUTSC_PRECISE);
-            if (!recv)
+            if (nb_pkts - total)
             {
-                if (!bubble_start)
-                {
-                    bubble_start = pctx->now_ns;
-                }
+                recv = rte_eth_rx_burst(port_id,
+                                        inner_qid,
+                                        rx_pkts + total,
+                                        nb_pkts - total);
             }
             else
             {
-                if (bubble_start)
-                {
-                    g_bubble_tsc[queue_id] += pctx->now_ns - bubble_start;
-                    bubble_start = 0;
-                }
+                recv = 0;
             }
+            pctx->now_ns = PX_GETTIME(CLOCK_CPUTSC_PRECISE);
             if (inner_qid >= px_dev->num_lxq_per_rxq)
             {
                 /**
@@ -3621,16 +3966,23 @@ rx_and_px(uint16_t port_id,
                                      inner_qid,
                                      recv);
 #endif
-            if (recv)
-            {
-                *active_rxq_cnt += 1;
-            }
             total += px_core(pctx,
                              rx_pkts + total,
                              recv,
                              &num_flows_per_latent,
                              &num_items_per_latent);
-
+            // if (num_flows_per_latent)
+            // {
+            //     *active_rxq_cnt += 1;
+            // }
+            // if (recv)
+            // {
+            //     *active_rxq_cnt += 1;
+            // }
+            if (recv || num_flows_per_latent)
+            {
+                *active_rxq_cnt += 1;
+            }
             if (++pctx->latent_id >= px_dev->num_lxq_per_rxq)
             {
                 pctx->latent_id = 0;
@@ -3662,41 +4014,40 @@ rx_and_px(uint16_t port_id,
         for (i = 0; i < px_dev->num_lxq_per_rxq; i++)
         {
             inner_qid = queue_id * px_dev->max_lxq_per_rxq + pctx->latent_id;
-            recv = rte_eth_rx_burst(port_id,
-                                    inner_qid,
-                                    rx_pkts + total,
-                                    nb_pkts - total);
-            pctx->now_ns = !i ? now_ns : PX_GETTIME(CLOCK_CPUTSC_PRECISE);
-            if (!recv)
+            if (nb_pkts - total)
             {
-                if (!bubble_start)
-                {
-                    bubble_start = pctx->now_ns;
-                }
+                recv = rte_eth_rx_burst(port_id,
+                                        inner_qid,
+                                        rx_pkts + total,
+                                        nb_pkts - total);
             }
             else
             {
-                if (bubble_start)
-                {
-                    g_bubble_tsc[queue_id] += pctx->now_ns - bubble_start;
-                    bubble_start = 0;
-                }
+                recv = 0;
             }
+            pctx->now_ns = PX_GETTIME(CLOCK_CPUTSC_PRECISE);
 #if TEST_RSS_ATOMICITY
             px_stat_update_rx_latent(port_id,
                                      inner_qid,
                                      recv);
 #endif
-            if (recv)
-            {
-                *active_rxq_cnt += 1;
-            }
             total += px_core(pctx,
                              rx_pkts + total,
                              recv,
                              &num_flows_per_latent,
                              &num_items_per_latent);
-
+            // if (num_flows_per_latent)
+            // {
+            //     *active_rxq_cnt += 1;
+            // }
+            // if (recv)
+            // {
+            //     *active_rxq_cnt += 1;
+            // }
+            if (recv || num_flows_per_latent)
+            {
+                *active_rxq_cnt += 1;
+            }
             if (++pctx->latent_id >= px_dev->num_lxq_per_rxq)
             {
                 pctx->latent_id = 0;
@@ -3728,42 +4079,25 @@ px_eth_rx_burst(uint16_t port_id,
     uint16_t num_flows_per_rxq = 0;
     uint16_t num_pkts_per_rxq = 0;
     uint16_t active_rxq_cnt = 0;
-    uint64_t queue_time = 0;
     struct rte_mbuf **orig_batch = rx_pkts;
 
-    /* monitor stats on specific core */
-    uint64_t now_ns = PX_GETTIME(CLOCK_CPUTSC_PRECISE);
-    static uint64_t prev_now_ns = 0;
-    if (rte_lcore_id() == STAT_MONITOR_CORE_ID)
+    /* printing should be done by STAT_MONITOR_CORE_ID! */
+    if (queue_id == STAT_MONITOR_CORE_ID)
     {
-        if (prev_now_ns)
-        {
-            if (now_ns - prev_now_ns >= STAT_INTERVAL * NS_PER_S)
-            {
-                /* log stats and check manual gear shift requests */
-                px_stat_monitor(STAT_MONITOR_CORE_ID);
-                /* minimize drift */
-                prev_now_ns += STAT_INTERVAL * NS_PER_S;
-                /* remove drift */
-                if (now_ns - prev_now_ns >= STAT_INTERVAL * NS_PER_S)
-                {
-                    prev_now_ns = now_ns;
-                }
-            }
-        }
-        else
-        {
-            prev_now_ns = now_ns;
-        }
+        px_stat_print(STAT_MONITOR_CORE_ID);
     }
 
-    /* check gear has been shifted and ACK */
+    /* check gear has been shifted */
     if (px_latent_gear_check_notify(port_id))
     {
+        /* if so, ACK */
+        px_latent_gear_ack_per_thread(port_id, queue_id);
+
+        /* save prev states */
         px_dev->prev_num_lxq = px_dev->num_lxq;
         px_dev->prev_num_lxq_per_rxq = px_dev->num_lxq_per_rxq;
         px_dev->num_lxq = px_latent_num_lxq(port_id);
-        px_latent_gear_ack_per_thread(port_id, queue_id);
+        px_dev->num_lxq_per_rxq = px_dev->num_lxq / px_dev->num_rxq;
 
         /* check whether num_lxq decreased */
         if (px_dev->num_lxq < px_dev->prev_num_lxq)
@@ -3774,12 +4108,6 @@ px_eth_rx_burst(uint16_t port_id,
             px_dev->num_lxq_scaled_down = 1;
         }
     }
-    else
-    {
-        px_dev->num_lxq = px_latent_num_lxq(port_id);
-        px_latent_gear_ack_per_thread(port_id, queue_id);
-    }
-    px_dev->num_lxq_per_rxq = px_dev->num_lxq / px_dev->num_rxq;
 
     /* stage 1: fetch from time out ring */
     if (px_dev->cutoff_ns)
@@ -3794,17 +4122,13 @@ px_eth_rx_burst(uint16_t port_id,
     }
 
     /* stage 2: RX and GRO if batch has more rooms */
-    if (nb_pkts)
-    {
-        total_read_pkts += rx_and_px(port_id,
-                                     queue_id,
-                                     rx_pkts,
-                                     nb_pkts,
-                                     &num_flows_per_rxq,
-                                     &num_pkts_per_rxq,
-                                     &active_rxq_cnt,
-                                     &queue_time);
-    }
+    total_read_pkts += rx_and_px(port_id,
+                                 queue_id,
+                                 rx_pkts,
+                                 nb_pkts,
+                                 &num_flows_per_rxq,
+                                 &num_pkts_per_rxq,
+                                 &active_rxq_cnt);
 
     /* stage 3: update stats */
     px_stat_update_rx(port_id,
@@ -3814,7 +4138,7 @@ px_eth_rx_burst(uint16_t port_id,
                       num_flows_per_rxq,
                       num_pkts_per_rxq,
                       active_rxq_cnt,
-                      queue_time);
+                      1);
 
     return total_read_pkts;
 }
@@ -3871,8 +4195,7 @@ px_eth_tx_burst0(uint16_t port_id,
         px_stat_update_tx(port_id,
                           queue_id,
                           out_batch,
-                          read_px_tx_ring,
-                          1);
+                          read_px_tx_ring);
 
         offset +=
             rte_eth_tx_burst(port_id,
@@ -3948,8 +4271,7 @@ px_eth_tx_burst(uint16_t port_id,
     px_stat_update_tx(port_id,
                       queue_id,
                       temp_batch,
-                      nb_pkts_after_uso,
-                      1);
+                      nb_pkts_after_uso);
 
     /* TX */
     offset +=
@@ -3964,8 +4286,21 @@ px_eth_tx_burst(uint16_t port_id,
                 "rte_eth_tx_burst (1): %d/%d sent\n",
                 port_id, queue_id,
                 offset, nb_pkts_after_uso);
+#if !USE_USO
+        fprintf(stderr, "nb_segs: %u, pkt_len: %u, "
+                        "data_len: %u, l2_len: %u, l3_len: %u, l4_len: %u, "
+                        "ol_flags: %lu, tso_segsz: %u\n",
+                (*(temp_batch + offset))->nb_segs,
+                (*(temp_batch + offset))->pkt_len,
+                (*(temp_batch + offset))->data_len,
+                (*(temp_batch + offset))->l2_len,
+                (*(temp_batch + offset))->l3_len,
+                (*(temp_batch + offset))->l4_len,
+                (*(temp_batch + offset))->ol_flags,
+                (*(temp_batch + offset))->tso_segsz);
         rte_exit(EXIT_FAILURE,
                  "TX burst failed (1): not all packets sent\n");
+#endif
     }
     for (i = offset; i < nb_pkts_after_uso; i++)
     {
@@ -3987,8 +4322,7 @@ px_eth_tx_burst(uint16_t port_id,
         px_stat_update_tx(port_id,
                           queue_id,
                           temp_batch,
-                          read_px_tx_ring,
-                          1);
+                          read_px_tx_ring);
 
         /* TX */
         offset += rte_eth_tx_burst(port_id,
@@ -4002,8 +4336,21 @@ px_eth_tx_burst(uint16_t port_id,
                     "rte_eth_tx_burst (2): %d/%d sent\n",
                     port_id, queue_id,
                     offset, read_px_tx_ring);
+#if !USE_USO
+            fprintf(stderr, "nb_segs: %u, pkt_len: %u, "
+                            "data_len: %u, l2_len: %u, l3_len: %u, l4_len: %u, "
+                            "ol_flags: %lu, tso_segsz: %u\n",
+                    (*(temp_batch + offset))->nb_segs,
+                    (*(temp_batch + offset))->pkt_len,
+                    (*(temp_batch + offset))->data_len,
+                    (*(temp_batch + offset))->l2_len,
+                    (*(temp_batch + offset))->l3_len,
+                    (*(temp_batch + offset))->l4_len,
+                    (*(temp_batch + offset))->ol_flags,
+                    (*(temp_batch + offset))->tso_segsz);
             rte_exit(EXIT_FAILURE,
                      "TX burst failed (2): not all packets sent\n");
+#endif
         }
         for (i = offset; i < read_px_tx_ring; i++)
         {

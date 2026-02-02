@@ -61,7 +61,8 @@ struct px_pdu
     /* below fields are all host-byte order */
     uint32_t seq;          // start seq of this PDU
     uint32_t len;          // length of this PDU (exclusive: [seq, seq + len))
-    struct rte_mbuf *mbuf; // cloned PDU as a packet
+    struct rte_mbuf *first; // cloned PDU as a packet
+    struct rte_mbuf *last;
 
     /* parsed PDU info */
     uint32_t pdu_len;
@@ -152,11 +153,11 @@ px_l5_search(uint16_t port_id,
              uint16_t queue_id,
              struct four_tuple *key);
 /*----------------------------------------------------------------------------*/
-void px_l5_rtx(uint16_t port_id,
-               uint16_t queue_id,
-               struct l5_flow *l5p,
-               uint32_t seq,
-               uint32_t len);
+int px_l5_rtx(struct l5_flow *l5p,
+              uint32_t seq,
+              uint32_t len,
+              struct rte_mbuf **tx_pkts,
+              uint16_t tx_max);
 /*----------------------------------------------------------------------------*/
 void px_l5_handle_syn(uint16_t port_id,
                       uint16_t queue_id,
@@ -280,6 +281,17 @@ get_nvme_tcp_hdr_len(struct rte_mbuf *pkt)
     px_read_bytes_from_chain(pkt, off, &v, 1);
 
     return v;
+}
+/*----------------------------------------------------------------------------*/
+static inline int
+px_l5_has_pdu_hdr(struct rte_mbuf *pkt,
+                  struct l5_flow *l5p)
+{
+    uint32_t cur_seq = rte_be_to_cpu_32(*get_tcp_seq(pkt));
+    uint32_t cur_len = get_data_len(pkt);
+
+    return ((l5p->pdu_start_seq + l5p->pdu_len) >= cur_seq) &&
+           ((l5p->pdu_start_seq + l5p->pdu_len + 8) <= (cur_seq + cur_len));
 }
 /*----------------------------------------------------------------------------*/
 static inline void

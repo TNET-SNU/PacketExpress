@@ -1799,6 +1799,11 @@ static inline uint16_t netif_rx_burst(portid_t pid, struct netif_queue_conf *qco
 #if USE_PX
         nrx = px_eth_rx_burst(pid, qconf->id, qconf->mbufs, NETIF_MAX_PKT_BURST);
 #else
+        /* printing should be done by STAT_MONITOR_CORE_ID! */
+        if (qconf->id == STAT_MONITOR_CORE_ID)
+        {
+            px_stat_print(STAT_MONITOR_CORE_ID);
+        }
         nrx = rte_eth_rx_burst(pid, qconf->id, qconf->mbufs, NETIF_MAX_PKT_BURST);
         px_parse_batch(pid, qconf->id, qconf->mbufs, nrx,
                        !JUMBO_FRAME, 1, SEMANTIC_TEST);
@@ -1811,7 +1816,8 @@ static inline uint16_t netif_rx_burst(portid_t pid, struct netif_queue_conf *qco
         };
         nrx = rte_gro_reassemble_burst(qconf->mbufs, nrx, &gro_param);
 #endif
-        px_stat_update_rx(pid, qconf->id, qconf->mbufs, nrx, 0, 0, 0, 0);
+        px_stat_update_rx(pid, qconf->id, qconf->mbufs, nrx, 0, 0, 0,
+                          USE_LRO || USE_GRO);
 #endif
     }
 
@@ -2159,7 +2165,7 @@ static inline void netif_tx_burst(lcoreid_t cid, portid_t pid, queueid_t qindex)
 #if NUM_HAIRPIN_Q && (HAIRPIN_POLICY == 1)
     px_flow_create_burst(pid, txq->id, txq->mbufs, txq->len);
 #endif
-    px_stat_update_tx(pid, txq->id, txq->mbufs, txq->len, USE_LRO || USE_GRO);
+    px_stat_update_tx(pid, txq->id, txq->mbufs, txq->len);
     ntx = rte_eth_tx_burst(pid, txq->id, txq->mbufs, txq->len);
     lcore_stats[cid].opackets += ntx;
     /* do not calculate obytes here in consideration of efficency */
@@ -4123,17 +4129,17 @@ int netif_port_start(struct netif_port *port)
         return EDPVS_DPDKAPIFAIL;
     }
 #else
-    // start stat monitor
-    ret = px_stat_start_monitor(1,
-                                rte_eth_dev_count_avail(),
-                                port->nrxq,
-                                port->ntxq,
-                                0,
-                                0,
-                                NULL,
-                                NULL);
+    // configure stat monitor
+    ret = px_stat_configure(1,
+                            port->id,
+                            port->nrxq,
+                            port->ntxq,
+                            0,
+                            0,
+                            NULL,
+                            NULL);
     if (ret < 0) {
-        RTE_LOG(ERR, NETIF, "%s: px_stat_start_monitor failed on %s\n",
+        RTE_LOG(ERR, NETIF, "%s: px_stat_configure failed on %s\n",
                 __func__, port->name);
         return EDPVS_DPDKAPIFAIL;
     }

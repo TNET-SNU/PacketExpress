@@ -48,6 +48,8 @@ struct perf_metric
     float active_rxq_per_available_rxq;
     float num_flows_per_active_rxq;
     float num_pkts_per_active_rxq;
+    float num_flows_per_available_rxq;
+    float num_pkts_per_available_rxq;
 };
 /*----------------------------------------------------------------------------*/
 struct px_latent_gear
@@ -142,10 +144,13 @@ static inline int
 px_latent_is_hard_to_merge(struct perf_metric *cur)
 {
     // return (cur->active_rxq_per_available_rxq > 40) &&
-    //        (cur->num_flows_per_active_rxq >= 1);
-    // return (cur->active_rxq_per_available_rxq > 40) &&
     //        (cur->num_pkts_per_active_rxq > 2);
-    return (cur->active_rxq_per_available_rxq > 40);
+    // return (cur->active_rxq_per_available_rxq > 40) ||
+    //        (cur->num_flows_per_active_rxq > 2);
+    // return (cur->active_rxq_per_available_rxq > 40);
+    // return (cur->num_flows_per_active_rxq > 2);
+    return (cur->num_flows_per_available_rxq > 100);
+    // return (cur->num_pkts_per_available_rxq > 40);
 }
 /*----------------------------------------------------------------------------*/
 /**
@@ -155,10 +160,12 @@ px_latent_is_hard_to_merge(struct perf_metric *cur)
 static inline int
 px_latent_is_easy_to_merge(struct perf_metric *cur)
 {
-    // return (cur->active_rxq_per_available_rxq <= 25) &&
+    // return (cur->active_rxq_per_available_rxq <= 20) &&
     //        (cur->num_pkts_per_active_rxq <= 2);
-    return (cur->active_rxq_per_available_rxq <= 20);
-    // return (cur->active_rxq_per_available_rxq < 40);
+    // return (cur->active_rxq_per_available_rxq <= 20);
+    // return (cur->num_flows_per_active_rxq <= 1);
+    return (cur->num_flows_per_available_rxq < 10);
+    // return (cur->num_pkts_per_available_rxq <= 10);
 }
 /*----------------------------------------------------------------------------*/
 /**

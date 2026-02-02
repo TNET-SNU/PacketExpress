@@ -86,7 +86,8 @@ extern "C"
 // #define FALLBACK_eMTU 576
 #define FALLBACK_eMTU 1240
 /*----------------------------------------------------------------------------*/
-#define NVME_TCP_PX 1
+#define NVME_TCP_PX 0
+#define IGNORE_IPID 1
 #ifndef PAGE_SIZE
 #define PAGE_SIZE 4096
 #endif
@@ -108,9 +109,10 @@ extern "C"
 #define MEASURE_DELAY 0
 /*----------------------------------------------------------------------------*/
 #define LOG_RX_HW_TIMESTAMP 0
-#define LOG_DELAY 0
 #define LOG_BUFFER_SIZE (1024 * 1024)
 /*----------------------------------------------------------------------------*/
+#define FIXED_TIMEOUT 0
+// #define FIXED_TIMEOUT 1
 // #define FIXED_TIMEOUT 720000 /* 720us */ /* 100Mps */
 // #define FIXED_TIMEOUT 72000 /* 72us */ /* 1Gbps */
 // #define FIXED_TIMEOUT 180000 /* 180us */ /* 400Mbps */
@@ -119,7 +121,7 @@ extern "C"
 #define LOG_IAT_ENTRIES 0
 #define USE_JUMP_RULE 0
 /*----------------------------------------------------------------------------*/
-#define USE_USO 0
+#define USE_USO 1
 /*----------------------------------------------------------------------------*/
 /* Custom timestamp flags */
 #define CLOCK_CPUTSC 100
@@ -259,17 +261,60 @@ SEQ_EQ(uint32_t a, uint32_t b)
     return a == b;
 }
 /*----------------------------------------------------------------------------*/
-static inline uint32_t
+/* Signed sequence difference (valid when |a-b| < 2^31) */
+static inline int32_t
 SEQ_DIFF(uint32_t a, uint32_t b)
 {
-    return (uint32_t)((int32_t)(a - b));
+    return (int32_t)(a - b);
 }
 /*----------------------------------------------------------------------------*/
+/* Wrap-aware overlap on modulo-2^32 sequence space.
+ * Intervals are half-open: [s, e)
+ *
+ * Semantics:
+ *  - s == e : empty interval
+ *  - s <  e : non-wrapping interval [s, e)
+ *  - s >  e : wrapping interval [s, 2^32) U [0, e)
+ *
+ * Returns 1 if overlaps, 0 otherwise.
+ */
 static inline int
 SEQ_RANGE_OVERLAP(uint32_t s1, uint32_t e1,
                   uint32_t s2, uint32_t e2)
 {
-    return SEQ_LT(s1, e2) && SEQ_LT(s2, e1);
+    /* empty intervals never overlap */
+    if (s1 == e1 || s2 == e2)
+    {
+        return 0;
+    }
+
+    uint64_t S1 = s1, E1 = e1;
+    uint64_t S2 = s2, E2 = e2;
+
+    int w1 = (s1 > e1); /* wraps */
+    int w2 = (s2 > e2);
+
+    if (!w1 && !w2)
+    {
+        /* [S1,E1) vs [S2,E2) */
+        return (S1 < E2) && (S2 < E1);
+    }
+
+    if (w1 && w2)
+    {
+        /* both wrap: each covers two pieces, so they always overlap */
+        return 1;
+    }
+
+    if (w1 && !w2)
+    {
+        /* [S1,2^32) U [0,E1) vs [S2,E2) */
+        return (S1 < E2) || (S2 < E1);
+    }
+
+    /* !w1 && w2 */
+    /* [S1,E1) vs [S2,2^32) U [0,E2) */
+    return (S2 < E1) || (S1 < E2);
 }
 /*----------------------------------------------------------------------------*/
 static inline bool
@@ -296,10 +341,10 @@ ID_GEQ(uint16_t a, uint16_t b)
     return (int16_t)(a - b) >= 0;
 }
 /*----------------------------------------------------------------------------*/
-static inline uint16_t
+static inline int16_t
 ID_DIFF(uint16_t a, uint16_t b)
 {
-    return (uint16_t)((int16_t)(a - b));
+    return (int16_t)(a - b);
 }
 /*----------------------------------------------------------------------------*/
 static inline uint32_t
@@ -474,39 +519,40 @@ get_num_cpus(void)
     return sysconf(_SC_NPROCESSORS_ONLN);
 }
 /*----------------------------------------------------------------------------*/
+/**
+ * Return an INDIRECT mbuf that references only the first segment's data.
+ * - Does NOT touch/modify the original packet chain.
+ * - Zero-copy: shares the first segment buffer via refcnt (attach).
+ * - Returned mbuf is single-seg (next=NULL, nb_segs=1).
+ *
+ * NOTE: caller must rte_pktmbuf_free() the returned mbuf.
+ */
 static inline struct rte_mbuf *
-get_firstseg_clone(struct rte_mbuf *pkt)
+get_firstseg_clone(struct rte_mbuf *pkt, struct rte_mempool *pool)
 {
-    struct rte_mbuf *clone, *next;
-    uint16_t nb_segs;
-    uint32_t pkt_len;
+    struct rte_mbuf *c;
 
-    /* backup this packet */
-    next = pkt->next;
-    nb_segs = pkt->nb_segs;
-    pkt_len = pkt->pkt_len;
-
-    /* unchain next segments */
-    pkt->next = NULL;
-    pkt->nb_segs = 1;
-    pkt->pkt_len = pkt->data_len;
-
-    /* clone pkt */
-    clone = rte_pktmbuf_clone(pkt, pkt->pool);
-
-    /* rollback */
-    pkt->next = next;
-    pkt->nb_segs = nb_segs;
-    pkt->pkt_len = pkt_len;
-
-    /* check the clone */
-    if (!clone)
-    {
-        fprintf(stdout, "rte_pktmbuf_clone failed!\n");
+    if (!pkt)
         return NULL;
-    }
 
-    return clone;
+    /* allocate a fresh mbuf to become an indirect mbuf */
+    c = rte_pktmbuf_alloc(pool ? pool : pkt->pool);
+    if (!c)
+        return NULL;
+
+    /* share pkt's first segment buffer */
+    rte_pktmbuf_attach(c, pkt);
+
+    /* make it reference exactly the first segment's data */
+    c->data_off = pkt->data_off;
+    c->data_len = pkt->data_len;
+
+    /* single node */
+    c->next = NULL;
+    c->nb_segs = 1;
+    c->pkt_len = c->data_len;
+
+    return c;
 }
 /*----------------------------------------------------------------------------*/
 static inline uint32_t
@@ -519,6 +565,19 @@ static inline struct rte_ether_addr *
 get_macs(struct rte_mbuf *pkt)
 {
     return rte_pktmbuf_mtod(pkt, struct rte_ether_addr *);
+}
+/*----------------------------------------------------------------------------*/
+static inline struct rte_ether_addr *
+get_dst_mac(struct rte_mbuf *pkt)
+{
+    return rte_pktmbuf_mtod(pkt, struct rte_ether_addr *);
+}
+/*----------------------------------------------------------------------------*/
+static inline struct rte_ether_addr *
+get_src_mac(struct rte_mbuf *pkt)
+{
+    return rte_pktmbuf_mtod_offset(pkt, struct rte_ether_addr *,
+                                   RTE_ETHER_ADDR_LEN);
 }
 /*----------------------------------------------------------------------------*/
 static inline uint16_t *
@@ -943,23 +1002,18 @@ struct tcp_sack_range
     uint32_t right;
 };
 /*----------------------------------------------------------------------------*/
-/**
- * Get pointer to first SACK block (payload start of TCPOPT_SACK option),
- * and set out_nblocks=k.
- * SACK option length: 2 + 8 * k, k >= 1
- */
-static inline struct tcp_sack_block *
-get_tcp_sack(struct rte_mbuf *pkt, int *out_nblocks)
+/* Return 1 if TCP option includes SACK Permitted (kind=4,len=2), else 0 */
+static inline int
+is_sack_permitted(struct rte_mbuf *pkt)
 {
     uint8_t *tcpopt = get_tcp_option(pkt);
     int total_optlen = get_tcp_optlen(pkt);
     int i = 0;
 
-    if (!tcpopt || total_optlen <= 0 || !out_nblocks)
+    if (!tcpopt || total_optlen <= 0)
     {
-        return NULL;
+        return 0;
     }
-    *out_nblocks = 0;
 
     while (i < total_optlen)
     {
@@ -997,31 +1051,17 @@ get_tcp_sack(struct rte_mbuf *pkt, int *out_nblocks)
             break;
         }
 
-        if (opt == TCPOPT_SACK)
+        /* SACK permitted: kind=4, len=2 */
+        if (opt == TCPOPT_SACK_PERMITTED && optlen == TCPOLEN_SACK_PERMITTED)
         {
-            /* must be 2 + 8 * k */
-            if (optlen < 10 || ((optlen - 2) % 8) != 0)
-            {
-                return NULL;
-            }
-
-            int nblocks = (optlen - 2) / 8;
-            if (nblocks <= 0)
-            {
-                return NULL;
-            }
-
-            *out_nblocks = nblocks;
-
-            /* tcpopt + i points to first block's left edge */
-            return (struct tcp_sack_block *)(tcpopt + i);
+            return 1;
         }
 
         /* skip payload */
         i += payload_len;
     }
 
-    return NULL;
+    return 0;
 }
 /*----------------------------------------------------------------------------*/
 static inline void
@@ -1109,7 +1149,7 @@ px_collect_sack_ranges(struct tcp_sack_block *b, int nb,
  * Merge two SACK block lists (payload pointers + counts) and encode SACK option.
  *
  * Inputs:
- *  - b1, nb1: blocks from pkt1 (payload start returned by get_tcp_sack)
+ *  - b1, nb1: blocks from pkt1 (payload start returned by get_tcp_sack_blocks)
  *  - b2, nb2: blocks from pkt2
  *
  * Output:
@@ -1183,6 +1223,18 @@ static inline uint32_t
 get_data_len(struct rte_mbuf *pkt)
 {
     return pkt->pkt_len - get_hdr_len(pkt);
+}
+/*----------------------------------------------------------------------------*/
+static inline uint32_t
+get_l2_sdu_len(struct rte_mbuf *pkt)
+{
+    return pkt->pkt_len - pkt->l2_len;
+}
+/*----------------------------------------------------------------------------*/
+static inline uint32_t
+get_l3_sdu_len(struct rte_mbuf *pkt)
+{
+    return pkt->pkt_len - pkt->l2_len - pkt->l3_len;
 }
 /*----------------------------------------------------------------------------*/
 static inline uint8_t *
@@ -1289,32 +1341,97 @@ is_sctp(struct rte_mbuf *pkt)
 }
 /*----------------------------------------------------------------------------*/
 static inline void
-setup_ipv4_tx_cksum(struct rte_mbuf *pkt)
+setup_ipv4(struct rte_mbuf *pkt)
 {
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
-    pkt->ol_flags |= PKT_TX_IPV4 |
-                     PKT_TX_IP_CKSUM;
+    pkt->ol_flags |= PKT_TX_IPV4;
 #else
-    pkt->ol_flags |= RTE_MBUF_F_TX_IPV4 |
-                     RTE_MBUF_F_TX_IP_CKSUM;
+    pkt->ol_flags |= RTE_MBUF_F_TX_IPV4;
+#endif
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+setup_ipv6(struct rte_mbuf *pkt)
+{
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    pkt->ol_flags |= PKT_TX_IPV6;
+#else
+    pkt->ol_flags |= RTE_MBUF_F_TX_IPV6;
+#endif
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+unset_ipv4(struct rte_mbuf *pkt)
+{
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    pkt->ol_flags &= ~PKT_TX_IPV4;
+#else
+    pkt->ol_flags &= ~RTE_MBUF_F_TX_IPV4;
+#endif
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+unset_ipv6(struct rte_mbuf *pkt)
+{
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    pkt->ol_flags &= ~PKT_TX_IPV6;
+#else
+    pkt->ol_flags &= ~RTE_MBUF_F_TX_IPV6;
+#endif
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+setup_ip_version(struct rte_mbuf *pkt)
+{
+    if (is_ipv4(pkt))
+    {
+        setup_ipv4(pkt);
+    }
+    else if (is_ipv6(pkt))
+    {
+        setup_ipv6(pkt);
+    }
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+unset_ip_version(struct rte_mbuf *pkt)
+{
+    if (is_ipv4(pkt))
+    {
+        unset_ipv4(pkt);
+    }
+    else if (is_ipv6(pkt))
+    {
+        unset_ipv6(pkt);
+    }
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+setup_ipv4_tx_cksum(struct rte_mbuf *pkt)
+{
+    setup_ip_version(pkt);
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    pkt->ol_flags |= PKT_TX_IP_CKSUM;
+#else
+    pkt->ol_flags |= RTE_MBUF_F_TX_IP_CKSUM;
 #endif
 }
 /*----------------------------------------------------------------------------*/
 static inline void
 setup_ipv6_tx_cksum(struct rte_mbuf *pkt)
 {
+    setup_ip_version(pkt);
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
-    pkt->ol_flags |= PKT_TX_IPV6 |
-                     PKT_TX_IP_CKSUM;
+    pkt->ol_flags |= PKT_TX_IP_CKSUM;
 #else
-    pkt->ol_flags |= RTE_MBUF_F_TX_IPV6 |
-                     RTE_MBUF_F_TX_IP_CKSUM;
+    pkt->ol_flags |= RTE_MBUF_F_TX_IP_CKSUM;
 #endif
 }
 /*----------------------------------------------------------------------------*/
 static inline void
 setup_tcp_tx_cksum(struct rte_mbuf *pkt)
 {
+    setup_ip_version(pkt);
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
     pkt->ol_flags |= PKT_TX_TCP_CKSUM;
 #else
@@ -1325,6 +1442,7 @@ setup_tcp_tx_cksum(struct rte_mbuf *pkt)
 static inline void
 setup_udp_tx_cksum(struct rte_mbuf *pkt)
 {
+    setup_ip_version(pkt);
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
     pkt->ol_flags |= PKT_TX_UDP_CKSUM;
 #else
@@ -1335,6 +1453,7 @@ setup_udp_tx_cksum(struct rte_mbuf *pkt)
 static inline void
 setup_sctp_tx_cksum(struct rte_mbuf *pkt)
 {
+    setup_ip_version(pkt);
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
     pkt->ol_flags |= PKT_TX_SCTP_CKSUM;
 #else
@@ -1348,6 +1467,7 @@ static inline void
 setup_tso(struct rte_mbuf *pkt,
           uint16_t tso_segsz)
 {
+    setup_ip_version(pkt);
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
     pkt->ol_flags |= PKT_TX_TCP_SEG;
 #else
@@ -1361,6 +1481,7 @@ setup_tso(struct rte_mbuf *pkt,
 static inline void
 unset_tso(struct rte_mbuf *pkt)
 {
+    unset_ip_version(pkt);
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
     pkt->ol_flags &= ~PKT_TX_TCP_SEG;
 #else
@@ -1379,20 +1500,20 @@ is_tso(struct rte_mbuf *pkt)
 }
 /*----------------------------------------------------------------------------*/
 static inline int
-is_px(struct rte_mbuf *pkt)
+is_px_caravan(struct rte_mbuf *pkt)
 {
     return *get_ipv4_tos(pkt) & PX_MARK_ON_TOS;
 }
 /*----------------------------------------------------------------------------*/
 static inline int
-mark_px(struct rte_mbuf *pkt)
+mark_px_caravan(struct rte_mbuf *pkt)
 {
     uint8_t *tos = get_ipv4_tos(pkt);
     return *tos |= PX_MARK_ON_TOS;
 }
 /*----------------------------------------------------------------------------*/
 static inline int
-unmark_px(struct rte_mbuf *pkt)
+unmark_px_caravan(struct rte_mbuf *pkt)
 {
     uint8_t *tos = get_ipv4_tos(pkt);
     return *tos &= ~PX_MARK_ON_TOS;
@@ -1430,7 +1551,7 @@ is_uso_needed(struct rte_mbuf *pkt)
     {
         return 0;
     }
-    if (!is_px(pkt))
+    if (!is_px_caravan(pkt))
     {
         return 0;
     }
@@ -1492,21 +1613,28 @@ update_udplen(struct rte_mbuf *pkt)
     *udplen = rte_cpu_to_be_16(pkt->pkt_len - pkt->l2_len - pkt->l3_len);
 }
 /*----------------------------------------------------------------------------*/
-/*
- * if a TCP packet is seperated, update seq of second TCP packet
- */
+/* Update TCP SEQ by signed diff (can be negative). Wrap-around is intentional. */
 static inline void
-update_tcpseq(struct rte_mbuf *pkt,
-              uint32_t diff)
+update_tcpseq(struct rte_mbuf *pkt, int32_t diff)
 {
     uint32_t *seq = get_tcp_seq(pkt);
-    *seq = rte_cpu_to_be_32(rte_be_to_cpu_32(*seq) + diff);
+
+    uint32_t cur = rte_be_to_cpu_32(*seq);
+    /* C unsigned add is modulo 2^32, so this handles overflow/underflow safely. */
+    uint32_t next = cur + (uint32_t)diff;
+
+    *seq = rte_cpu_to_be_32(next);
 }
 /*----------------------------------------------------------------------------*/
 static inline void
 update_tso(struct rte_mbuf *pkt,
            uint16_t segsz)
 {
+    if (pkt->nb_segs > 40 || pkt->pkt_len > 1024 * 1024)
+    {
+        rte_pktmbuf_dump(stdout, pkt, 90);
+        rte_panic("ERROR: too many segments or too large packet for TSO\n");
+    }
     if (get_data_len(pkt) > segsz)
     {
         setup_tso(pkt, segsz);
@@ -1586,7 +1714,11 @@ copy_orig_four_tuple(struct rte_mbuf *dst,
         return;
     }
 
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
     dst->ol_flags |= (PKT_FIRST_FREE << 1);
+#else
+    dst->ol_flags |= (RTE_MBUF_F_FIRST_FREE << 1);
+#endif
 
     memcpy(dst->buf_addr, src->buf_addr, sizeof(struct four_tuple));
 }
@@ -1632,13 +1764,48 @@ put_sw_timestamp(struct rte_mbuf *pkt,
 
     /* backup the tuple in the headroom */
     *timestamp_pos = timestamp;
+
+    /* mark that the headroom is used for timestamp */
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    pkt->ol_flags |= (PKT_FIRST_FREE << 2);
+#else
+    pkt->ol_flags |= (RTE_MBUF_F_FIRST_FREE << 2);
+#endif
 }
 /*----------------------------------------------------------------------------*/
 static inline uint64_t
 get_sw_timestamp(struct rte_mbuf *pkt)
 {
+    /* check if the headroom is used for timestamp */
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    if (!(pkt->ol_flags & (PKT_FIRST_FREE << 2)))
+#else
+    if (!(pkt->ol_flags & (RTE_MBUF_F_FIRST_FREE << 2)))
+#endif
+    {
+        return 0;
+    }
+
     return *(uint64_t *)((uint8_t *)pkt->buf_addr +
                          sizeof(struct four_tuple));
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+reset_sw_timestamp(struct rte_mbuf *pkt)
+{
+    uint64_t *timestamp_pos =
+        (uint64_t *)((uint8_t *)pkt->buf_addr +
+                     sizeof(struct four_tuple));
+
+    /* backup the tuple in the headroom */
+    *timestamp_pos = 0;
+
+    /* mark that the headroom is used for 4-tuple */
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+    pkt->ol_flags &= ~(PKT_FIRST_FREE << 2);
+#else
+    pkt->ol_flags &= ~(RTE_MBUF_F_FIRST_FREE << 2);
+#endif
 }
 /*----------------------------------------------------------------------------*/
 /* Incremental checksum update for 16-bit value change */
@@ -2167,28 +2334,156 @@ separate_edge_seg(struct rte_mbuf *pkt,
     return edge_head;
 }
 /*----------------------------------------------------------------------------*/
+static inline struct rte_mbuf *
+separate_edge_seg1(struct rte_mbuf *pkt,
+                   uint32_t last_segsz,
+                   struct rte_mempool *pool)
+{
+    struct rte_mbuf *edge = pkt, *edge_tail = NULL, *edge_head;
+    struct rte_mbuf *hdr = pkt, *next;
+    uint32_t hdr_size = get_hdr_len(pkt);
+    uint32_t target_size = pkt->pkt_len - last_segsz;
+    uint32_t trim_size = 0, pkt_size = 0;
+    uint16_t seg_idx;
+    int edge_tail_indirect = 0;
+
+    if (last_segsz == 0 || target_size <= hdr_size)
+    {
+        /* invalid parameters */
+        rte_exit(EXIT_FAILURE,
+                 "[line %d] px_separate_edge_seg: invalid parameters\n", __LINE__);
+    }
+
+    /* find edge segment */
+    for (seg_idx = 0; seg_idx < pkt->nb_segs; seg_idx++)
+    {
+        pkt_size += edge->data_len;
+        if (pkt_size >= target_size)
+        {
+            trim_size = pkt_size - target_size;
+            break;
+        }
+        edge = edge->next;
+    }
+
+    assert(seg_idx < pkt->nb_segs);
+    assert(trim_size <= last_segsz);
+
+    next = edge->next;
+    edge->next = NULL;
+    if (!trim_size)
+    {
+        /* already separated: tail starts at next */
+        edge_tail = next;
+    }
+    else
+    {
+        /* make edge_tail segment (ONE mbuf, INDIRECT) */
+        edge_tail = rte_pktmbuf_alloc(pool);
+        if (!edge_tail)
+        {
+            edge->next = next;
+            rte_exit(EXIT_FAILURE,
+                     "[line %d] px_separate_edge_seg: alloc failed\n", __LINE__);
+        }
+
+        rte_pktmbuf_attach(edge_tail, edge);
+
+        /* point to the last trim_size bytes of 'edge' */
+        edge_tail->data_off = (uint16_t)(edge->data_off + (edge->data_len - trim_size));
+        edge_tail->data_len = (uint16_t)trim_size;
+
+        /* keep it as a single node in the tail chain */
+        edge_tail->pkt_len = edge_tail->data_len;
+        edge_tail->nb_segs = 1;
+        edge_tail->next = next;
+
+        edge_tail_indirect = 1;
+    }
+
+    /* make edge_head segment (copy only header) */
+    edge_head = rte_pktmbuf_copy(hdr, pool, 0, hdr_size);
+    if (!edge_head)
+    {
+        edge->next = next;
+        if (edge_tail_indirect)
+        {
+            /* detach and free only the indirect node (do not free 'next' chain) */
+            edge_tail->next = NULL;
+            rte_pktmbuf_free(edge_tail);
+        }
+        rte_exit(EXIT_FAILURE,
+                 "[line %d] px_separate_edge_seg: header copy failed\n", __LINE__);
+    }
+    put_sw_timestamp(edge_head, get_sw_timestamp(pkt));
+    copy_orig_four_tuple(edge_head, pkt);
+
+    edge_head->data_len = hdr_size;
+    edge_head->next = edge_tail;
+    edge_head->pkt_len = hdr_size + last_segsz;
+
+    /* nb_segs: hdr + (#segs in tail chain)
+     * tail chain is (next chain) plus optional indirect node for edge-tail
+     */
+    if (!trim_size)
+    {
+        /* hdr + remaining segs after edge */
+        edge_head->nb_segs = pkt->nb_segs - (seg_idx + 1) + 1; /* +1 for hdr */
+    }
+    else
+    {
+        /* hdr + 1(indirect edge_tail) + remaining segs after edge */
+        edge_head->nb_segs = 1                                 /* hdr */
+                             + 1                               /* edge_tail indirect */
+                             + (pkt->nb_segs - (seg_idx + 1)); /* segs in 'next' chain */
+    }
+
+    /* update header (e.g., TCP seq) */
+    update_tcpseq(edge_head, target_size - hdr_size);
+    update_ipid(edge_head, rte_be_to_cpu_16(*get_ipv4_id(pkt)) + 1);
+
+    /* trim original edge segment */
+    edge->data_len -= trim_size;
+
+    /* setup first segment */
+    pkt->pkt_len = target_size;
+    pkt->nb_segs = seg_idx + 1;
+
+    px_assert_chain(pkt);
+    px_assert_chain(edge_head);
+    assert(pkt->pkt_len + edge_head->pkt_len ==
+           target_size + (hdr_size + last_segsz));
+
+    return edge_head;
+}
+/*----------------------------------------------------------------------------*/
 /**
  * Build a new chained mbuf that represents payload slice:
  * payload offset `poff` bytes from payload start, length `plen`.
- * Return head of cloned payload chain (no L2/L3/L4 header).
+ *
+ * ZC + SAFE version:
+ * - Uses INDIRECT mbufs: rte_pktmbuf_alloc() + rte_pktmbuf_attach()
+ * - Never touches source chain (pkt/m)
+ * - Returned chain is payload-only (no L2/L3/L4 header)
  */
 static inline struct rte_mbuf *
-px_clone_payload_slice_zc(struct rte_mbuf *pkt,
-                          uint32_t hdr_len,
-                          uint32_t poff,
-                          uint32_t plen,
-                          struct rte_mempool *pool)
+px_clone_slice(struct rte_mbuf *pkt,
+               uint32_t off,
+               uint32_t len,
+               struct rte_mempool *pool)
 {
-    uint32_t skip = hdr_len + poff; /* bytes from pkt start */
-    uint32_t need = plen;
-
     struct rte_mbuf *m = pkt;
     struct rte_mbuf *out_head = NULL, *out_tail = NULL;
 
-    /* walk to the segment that contains 'skip' */
-    while (m && skip >= m->data_len)
+    if (!pkt || len == 0)
     {
-        skip -= m->data_len;
+        return NULL;
+    }
+
+    /* walk to the segment that contains 'off' */
+    while (m && off >= m->data_len)
+    {
+        off -= m->data_len;
         m = m->next;
     }
     if (!m)
@@ -2196,30 +2491,35 @@ px_clone_payload_slice_zc(struct rte_mbuf *pkt,
         return NULL;
     }
 
-    while (m && need > 0)
+    while (m && len > 0)
     {
-        uint32_t take = m->data_len - skip;
-        if (take > need)
+        uint32_t take = m->data_len - off;
+        if (take > len)
         {
-            take = need;
+            take = len;
         }
 
-        struct rte_mbuf *c = rte_pktmbuf_clone(m, pool);
+        /* allocate a fresh mbuf, then attach to 'm' (indirect) */
+        struct rte_mbuf *c = rte_pktmbuf_alloc(pool);
         if (!c)
         {
-            if (out_head) 
+            if (out_head)
             {
                 rte_pktmbuf_free(out_head);
             }
             return NULL;
         }
 
-        /* adjust clone to [skip, skip+take) within this segment */
-        c->data_off += skip;
-        c->data_len  = take;
-        c->pkt_len   = take;
-        c->nb_segs   = 1;
-        c->next      = NULL;
+        rte_pktmbuf_attach(c, m);
+
+        /* adjust indirect mbuf to [off, off+take) within this segment */
+        c->data_off = (uint16_t)(m->data_off + off);
+        c->data_len = (uint16_t)take;
+
+        /* make it a single-seg node in the output chain */
+        c->pkt_len = c->data_len;
+        c->nb_segs = 1;
+        c->next = NULL;
 
         if (!out_head)
         {
@@ -2231,12 +2531,12 @@ px_clone_payload_slice_zc(struct rte_mbuf *pkt,
         }
         out_tail = c;
 
-        need -= take;
-        skip = 0;
+        len -= take;
+        off = 0;
         m = m->next;
     }
 
-    if (need != 0)
+    if (len != 0)
     {
         if (out_head)
         {
@@ -2259,7 +2559,7 @@ px_clone_payload_slice_zc(struct rte_mbuf *pkt,
     return out_head;
 }
 /*----------------------------------------------------------------------------*/
-static inline int
+static inline void
 px_chained_trim(struct rte_mbuf *pkt, uint32_t len)
 {
     uint32_t target_size = pkt->pkt_len - len;
@@ -2268,7 +2568,13 @@ px_chained_trim(struct rte_mbuf *pkt, uint32_t len)
     uint32_t trim_size = 0;
     uint16_t seg_idx;
 
-    if (!pkt || !len || len >= pkt->pkt_len)
+    if (!len)
+    {
+        /* nothing to trim */
+        return;
+    }
+
+    if (!pkt || len >= pkt->pkt_len)
     {
         /* invalid parameters */
         rte_exit(EXIT_FAILURE,
@@ -2298,8 +2604,10 @@ px_chained_trim(struct rte_mbuf *pkt, uint32_t len)
     /* free from edge->next */
     if (edge->next)
     {
-        rte_pktmbuf_free(edge->next);
+        /* avoid dangling pointer / accidental double free */
+        struct rte_mbuf *tail = edge->next;
         edge->next = NULL;
+        rte_pktmbuf_free(tail);
     }
 
     /* trim edge segment */
@@ -2308,104 +2616,26 @@ px_chained_trim(struct rte_mbuf *pkt, uint32_t len)
     /* update head */
     pkt->pkt_len = target_size;
     pkt->nb_segs = seg_idx + 1;
-
-    return 0;
 }
 /*----------------------------------------------------------------------------*/
-// static inline struct rte_mbuf *
-// px_chained_adj(struct rte_mbuf *pkt,
-//                uint32_t adj_segsz,
-//                struct rte_mempool *pool)
-// {
-//     struct rte_mbuf *edge = pkt, *edge_tail = NULL, *edge_head;
-//     struct rte_mbuf *hdr = pkt, *next;
-//     uint32_t hdr_size = get_hdr_len(pkt);
-//     uint32_t target_size = adj_segsz + hdr_size;
-//     uint32_t first_trim_size = 0, edge_adj_size = 0, pkt_size = 0;
-//     uint16_t seg_idx;
-//     int edge_tail_cloned = 0;
-
-//     /* find edge segment */
-//     for (seg_idx = 0; seg_idx < pkt->nb_segs; seg_idx++)
-//     {
-//         pkt_size += edge->data_len;
-//         if (pkt_size >= target_size)
-//         {
-//             edge_adj_size = edge->data_len - (pkt_size - target_size);
-//             break;
-//         }
-//         edge = edge->next;
-//     }
-
-//     assert(seg_idx < pkt->nb_segs);
-//     assert(edge_adj_size <= adj_segsz);
-
-//     next = edge->next;
-//     edge->next = NULL;
-//     if (edge_adj_size == edge->data_len)
-//     {
-//         /* already separated */
-//         if (seg_idx)
-//         {
-//             rte_pktmbuf_free(hdr->next);
-//         }
-//         hdr->data_len = hdr_size;
-//         hdr->next = next;
-//         hdr->pkt_len -= adj_segsz;
-//         hdr->nb_segs = pkt->nb_segs - seg_idx + 1;
-//         update_tcpseq(hdr, adj_segsz);
-
-//         return hdr;
-//     }
-
-//     /* make edge_tail segment */
-//     edge->data_off += edge_adj_size;
-//     edge->data_len = edge->data_len - edge_adj_size;
-//     if (seg_idx)
-//     {
-//         rte_pktmbuf_free(hdr->next);
-//     }
-//     hdr->next = edge;
-
-
-
-//     /* make edge_head segment */
-//     edge_head = rte_pktmbuf_copy(hdr, pool, 0, hdr_size);
-//     if (!edge_head)
-//     {
-//         edge->next = next;
-//         if (edge_tail_cloned)
-//         {
-//             edge_tail->next = NULL;
-//             rte_pktmbuf_free(edge_tail);
-//         }
-//         rte_exit(EXIT_FAILURE,
-//                  "px_separate_edge_seg: duplication failed\n");
-//     }
-//     put_sw_timestamp(edge_head, get_sw_timestamp(pkt));
-//     copy_orig_four_tuple(edge_head, pkt);
-//     edge_head->data_len = hdr_size;
-//     edge_head->next = edge_tail;
-//     edge_head->pkt_len = hdr_size + last_segsz;
-//     edge_head->nb_segs = pkt->nb_segs - seg_idx;
-//     if (trim_size)
-//     {
-//         edge_head->nb_segs += 1;
-//     }
-
-//     /* update header (e.g., TCP seq) */
-//     update_tcpseq(edge_head, target_size - hdr_size);
-//     update_ipid(edge_head, rte_be_to_cpu_16(*get_ipv4_id(pkt)) + 1);
-
-//     /* setup first segment */
-//     pkt->pkt_len = target_size;
-//     pkt->nb_segs = seg_idx + 1;
-
-//     /* trim original edge segment */
-//     edge->data_len -= trim_size;
-
-//     return edge_head;
-// }
+/* Recompute pkt_len/nb_segs for a chain head (payload-only here).
+ * (costly but safe; OK for bring-up)
+ */
+static inline void
+mbuf_recalc_len(struct rte_mbuf *m)
+{
+    uint32_t pkt_len = 0;
+    uint16_t nb_segs = 0;
+    struct rte_mbuf *it = m;
+    while (it)
+    {
+        pkt_len += it->data_len;
+        nb_segs++;
+        it = it->next;
+    }
+    m->pkt_len = pkt_len;
+    m->nb_segs = nb_segs;
+}
 /*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 }

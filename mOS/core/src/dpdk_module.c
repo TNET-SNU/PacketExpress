@@ -249,8 +249,7 @@ dpdk_send_pkts(struct mtcp_thread_context *ctxt, int nif)
 #endif
 		px_stat_update_tx(nif, qid,
 						  dpc->wmbufs[nif].m_table,
-						  dpc->wmbufs[nif].len,
-						  USE_LRO || USE_GRO);
+						  dpc->wmbufs[nif].len);
 		ret = rte_eth_tx_burst(nif, qid,
 							   dpc->wmbufs[nif].m_table,
 							   dpc->wmbufs[nif].len);
@@ -307,6 +306,11 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 	ret = px_eth_rx_burst(ifidx, qid,
 			dpc->rmbufs[ifidx].m_table, MAX_PKT_BURST);
 #else
+	/* printing should be done by STAT_MONITOR_CORE_ID! */
+	if (qid == STAT_MONITOR_CORE_ID)
+	{
+		px_stat_print(STAT_MONITOR_CORE_ID);
+	}
 	ret = rte_eth_rx_burst(ifidx, qid,
 			dpc->rmbufs[ifidx].m_table, MAX_PKT_BURST);
 	px_parse_batch(ifidx, qid,
@@ -321,7 +325,8 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 	};
 	ret = rte_gro_reassemble_burst(dpc->rmbufs[ifidx].m_table, ret, &gro_param);
 #endif
-	px_stat_update_rx(ifidx, qid, dpc->rmbufs[ifidx].m_table, ret, 0, 0, 0, 0);
+	px_stat_update_rx(ifidx, qid, dpc->rmbufs[ifidx].m_table, ret, 0, 0, 0,
+					  USE_LRO || USE_GRO);
 #endif
 	dpc->rmbufs[ifidx].len = ret;
 
@@ -687,16 +692,16 @@ dpdk_load_module_lower_half(void)
 				rte_exit(EXIT_FAILURE, "px_init failed\n");
 #else
 			/* Start stat printing */
-			ret = px_stat_start_monitor(1,
-										rte_eth_dev_count_avail(),
-										g_config.mos->num_cores,
-										g_config.mos->num_cores,
-										0,
-										0,
-										NULL,
-										NULL);
+			ret = px_stat_configure(1,
+									portid,
+									num_queues,
+									num_queues,
+									0,
+									0,
+									NULL,
+									NULL);
 			if (ret < 0)
-				rte_exit(EXIT_FAILURE, "px_stat_start_monitor failed\n");
+				rte_exit(EXIT_FAILURE, "px_stat_configure failed\n");
 #endif
 
 			/* retrieve current flow control settings per port */

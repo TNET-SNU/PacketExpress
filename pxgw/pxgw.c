@@ -43,10 +43,10 @@
 #define NB_MBUF ((1024 * 1024) - 1)
 #elif JUMBO_FRAME || USE_GRO
 #define MBUF_DATA_SIZE 9024
-#define NB_MBUF ((1536 * 1024) - 1)
+#define NB_MBUF ((1024 * 1024) - 1)
 #else
 #define MBUF_DATA_SIZE 1536
-#define NB_MBUF ((1536 * 1024) - 1)
+#define NB_MBUF ((1024 * 1024) - 1)
 #endif
 
 #define MAX_PKT_BURST 64
@@ -54,13 +54,13 @@
 /*
  * Configurable number of RX/TX ring descriptors
  */
-#define RTE_TEST_RX_DESC_DEFAULT 8192
-// #define RTE_TEST_RX_DESC_DEFAULT 4096
+// #define RTE_TEST_RX_DESC_DEFAULT 8192
+#define RTE_TEST_RX_DESC_DEFAULT 4096
 // #define RTE_TEST_RX_DESC_DEFAULT 2048
 // #define RTE_TEST_RX_DESC_DEFAULT 1024
 
-#define RTE_TEST_TX_DESC_DEFAULT 8192
-// #define RTE_TEST_TX_DESC_DEFAULT 4096
+// #define RTE_TEST_TX_DESC_DEFAULT 8192
+#define RTE_TEST_TX_DESC_DEFAULT 4096
 // #define RTE_TEST_TX_DESC_DEFAULT 2048
 // #define RTE_TEST_TX_DESC_DEFAULT 1024
 
@@ -80,7 +80,7 @@ const struct px_arp_entry g_arp_entries_normal[] = {
 
     {"10.1.95.2", "a0:88:c2:d6:9d:d2"}, // stream2
     {"10.2.95.2", "58:a2:e1:a7:a8:b6"}, // stream4
-    // {"10.2.95.2", "58:a2:e1:a7:7c:d6"}, // rapids1.eth1
+    // {"10.2.95.2", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
     {"10.3.95.2", "58:a2:e1:a7:aa:7e"}, // stream6
     {"10.4.95.2", "58:a2:e1:a7:aa:86"}, // stream8
 
@@ -89,10 +89,31 @@ const struct px_arp_entry g_arp_entries_normal[] = {
     {"10.3.90.1", "58:a2:e1:a7:a8:c6"}, // rapids1.eth2
     {"10.4.90.1", "a0:88:c2:d7:81:0e"}, // rapids1.eth3
 
-    {"10.5.95.1", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
-    {"10.6.95.1", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
-    {"10.7.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
-    {"10.8.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
+    {"10.1.95.1", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
+    {"10.2.95.1", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
+    {"10.3.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
+    {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
+};
+const struct px_arp_entry g_arp_entries_sink_to_rapids2[] = {
+    // {"10.1.90.2", "58:a2:e1:a7:a9:ee"}, // stream1
+    // {"10.2.90.2", "a0:88:c2:d6:9e:32"}, // stream3
+    // {"10.3.90.2", "a0:88:c2:d2:df:f2"}, // stream10
+    // {"10.4.90.2", "58:a2:e1:a7:a9:7e"}, // stream7
+
+    {"10.1.90.2", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
+    {"10.2.90.2", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
+    {"10.3.90.2", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
+    {"10.4.90.2", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
+
+    // {"10.1.95.2", "a0:88:c2:d6:9d:d2"}, // stream2
+    // {"10.2.95.2", "58:a2:e1:a7:a8:b6"}, // stream4
+    // {"10.3.95.2", "58:a2:e1:a7:aa:7e"}, // stream6
+    // {"10.4.95.2", "58:a2:e1:a7:aa:86"}, // stream8
+
+    {"10.1.95.2", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
+    {"10.2.95.2", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
+    {"10.3.95.2", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
+    {"10.4.95.2", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
 };
 const struct px_arp_entry g_arp_entries_two_hops[] = {
     {"10.1.90.2", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
@@ -171,6 +192,9 @@ static uint16_t g_num_cores = 1;
 static uint16_t g_num_ports = 0;
 static struct rte_ether_addr port_mac[RTE_MAX_ETHPORTS] = {{{0}}};
 static struct rte_mempool *g_pktmbuf_pool[RTE_MAX_NUMA_NODES] = {NULL};
+#if USE_GRO && !USE_LRO && SEMANTIC_TEST
+static struct rte_mempool *g_pktmbuf_indirect_pool[RTE_MAX_NUMA_NODES] = {NULL};
+#endif
 static struct rte_eth_dev_info g_dev_info[RTE_MAX_ETHPORTS];
 /*----------------------------------------------------------------------------*/
 static void
@@ -302,7 +326,8 @@ port_init(uint16_t port_id, uint16_t num_queue)
 
     /* configure port */
     port_conf = px_eth_conf(port_id, NULL, NULL, 0, MBUF_DATA_SIZE,
-                            HW_CSUM, USE_LRO, USE_SGDMA, CUTOFF_NS, NICMEM);
+                            HW_CSUM, USE_LRO || SEMANTIC_TEST,
+                            USE_SGDMA, CUTOFF_NS, NICMEM);
 
     /* init port */
     printf("[port %u] Initializing port... \n", (unsigned)port_id);
@@ -409,8 +434,8 @@ port_init(uint16_t port_id, uint16_t num_queue)
     /* Start PX */
     ret = px_init(port_id,
                   MAX_PKT_BURST,
-                  !JUMBO_FRAME ? 16384 : 0,
-                  CUTOFF_NS ? 16384 : 0,
+                  !JUMBO_FRAME ? 65536 : 0,
+                  CUTOFF_NS ? 65536 : 0,
                   NULL,
                   NULL,
                   USE_LINK,
@@ -420,18 +445,18 @@ port_init(uint16_t port_id, uint16_t num_queue)
         rte_exit(EXIT_FAILURE, "px_init failed\n");
     }
 #else
-    /* Start stat printing */
-    ret = px_stat_start_monitor(1,
-                                g_num_ports,
-                                g_num_cores,
-                                g_num_cores,
-                                0,
-                                0,
-                                NULL,
-                                NULL);
+    /* configure stat monitor */
+    ret = px_stat_configure(STAT_INTERVAL,
+                            port_id,
+                            num_queue,
+                            num_queue,
+                            0,
+                            0,
+                            NULL,
+                            NULL);
     if (ret < 0)
     {
-        rte_exit(EXIT_FAILURE, "px_stat_start_monitor failed\n");
+        rte_exit(EXIT_FAILURE, "px_stat_configure failed\n");
     }
 #endif
 
@@ -465,158 +490,256 @@ port_init(uint16_t port_id, uint16_t num_queue)
 int lcore_main(void *args)
 {
     RTE_SET_USED(args);
-    struct rte_mbuf *rmbufs[RTE_MAX_ETHPORTS][MAX_PKT_BURST] = {{NULL}};
-    struct rte_mbuf *wmbufs[RTE_MAX_ETHPORTS][MAX_PKT_BURST] = {{NULL}};
+#if !USE_LRO && USE_GRO && SEMANTIC_TEST
+    /* due to GSO */
+    struct rte_mbuf *rmbufs[MAX_PKT_BURST * 7] = {NULL};
+    struct rte_mbuf *wmbufs[MAX_PKT_BURST * 7] = {NULL};
+#else
+    struct rte_mbuf *rmbufs[MAX_PKT_BURST] = {NULL};
+    struct rte_mbuf *wmbufs[MAX_PKT_BURST] = {NULL};
+#endif
+    uint16_t nb_rx = 0;
+    uint16_t nb_tx = 0;
+#if USE_GRO
+#if !USE_LRO && SEMANTIC_TEST
+    /* due to GSO */
+    struct rte_mbuf *rmbufs_ul[MAX_PKT_BURST * 7] = {NULL};
+#else
+    struct rte_mbuf *rmbufs_ul[MAX_PKT_BURST] = {NULL};
+#endif
+    struct rte_mbuf *rmbufs_dl[MAX_PKT_BURST] = {NULL};
+    uint16_t nb_rx_ul = 0;
+    uint16_t nb_rx_dl = 0;
+#endif
     struct rte_mbuf *m;
     struct rte_ether_addr *dst_mac;
-    struct rte_ether_hdr *eth_hdr;
-    uint32_t qid = rte_lcore_id();
-    uint16_t port_id;
-    uint16_t nb_rx[RTE_MAX_ETHPORTS] = {0};
-    uint16_t nb_tx[RTE_MAX_ETHPORTS] = {0};
+    uint32_t queue_id = rte_lcore_id();
+    uint16_t port_id = 0;
     int ret, i;
 
     while (!g_shutdown)
     {
-        assert(qid == rte_lcore_id());
-        for (port_id = 0; port_id < g_num_ports; port_id++)
-        {
+        assert(queue_id == rte_lcore_id());
 #if USE_PX
-            nb_rx[port_id] = px_eth_rx_burst(port_id,
-                                             qid,
-                                             rmbufs[port_id],
-                                             MAX_PKT_BURST);
+        nb_rx = px_eth_rx_burst(port_id,
+                                queue_id,
+                                rmbufs,
+                                MAX_PKT_BURST);
 #else
-            nb_rx[port_id] = rte_eth_rx_burst(port_id,
-                                              qid,
-                                              rmbufs[port_id],
-                                              MAX_PKT_BURST);
-            px_parse_batch(port_id,
-                           qid,
-                           rmbufs[port_id],
-                           nb_rx[port_id],
-                           !JUMBO_FRAME,
-                           HW_CSUM,
-                           SEMANTIC_TEST);
+        /* printing should be done by STAT_MONITOR_CORE_ID! */
+        if (queue_id == STAT_MONITOR_CORE_ID)
+        {
+            px_stat_print(STAT_MONITOR_CORE_ID);
+        }
+        nb_rx = rte_eth_rx_burst(port_id,
+                                 queue_id,
+                                 rmbufs,
+                                 MAX_PKT_BURST);
+        px_parse_batch(port_id,
+                       queue_id,
+                       rmbufs,
+                       nb_rx,
+                       !JUMBO_FRAME,
+                       HW_CSUM,
+                       SEMANTIC_TEST);
 #if USE_GRO
-            struct rte_gro_param gro_param = {
-                .gro_types = RTE_GRO_TCP_IPV4,
-                .max_flow_num = MAX_PKT_BURST,
-                .max_item_per_flow = MAX_PKT_BURST,
-                .socket_id = rte_lcore_to_socket_id(port_id)};
-            nb_rx[port_id] =
-                rte_gro_reassemble_burst(rmbufs[port_id],
-                                         nb_rx[port_id],
-                                         &gro_param);
-#endif
-            px_stat_update_rx(port_id,
-                              qid,
-                              rmbufs[port_id],
-                              nb_rx[port_id],
-                              0,
-                              0,
-                              0,
-                              0);
-#endif
-            for (i = 0; i < nb_rx[port_id]; i++)
+        /* separate uplink packets and downlink packets */
+        for (i = 0; i < nb_rx; i++)
+        {
+            m = rmbufs[i];
+            if (!is_ipv4(m))
             {
-                m = rmbufs[port_id][i];
+                /* ignore non IPv4 */
+                rte_pktmbuf_free(m);
+                continue;
+            }
+            if (SEMANTIC_TEST && is_uplink_default(m))
+            {
+#if !USE_LRO && SEMANTIC_TEST
+                /* apply GSO to uplink packets */
+                setup_tso(m, DEFAULT_eMTU - m->l3_len - m->l4_len);
+                struct rte_gso_ctx gso_ctx = {
+                    .direct_pool = m->pool,
+                    .indirect_pool = g_pktmbuf_indirect_pool[rte_eth_dev_socket_id(port_id)],
+                    .flag = 0,
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
+                    .gso_types = DEV_TX_OFFLOAD_TCP_TSO,
+#else
+                    .gso_types = RTE_ETH_TX_OFFLOAD_TCP_TSO,
+#endif
+                    .gso_size = DEFAULT_eMTU + m->l2_len,
+                };
 
-#if !USE_PX && (USE_LRO || USE_GRO) && !USE_SGDMA
-                /* make chained segments into one large segment */
-                ret = rte_pktmbuf_linearize(m);
+                ret =
+                    rte_gso_segment(m,
+                                    &gso_ctx,
+                                    rmbufs_ul + nb_rx_ul,
+                                    MAX_PKT_BURST * 7 - nb_rx_ul);
                 if (ret < 0)
                 {
                     fprintf(stdout,
-                            "Port %d: Failed to linearize mbuf %d, ret: %d\n",
+                            "Port %d: Failed to segment mbuf %d, ret: %d\n",
                             port_id, i, ret);
                     rte_pktmbuf_free(m);
                     continue;
                 }
+                if (ret > 1)
+                {
+                    // printf("Port %d: Segmented mbuf %d into %d segments\n",
+                    //        port_id, i, ret);
+                    /* segmentation done, ret is the number of segments */
+                    for (int j = 0; j < ret; j++)
+                    {
+                        /* copy timestamp */
+                        put_sw_timestamp(rmbufs_ul[nb_rx_ul + j], get_sw_timestamp(m));
+                    }
+                    nb_rx_ul += ret;
+                    rte_pktmbuf_free(m);
+                }
+                else
+                {
+                    // printf("Port %d: no segmentation for mbuf %d, pkt_len: %d, gso_size: %d\n",
+                    //        port_id, i, m->pkt_len, gso_ctx.gso_size);
+                    /* no segmentation done */
+                    rmbufs_ul[nb_rx_ul++] = m;
+                }
+#else
+                rmbufs_ul[nb_rx_ul++] = m;
 #endif
-                eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
-                if (eth_hdr->ether_type !=
-                    rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4))
-                {
-                    /* ignore non IPv4 */
-                    rte_pktmbuf_free(m);
-                    continue;
-                }
+            }
+            else
+            {
+                rmbufs_dl[nb_rx_dl++] = m;
+            }
+        }
 
-                /* modify DST MAC */
-                dst_mac = px_arp_search(*get_dst_ip(m));
-                if (!dst_mac)
-                {
-                    /* ignore unknown dst IP */
-                    rte_pktmbuf_free(m);
-                    continue;
-                }
-                eth_hdr->d_addr = *dst_mac;
+        /* apply GRO to downlink packets */
+        struct rte_gro_param gro_param = {
+            .gro_types = RTE_GRO_TCP_IPV4,
+            .max_flow_num = MAX_PKT_BURST,
+            .max_item_per_flow = MAX_PKT_BURST,
+            .socket_id = rte_lcore_to_socket_id(port_id)};
+        nb_rx_dl =
+            rte_gro_reassemble_burst(rmbufs_dl,
+                                     nb_rx_dl,
+                                     &gro_param);
 
-                /* modify SRC MAC */
-                eth_hdr->s_addr = port_mac[port_id];
-
-#if !USE_PX && (USE_LRO || USE_GRO)
-                /* fill checksum */
-                if (px_fill_ipv4_l4_cksum(m, HW_CSUM) < 0)
-                {
-                    fprintf(stdout,
-                            "Port %d: Failed to fill checksum for mbuf %d\n",
-                            port_id, i);
-                    rte_pktmbuf_free(m);
-                    continue;
-                }
+        /* combine DL and UL packets */
+        memcpy(rmbufs, rmbufs_dl, nb_rx_dl * sizeof(struct rte_mbuf *));
+        memcpy(rmbufs + nb_rx_dl, rmbufs_ul, nb_rx_ul * sizeof(struct rte_mbuf *));
+        nb_rx = nb_rx_dl + nb_rx_ul;
+        nb_rx_dl = 0;
+        nb_rx_ul = 0;
 #endif
+        px_stat_update_rx(port_id,
+                          queue_id,
+                          rmbufs,
+                          nb_rx,
+                          0,
+                          0,
+                          0,
+                          USE_LRO || USE_GRO);
+#endif
+        for (i = 0; i < nb_rx; i++)
+        {
+            m = rmbufs[i];
 
-                /* insert to send buffer */
-                wmbufs[port_id][nb_tx[port_id]++] = m;
+#if !USE_PX && (USE_LRO || USE_GRO) && !USE_SGDMA
+            /* make chained segments into one large segment */
+            ret = rte_pktmbuf_linearize(m);
+            if (ret < 0)
+            {
+                fprintf(stdout,
+                        "Port %d: Failed to linearize mbuf %d, ret: %d\n",
+                        port_id, i, ret);
+                rte_pktmbuf_free(m);
+                continue;
+            }
+#endif
+            if (!is_ipv4(m))
+            {
+                /* ignore non IPv4 */
+                rte_pktmbuf_free(m);
+                continue;
             }
 
-            /* Forward to same port (L2 forward) */
+            /* modify DST MAC */
+            dst_mac = px_arp_search(*get_dst_ip(m));
+            if (!dst_mac)
+            {
+                /* ignore unknown dst IP */
+                rte_pktmbuf_free(m);
+                continue;
+            }
+            memcpy(get_dst_mac(m), dst_mac,
+                   sizeof(struct rte_ether_addr));
+
+            /* modify SRC MAC */
+            memcpy(get_src_mac(m), &port_mac[port_id],
+                   sizeof(struct rte_ether_addr));
+
+#if !USE_PX && (USE_LRO || USE_GRO) && !USE_SGDMA
+            /* fill checksum */
+            if (px_fill_ipv4_l4_cksum(m, HW_CSUM) < 0)
+            {
+                fprintf(stdout,
+                        "Port %d: Failed to fill checksum for mbuf %d\n",
+                        port_id, i);
+                rte_pktmbuf_free(m);
+                continue;
+            }
+#endif
+
+            /* insert to send buffer */
+            wmbufs[nb_tx++] = m;
+        }
+
+        /* Forward to the same port (L2 forward) */
 #if USE_PX
-            ret = px_eth_tx_burst(port_id,
-                                  qid,
-                                  wmbufs[port_id],
-                                  nb_tx[port_id]);
-            RTE_SET_USED(ret);
+        ret = px_eth_tx_burst(port_id,
+                              queue_id,
+                              wmbufs,
+                              nb_tx);
+        RTE_SET_USED(ret);
 #else
 #if (USE_LRO || USE_GRO)
-            px_setup_tso_burst(port_id,
-                               qid,
-                               wmbufs[port_id],
-                               nb_tx[port_id],
-                               SEMANTIC_TEST);
+        px_setup_tso_burst(port_id,
+                           queue_id,
+                           wmbufs,
+                           nb_tx,
+                           SEMANTIC_TEST);
 #endif
 #if NUM_HAIRPIN_Q && (HAIRPIN_POLICY == 1)
-            px_flow_create_burst(port_id,
-                                 qid,
-                                 wmbufs[port_id],
-                                 nb_tx[port_id]);
+        px_flow_create_burst(port_id,
+                             queue_id,
+                             wmbufs,
+                             nb_tx);
 #endif
-            px_stat_update_tx(port_id,
-                              qid,
-                              wmbufs[port_id],
-                              nb_tx[port_id],
-                              USE_LRO || USE_GRO);
-            ret = rte_eth_tx_burst(port_id,
-                                   qid,
-                                   wmbufs[port_id],
-                                   nb_tx[port_id]);
-            if (ret < nb_tx[port_id])
+        px_stat_update_tx(port_id,
+                          queue_id,
+                          wmbufs,
+                          nb_tx);
+        ret = rte_eth_tx_burst(port_id,
+                               queue_id,
+                               wmbufs,
+                               nb_tx);
+        if (ret < nb_tx)
+        {
+            printf("Port %d: Sent %d packets, "
+                   "but only %d were sent successfully.\n",
+                   port_id, nb_tx, ret);
+            /* Free the mbufs that were not sent */
+            for (i = ret; i < nb_tx; i++)
             {
-                printf("Port %d: Sent %d packets, "
-                       "but only %d were sent successfully.\n",
-                       port_id, nb_tx[port_id], ret);
-                /* Free the mbufs that were not sent */
-                for (i = ret; i < nb_tx[port_id]; i++)
-                {
-                    rte_pktmbuf_free(wmbufs[port_id][i]);
-                }
+                rte_pktmbuf_free(wmbufs[i]);
             }
-#endif
-            /* Reset after sending */
-            nb_tx[port_id] = 0;
         }
+#endif
+        /* Reset after sending */
+        nb_tx = 0;
+
+        /* read next port */
+        port_id = (port_id + 1) % g_num_ports;
     }
 
     return 0;
@@ -654,6 +777,10 @@ int main(int argc, char **argv)
     g_arp_entries = g_arp_entries_normal;
     g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_normal) /
                          sizeof(struct px_arp_entry);
+
+    // g_arp_entries = g_arp_entries_sink_to_rapids2;
+    // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_sink_to_rapids2) /
+    //                      sizeof(struct px_arp_entry);
 
     // g_arp_entries = g_arp_entries_two_hops;
     // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_two_hops) /
@@ -785,6 +912,23 @@ int main(int argc, char **argv)
             rte_exit(EXIT_FAILURE,
                      "Cannot init data mbuf pool in sid: %d\n", sid);
         }
+#if USE_GRO && !USE_LRO && SEMANTIC_TEST
+        /* need below for GSO */
+        sprintf(name, "mempool-indirect-%d", sid);
+        g_pktmbuf_indirect_pool[sid] =
+            rte_mempool_create(name, nb_mbuf / g_num_sockets,
+                               sizeof(struct rte_mbuf),
+                               RTE_MEMPOOL_CACHE_MAX_SIZE,
+                               sizeof(struct rte_pktmbuf_pool_private),
+                               rte_pktmbuf_pool_init, NULL,
+                               rte_pktmbuf_init, NULL,
+                               sid, 0);
+        if (!g_pktmbuf_indirect_pool[sid])
+        {
+            rte_exit(EXIT_FAILURE,
+                     "Cannot init data mbuf pool in sid: %d\n", sid);
+        }
+#endif
     }
 
     /* initialize ports */
@@ -840,8 +984,6 @@ int main(int argc, char **argv)
     {
         px_deinit(port_id);
     }
-#else
-    px_stat_stop_monitor();
 #endif
 
     for (port_id = 0; port_id < g_num_ports; port_id++)

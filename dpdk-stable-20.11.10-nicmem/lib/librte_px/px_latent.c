@@ -1020,7 +1020,7 @@ int px_latent_gear_shift(struct perf_metric *cur,
                     "P%d:%4hu%s",
                     port_id,
                     px_latent_num_lxq(port_id),
-                    (port_id == g_num_ports - 1) ? "\n" : "");
+                    (port_id == g_num_ports - 1) ? "\n" : " | ");
         }
     }
     else if (mode == STATE_MACHINE)

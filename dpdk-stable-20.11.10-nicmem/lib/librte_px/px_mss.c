@@ -37,6 +37,7 @@ mss_periodic_cleanup(void *arg)
                 break;
             }
         }
+        /* ToDo: replace to pthread_cond_timedwait */
         sleep(MSS_THREAD_PERIOD);
     }
 
@@ -116,17 +117,18 @@ int mss_init_ctx(uint16_t port_id,
     atomic_init(&ctx->epoch, 0);
 
     /* Create a new thread for periodic cleanup */
-    uint16_t *num_cores = calloc(1, sizeof(uint16_t));
-    *num_cores = rte_lcore_count();
-    if (pthread_create(&g_mss_tid, NULL, mss_periodic_cleanup, num_cores) != 0)
-    {
-        fprintf(stderr, "Failed to create cleanup thread\n");
-        mss_bloom_destroy(ctx->bf);
-        rte_hash_free(ctx->tbl);
-        rte_mempool_free(ctx->pool);
-        rte_free(ctx);
-        return -1;
-    }
+    // uint16_t *num_cores = calloc(1, sizeof(uint16_t));
+    // *num_cores = rte_lcore_count();
+    // if (pthread_create(&g_mss_tid, NULL, mss_periodic_cleanup, num_cores) != 0)
+    // {
+    //     fprintf(stderr, "Failed to create cleanup thread\n");
+    //     mss_bloom_destroy(ctx->bf);
+    //     rte_hash_free(ctx->tbl);
+    //     rte_mempool_free(ctx->pool);
+    //     rte_free(ctx);
+    //     return -1;
+    // }
+    RTE_SET_USED(mss_periodic_cleanup);
 
     ctx->port_id = port_id;
     ctx->queue_id = queue_id;
@@ -185,10 +187,10 @@ get_reverse_queue(uint16_t port_id, uint32_t reverse_rss)
     inner_qid = reverse_rss % px_dev->max_rxq;
     outer_qid = inner_qid / px_dev->max_lxq_per_rxq;
 
-    // printf("inner_qid=%u, outer_qid=%u. "
-    //        "px_dev->num_rxq=%u, px_dev->num_lxq_per_rxq=%u\n",
-    //        inner_qid, outer_qid,
-    //        px_dev->num_rxq, px_dev->num_lxq_per_rxq);
+    printf("inner_qid=%u, outer_qid=%u. "
+           "px_dev->num_rxq=%u, px_dev->num_lxq_per_rxq=%u\n",
+           inner_qid, outer_qid,
+           px_dev->num_rxq, px_dev->num_lxq_per_rxq);
 
     return outer_qid;
 }
@@ -334,8 +336,9 @@ int mss_insert_entry(uint16_t port_id,
         fprintf(stderr, "Unable to allocate memory for MSS entry\n");
         return -1;
     }
+    // memset(entry, 0, sizeof(struct flow_mss_entry));
 
-    /* copy update mss */
+    /* fill entry */
     entry->mss = mss;
     entry->rss = rss;
     entry->last_update = now_ns;

@@ -527,16 +527,16 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
     return CommandFailure(ENOMEM, "px_init failed");
   }
 #else
-  /* Start stat printing */
-  if (px_stat_start_monitor(1,
-                            rte_eth_dev_count_avail(),
-                            num_rxq,
-                            num_txq,
-                            0,
-                            0,
-                            NULL,
-                            NULL) < 0) {
-    return CommandFailure(errno, "px_stat_start_monitor failed");
+  // configure stat monitor
+  if (px_stat_configure(1,
+                        dpdk_port_id_,
+                        num_rxq,
+                        num_txq,
+                        0,
+                        0,
+                        NULL,
+                        NULL) < 0) {
+    return CommandFailure(errno, "px_stat_configure failed");
   }
 #endif
 
@@ -723,6 +723,11 @@ int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   uint16_t recv = px_eth_rx_burst(dpdk_port_id_, qid,
                                   reinterpret_cast<rte_mbuf **>(pkts), cnt);
 #else
+  /* printing should be done by STAT_MONITOR_CORE_ID! */
+  if (qid == STAT_MONITOR_CORE_ID)
+  {
+      px_stat_print(STAT_MONITOR_CORE_ID);
+  }
   uint16_t recv = rte_eth_rx_burst(dpdk_port_id_, qid,
                                    reinterpret_cast<rte_mbuf **>(pkts), cnt);
   px_parse_batch(dpdk_port_id_, qid,
@@ -737,7 +742,8 @@ int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   };
   recv = rte_gro_reassemble_burst(reinterpret_cast<rte_mbuf **>(pkts), recv, &gro_param);
 #endif
-  px_stat_update_rx(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), recv, 0, 0, 0, 0);
+  px_stat_update_rx(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), recv, 0, 0, 0,
+                    USE_LRO || USE_GRO);
 #endif
 
   return recv;
@@ -757,7 +763,7 @@ int PMDPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   px_flow_create_burst(dpdk_port_id_, qid,
                        reinterpret_cast<rte_mbuf **>(pkts), cnt);
 #endif
-  px_stat_update_tx(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), cnt, USE_LRO || USE_GRO);
+  px_stat_update_tx(dpdk_port_id_, qid, reinterpret_cast<rte_mbuf **>(pkts), cnt);
   int sent = rte_eth_tx_burst(dpdk_port_id_, qid,
                               reinterpret_cast<rte_mbuf **>(pkts), cnt);
 #endif

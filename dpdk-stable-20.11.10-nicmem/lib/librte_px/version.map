@@ -18,8 +18,8 @@ DPDK_21 {
 	px_setup_tso_burst;
 	px_stat_update_rx;
 	px_stat_update_tx;
-	px_stat_start_monitor;
-	px_stat_stop_monitor;
+	px_stat_configure;
+	px_stat_print;
 	px_pktmbuf_free;
 	px_pktmbuf_free_bulk;
 	px_flow_create_static;
@@ -38,6 +38,27 @@ DPDK_21 {
 	px_flow_stat;
 	px_flow_nic_cache_stat;
 	px_flow_host_cache_stat;
+
+	px_l5_init;
+	px_l5_destroy;
+	px_l5_search;
+
+	px_l5_handle_syn;
+	px_l5_handle_fin;
+	px_l5_handle_ack;
+
+	px_l5_rxbuf_insert;
+	px_l5_advance_rcvnxt;
+	px_flow_mark_mut;
+	px_l5_parse_pdu_ranges;
+	px_l5_get_pdus;
+	px_l5_has_hole;
+	px_l5_need_dupack;
+	px_l5_direct_ack;
+	px_l5_rewrite_ack;
+	
+	px_dump_pdu;
+	px_dump_rx_seg;
 	
 	local: *;
 };

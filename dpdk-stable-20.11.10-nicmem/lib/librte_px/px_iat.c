@@ -6,11 +6,6 @@ static pthread_t g_iat_tid = 0;
 static volatile int g_iat_shutdown = 0;
 struct rpow_tbl_t g_rpow_tbl = {.alpha_cached = NAN};
 extern int g_is_semantic_test;
-#if LOG_DELAY
-char g_delay_log_buffer[RTE_MAX_LCORE][LOG_BUFFER_SIZE] = {0};
-size_t g_delay_log_offset[RTE_MAX_LCORE] = {0};
-FILE *g_delay_log_fp[RTE_MAX_LCORE] = {NULL};
-#endif
 static int (*g_is_uplink)(struct rte_mbuf *pkt) = NULL;
 static int (*g_is_downlink)(struct rte_mbuf *pkt) = NULL;
 /*----------------------------------------------------------------------------*/
@@ -188,6 +183,7 @@ iat_periodic_cleanup(void *arg)
                 break;
             }
         }
+        /* ToDo: replace to pthread_cond_timedwait */
         sleep(IAT_THREAD_PERIOD);
     }
 
@@ -264,17 +260,18 @@ int iat_init_ctx(uint16_t port_id,
         return -1;
     }
 
-    /* Create a new thread for periodic cleanup */
-    uint16_t *num_cores = calloc(1, sizeof(uint16_t));
-    *num_cores = rte_lcore_count();
-    if (pthread_create(&g_iat_tid, NULL, iat_periodic_cleanup, num_cores) != 0)
-    {
-        fprintf(stderr, "Failed to create cleanup thread\n");
-        rte_hash_free(ctx->tbl);
-        rte_mempool_free(ctx->pool);
-        rte_free(ctx);
-        return -1;
-    }
+    // /* Create a new thread for periodic cleanup */
+    // uint16_t *num_cores = calloc(1, sizeof(uint16_t));
+    // *num_cores = rte_lcore_count();
+    // if (pthread_create(&g_iat_tid, NULL, iat_periodic_cleanup, num_cores) != 0)
+    // {
+    //     fprintf(stderr, "Failed to create cleanup thread\n");
+    //     rte_hash_free(ctx->tbl);
+    //     rte_mempool_free(ctx->pool);
+    //     rte_free(ctx);
+    //     return -1;
+    // }
+    RTE_SET_USED(iat_periodic_cleanup);
 
     ctx->port_id = port_id;
     ctx->queue_id = queue_id;
@@ -285,20 +282,6 @@ int iat_init_ctx(uint16_t port_id,
     ctx->initialized = 1;
 
     rpow_build(&g_rpow_tbl, ewma_alpha);
-
-#if LOG_DELAY
-    /* open a log file for delay logging */
-    if (!g_delay_log_fp[queue_id])
-    {
-        char fname[MAX_NAME_SIZE];
-        snprintf(fname, MAX_NAME_SIZE, "px_delay_%d.log", queue_id);
-        g_delay_log_fp[queue_id] = fopen(fname, "w");
-        if (!g_delay_log_fp[queue_id])
-        {
-            rte_exit(EXIT_FAILURE, "Cannot open log file\n");
-        }
-    }
-#endif
 
     return 0;
 }
@@ -316,14 +299,6 @@ int iat_destroy_ctx(uint16_t port_id,
         /* already destroyed or not initialized */
         return 0;
     }
-#if LOG_DELAY
-    /* close delay log file */
-    if (g_delay_log_fp[queue_id])
-    {
-        fclose(g_delay_log_fp[queue_id]);
-        g_delay_log_fp[queue_id] = NULL;
-    }
-#endif
 
     /* Free all entries in the hash table */
     while (rte_hash_iterate(ctx->tbl, &next_key, &next_data, &iter) >= 0)
@@ -350,18 +325,16 @@ int iat_destroy_ctx(uint16_t port_id,
     return 0;
 }
 /*----------------------------------------------------------------------------*/
-int iat_update_entry(uint16_t port_id,
-                     uint16_t queue_id,
-                     struct rte_mbuf *pkt,
-                     uint64_t now_ns)
+int iat_update_entry_iat(uint16_t port_id,
+                         uint16_t queue_id,
+                         struct rte_mbuf *pkt,
+                         uint64_t now_ns)
 {
     struct px_iat_ctx *ctx = &g_iat_ctx[port_id][queue_id];
     struct four_tuple *key = get_four_tuple(pkt);
     struct flow_iat_entry *entry;
     rte_mbuf_timestamp_t ts;
     uint32_t nb_segs, burst_iat = 0, data_len = get_data_len(pkt);
-    uint32_t outlier_threshold, avg_iat;
-    int i;
 
     /* check initialized */
     if (!ctx->initialized)
@@ -386,134 +359,52 @@ int iat_update_entry(uint16_t port_id,
     if (rte_hash_lookup_data(ctx->tbl, key, (void **)&entry) >= 0)
     {
         entry->last_update = now_ns;
-        entry->l3_len = (uint16_t)pkt->l3_len;
-        entry->l4_len = (uint16_t)pkt->l4_len;
 
         /* update IAT stats */
-        if (entry->last_timestamp)
+        if (!entry->last_timestamp)
         {
-            if (ts > entry->last_timestamp)
-            {
-                /**
-                 * ToDo: One day prevent overflow of uint64_t
-                 * (never occurs in our lifetime...)
-                 */
-                burst_iat = ts - entry->last_timestamp;
-                avg_iat = entry->avg_bytes_per_sec
-                              ? ctx->emtu_size *
-                                    NS_PER_S /
-                                    entry->avg_bytes_per_sec
-                              : 0;
-                outlier_threshold = entry->avg_burst_iat *
-#define WEIGHT_ON_LRO 0
-#if WEIGHT_ON_LRO
-                                    nb_segs *
-#endif
-                                    OUTLIER_FACTOR;
-
-                /* use either of avg_iat or relative outlier */
-                if (outlier_threshold > avg_iat)
-                {
-                    outlier_threshold = avg_iat;
-                }
-                if (burst_iat > outlier_threshold)
-                {
-                    /* detected abnormally huge gap */
-                    if (entry->pending_cnt < OUTLIER_CNT)
-                    {
-                        /* postpone update */
-                        entry->pending_burst_iat[entry->pending_cnt] = burst_iat;
-                        entry->pending_nb_segs[entry->pending_cnt] = nb_segs;
-                        entry->pending_data_len[entry->pending_cnt] = data_len;
-                        entry->pending_cnt++;
-                    }
-                    else
-                    {
-                        /* feed pending values to EWMA */
-                        for (i = 0; i < entry->pending_cnt; i++)
-                        {
-#if WEIGHT_ON_LRO
-                            entry->avg_burst_iat =
-                                ((float)entry->pending_burst_iat[i] /
-                                     entry->pending_nb_segs[i] +
-                                 g_rpow_tbl.rpow[entry->pending_nb_segs[i]] *
-                                     (entry->avg_burst_iat -
-                                      (float)entry->pending_burst_iat[i] /
-                                          entry->pending_nb_segs[i]));
-#else
-                            entry->avg_burst_iat =
-                                ctx->ewma_alpha * entry->pending_burst_iat[i] +
-                                (1.0 - ctx->ewma_alpha) * entry->avg_burst_iat;
-#endif
-                            entry->avg_data_len =
-                                ctx->ewma_alpha * entry->pending_data_len[i] +
-                                (1.0 - ctx->ewma_alpha) * entry->avg_data_len;
-                        }
-                        /* feed current burst_iat to EWMA */
-#if WEIGHT_ON_LRO
-                        entry->avg_burst_iat =
-                            ((float)burst_iat /
-                                 nb_segs +
-                             g_rpow_tbl.rpow[nb_segs] *
-                                 (entry->avg_burst_iat -
-                                  (float)burst_iat /
-                                      nb_segs));
-#else
-                        entry->avg_burst_iat =
-                            ctx->ewma_alpha * burst_iat +
-                            (1.0 - ctx->ewma_alpha) * entry->avg_burst_iat;
-#endif
-                        entry->avg_data_len =
-                            ctx->ewma_alpha * data_len +
-                            (1.0 - ctx->ewma_alpha) * entry->avg_data_len;
-                        /* back to stable state */
-                        entry->pending_cnt = 0;
-                    }
-                }
-                else
-                {
-                    /* feed only current burst_iat to EWMA */
-#if WEIGHT_ON_LRO
-                    entry->avg_burst_iat =
-                        ((float)burst_iat /
-                             nb_segs +
-                         g_rpow_tbl.rpow[nb_segs] *
-                             (entry->avg_burst_iat -
-                              (float)burst_iat /
-                                  nb_segs));
-#else
-                    entry->avg_burst_iat =
-                        ctx->ewma_alpha * burst_iat +
-                        (1.0 - ctx->ewma_alpha) * entry->avg_burst_iat;
-#endif
-                    entry->avg_data_len =
-                        ctx->ewma_alpha * data_len +
-                        (1.0 - ctx->ewma_alpha) * entry->avg_data_len;
-                    /* back to stable state */
-                    entry->pending_cnt = 0;
-                }
-                /* print log for downlink traffic */
-                // if (!(g_is_semantic_test && g_is_uplink(pkt)))
-                // {
-                //     if (entry->avg_burst_iat > ctx->cutoff_ns)
-                //     {
-                //         fprintf(stdout,
-                //                 "data_len: %6lu, burst_iat: %9lu ns, "
-                //                 "nb_segs: %6lu, iat: %9u ns, data_len: %6u\n",
-                //                 data_len, burst_iat,
-                //                 nb_segs, entry->avg_burst_iat, entry->avg_data_len);
-                //     }
-                // }
-            }
+            goto Skip_ewma_update;
         }
+        if (ts <= entry->last_timestamp)
+        {
+            goto Skip_ewma_update;
+        }
+        /**
+         * ToDo: One day prevent overflow of uint64_t
+         * (never occurs in our lifetime...)
+         */
+        burst_iat = ts - entry->last_timestamp;
+        if (entry->global_avg_iat && burst_iat > entry->global_avg_iat)
+        {
+            goto Skip_ewma_update;
+        }
+        /* feed current burst_iat to EWMA */
+        entry->avg_burst_iat =
+            ctx->ewma_alpha * burst_iat +
+            (1.0 - ctx->ewma_alpha) * entry->avg_burst_iat;
+        entry->avg_data_len =
+            ctx->ewma_alpha * data_len +
+            (1.0 - ctx->ewma_alpha) * entry->avg_data_len;
+        /* print log for downlink traffic */
+        // if (!(g_is_semantic_test && g_is_uplink(pkt)))
+        // {
+        //     if (entry->avg_burst_iat > ctx->cutoff_ns)
+        //     {
+        //         fprintf(stdout,
+        //                 "data_len: %6lu, burst_iat: %9lu ns, "
+        //                 "nb_segs: %6lu, iat: %9u ns, data_len: %6u\n",
+        //                 data_len, burst_iat,
+        //                 nb_segs, entry->avg_burst_iat, entry->avg_data_len);
+        //     }
+        // }
 
+    Skip_ewma_update:
         /* update throughput */
         entry->bytes += pkt->pkt_len + ETHER_OVR;
         if (is_tso(pkt))
         {
             /* consider duplicated headers after TSO */
-            entry->bytes += (data_len - 1) /
-                            pkt->tso_segsz *
+            entry->bytes += (CEIL_DIV(data_len, pkt->tso_segsz) - 1) *
                             (get_hdr_len(pkt) + ETHER_OVR);
         }
         entry->pkts += 1;
@@ -529,22 +420,17 @@ int iat_update_entry(uint16_t port_id,
         fprintf(stderr, "Unable to allocate memory for IAT entry\n");
         return -1;
     }
+    memset(entry, 0, sizeof(struct flow_iat_entry));
 
     /* Fill the entry */
     entry->last_timestamp = ts;
-    entry->avg_burst_iat = 0;
     entry->avg_data_len = data_len;
-    entry->avg_round_iat = 0;
-    entry->pending_cnt = 0;
     entry->last_update = now_ns;
-    entry->l3_len = (uint8_t)pkt->l3_len;
-    entry->l4_len = (uint8_t)pkt->l4_len;
     entry->bytes = pkt->pkt_len + ETHER_OVR;
     if (is_tso(pkt))
     {
         /* consider duplicated headers after TSO */
-        entry->bytes += (data_len - 1) /
-                        pkt->tso_segsz *
+        entry->bytes += (CEIL_DIV(data_len, pkt->tso_segsz) - 1) *
                         (get_hdr_len(pkt) + ETHER_OVR);
     }
     entry->pkts = 1;
@@ -560,14 +446,49 @@ int iat_update_entry(uint16_t port_id,
     return 0;
 }
 /*----------------------------------------------------------------------------*/
-int iat_update_entry_yield(uint16_t port_id,
-                           uint16_t queue_id,
-                           struct rte_mbuf *pkt,
-                           uint64_t now_ns)
+struct flow_iat_entry *
+iat_search_entry(uint16_t port_id,
+                 uint16_t queue_id,
+                 struct four_tuple *key)
 {
     struct px_iat_ctx *ctx = &g_iat_ctx[port_id][queue_id];
-    struct four_tuple *key = get_four_tuple(pkt);
     struct flow_iat_entry *entry;
+
+    if (!ctx->initialized)
+    {
+        fprintf(stderr, "IAT context not initialized\n");
+        return NULL;
+    }
+
+    if (rte_hash_lookup_data(ctx->tbl, key, (void **)&entry) < 0)
+    {
+        /* Allocate a new entry from the mempool */
+        if (rte_mempool_get(ctx->pool, (void **)&entry) < 0)
+        {
+            fprintf(stderr, "Unable to allocate memory for IAT entry\n");
+            return NULL;
+        }
+        memset(entry, 0, sizeof(struct flow_iat_entry));
+
+        /* Insert into the hash table */
+        if (rte_hash_add_key_data(ctx->tbl, key, entry) < 0)
+        {
+            fprintf(stderr, "Unable to add flow to hash table\n");
+            rte_mempool_put(ctx->pool, entry);
+            return NULL;
+        }
+    }
+
+    return entry;
+}
+/*----------------------------------------------------------------------------*/
+int iat_update_entry(uint16_t port_id,
+                     uint16_t queue_id,
+                     struct flow_iat_entry *entry,
+                     struct rte_mbuf *pkt,
+                     uint64_t now_ns)
+{
+    struct px_iat_ctx *ctx = &g_iat_ctx[port_id][queue_id];
     uint32_t leftover = 0, data_len = get_data_len(pkt);
     uint32_t orig_segsz, target_segsz;
     int max_segnum;
@@ -578,14 +499,27 @@ int iat_update_entry_yield(uint16_t port_id,
         return -1;
     }
 
-    /* try update first */
-    if (rte_hash_lookup_data(ctx->tbl, key, (void **)&entry) >= 0)
+    if (!data_len || !entry)
     {
-        entry->last_update = now_ns;
-        entry->l3_len = (uint16_t)pkt->l3_len;
-        entry->l4_len = (uint16_t)pkt->l4_len;
+        return 0; // No data to process
+    }
 
-        /* calculate conversion yield */
+    /* start update */
+    entry->last_update = now_ns;
+
+    /* update throughput */
+    entry->bytes += pkt->pkt_len + ETHER_OVR;
+    if (is_tso(pkt))
+    {
+        /* consider duplicated headers after TSO */
+        entry->bytes += (CEIL_DIV(data_len, pkt->tso_segsz) - 1) *
+                        (get_hdr_len(pkt) + ETHER_OVR);
+    }
+    entry->pkts += 1;
+
+    /* calculate conversion yield */
+    if (is_tcp(pkt))
+    {
         orig_segsz = ctx->emtu_size - pkt->l3_len - pkt->l4_len;
         max_segnum = (ctx->imtu_size - pkt->l3_len - pkt->l4_len) /
                      orig_segsz;
@@ -597,10 +531,6 @@ int iat_update_entry_yield(uint16_t port_id,
             data_len / target_segsz;
         leftover = data_len % target_segsz;
 
-        /* below are for conversion yield type 1 */
-        entry->under_iMTU_cnt += leftover > 128 ? 1 : 0;
-
-        /* below are for conversion yield type 2 */
         if (leftover > 5 * orig_segsz)
         {
             entry->iMTU_cnt++;
@@ -625,15 +555,49 @@ int iat_update_entry_yield(uint16_t port_id,
         {
             entry->_1_seg_cnt++;
         }
+    }
+    else if (is_udp(pkt))
+    {
+        /* re-calculate L3 SDU length */
+        if (is_px_caravan(pkt))
+        {
+            /* remove outer UDP header (PX-caravan hdr) */
+            data_len = get_l3_sdu_len(pkt) - sizeof(struct rte_udp_hdr);
+        }
+        else
+        {
+            data_len = get_l3_sdu_len(pkt);
+        }
+        orig_segsz = ctx->emtu_size - pkt->l3_len;
 
-        return 0;
+        if (data_len > 5 * orig_segsz)
+        {
+            entry->iMTU_cnt++;
+        }
+        else if (data_len > 4 * orig_segsz)
+        {
+            entry->_5_seg_cnt++;
+        }
+        else if (data_len > 3 * orig_segsz)
+        {
+            entry->_4_seg_cnt++;
+        }
+        else if (data_len > 2 * orig_segsz)
+        {
+            entry->_3_seg_cnt++;
+        }
+        else if (data_len > orig_segsz)
+        {
+            entry->_2_seg_cnt++;
+        }
+        else if (data_len > 128)
+        {
+            entry->_1_seg_cnt++;
+        }
     }
     else
     {
-        if (errno != ENOENT)
-        {
-            return -1;
-        }
+        return 0; // only TCP/UDP are supported
     }
 
     return 0;
@@ -713,111 +677,86 @@ void iat_flush_timeout(uint16_t port_id,
 }
 /*----------------------------------------------------------------------------*/
 uint32_t
-iat_get_timeout(uint16_t port_id,
-                uint16_t queue_id,
-                struct four_tuple *key,
+iat_get_timeout(struct flow_iat_entry *entry,
                 uint16_t data_len,
                 uint16_t orig_segsz,
                 uint16_t target_segsz,
+                uint8_t proto_id,
                 uint64_t now_ns,
                 uint32_t cutoff_ns)
 {
-#ifdef FIXED_TIMEOUT
+#if FIXED_TIMEOUT
     return FIXED_TIMEOUT;
 #else
-    struct px_iat_ctx *ctx = &g_iat_ctx[port_id][queue_id];
     const float *timeout_factor;
-    struct flow_iat_entry *entry;
-    uint32_t global_avg_iat;
     uint32_t avg_iat = 0, avg_data_len = 0;
     uint32_t missing_segs_nb;
     uint32_t timeout_ns;
 
-    /* check if initialized */
-    if (!ctx->initialized)
-    {
-        fprintf(stderr, "IAT context not initialized\n");
-        return -1;
-    }
-
     // printf("IAT: data_len=%hu, orig_segsz=%hu, target_segsz=%hu\n",
     //        data_len, orig_segsz, target_segsz);
 
-    /*
+    /**
      * if payload len is not multiple of eMSS
      * it is the end of cwnd or end of content
      */
-    if (data_len % orig_segsz)
+    if ((proto_id == IPPROTO_TCP) &&
+        (data_len % orig_segsz))
     {
         return 0;
     }
 
-    /* try update first */
-    if (rte_hash_lookup_data(ctx->tbl, key, (void **)&entry) < 0 &&
-        errno == ENOENT)
+    if (entry->global_avg_iat > IAT_for_1Gbps)
     {
-        fprintf(stderr, "iat table search failed\n");
-        avg_data_len = 0;
-        avg_iat = 0;
-    }
-    entry->last_update = now_ns;
-#if WEIGHT_ON_LRO
-    avg_data_len = orig_segsz;
-#else
-    avg_data_len = entry->avg_data_len;
-#endif
-    /* calculate global average IAT */
-    global_avg_iat = entry->avg_bytes_per_sec
-                         ? (uint64_t)orig_segsz *
-                               NS_PER_S /
-                               entry->avg_bytes_per_sec
-                         : 0;
-
-    avg_iat = entry->avg_burst_iat;
-    if (avg_iat > cutoff_ns && avg_data_len > DEFAULT_iMTU) // too large IAT
-    {
-        /**
-         * if LROed packet is larger than iMTU
-         * or throughput is higher than 100Mbps
-         * or average IAT is larger than cutoff
-         * use global average IAT
-         */
-        avg_iat = global_avg_iat;
+        /* too large timeout window, give up delaying */
+        return 0;
     }
 
-    /* choose one of below */
-    // timeout_factor = timeout_factor_no_delay;
-    timeout_factor = timeout_factor_naive;
-    // timeout_factor = timeout_factor_90;
-    // timeout_factor = timeout_factor_95;
-    // timeout_factor = timeout_factor_99;
-    // timeout_factor = timeout_factor_999;
-
-    if (!entry->oscillate && (entry->yield >= PER_FLOW_YIELD_THRESHOLD))
+    if (iat_get_yield(entry) > PER_FLOW_YIELD_THRESHOLD)
     {
         /* already high yield flow, no need to delay */
         return 0;
     }
 
-    /* no need to delay for high yield flows */
-    if ((entry->yield >= PER_FLOW_YIELD_THRESHOLD &&
-         entry->prev_yield < PER_FLOW_YIELD_THRESHOLD) ||
-        (entry->yield < PER_FLOW_YIELD_THRESHOLD &&
-         entry->prev_yield >= PER_FLOW_YIELD_THRESHOLD))
+    /* try update first */
+    entry->last_update = now_ns;
+
+    // avg_iat = MIN(entry->avg_burst_iat, entry->global_avg_iat);
+    avg_iat = entry->global_avg_iat;
+
+    /* choose one of below */
+    // timeout_factor = timeout_factor_no_delay;
+    // timeout_factor = timeout_factor_naive;
+    // timeout_factor = timeout_factor_90;
+    // timeout_factor = timeout_factor_95;
+    // timeout_factor = timeout_factor_99;
+    // timeout_factor = timeout_factor_999;
+    if (proto_id == IPPROTO_TCP)
     {
-        /* this flow will oscillate */
-        entry->oscillate = 1;
+        timeout_factor = timeout_factor_95;
+    }
+    else if (proto_id == IPPROTO_UDP)
+    {
+        timeout_factor = timeout_factor_95;
+    }
+    else
+    {
+        /* unsupported protocol */
+        timeout_factor = timeout_factor_no_delay;
     }
 
     /**
      * if average LRO'ed data len is under original segment size,
      * use orig_segsz to avoid too many missing_segs
      */
-    if (avg_data_len < orig_segsz)
-    {
-        avg_data_len = orig_segsz;
-    }
-    missing_segs_nb = (target_segsz - data_len) / avg_data_len;
+    // avg_data_len = entry->avg_data_len;
+    // if (avg_data_len < orig_segsz)
+    // {
+    //     avg_data_len = orig_segsz;
+    // }
+    // missing_segs_nb = (target_segsz - data_len) / avg_data_len;
+    missing_segs_nb = (target_segsz - data_len) / orig_segsz;
+    RTE_SET_USED(avg_data_len);
     if (!missing_segs_nb)
     {
         missing_segs_nb = 1;
@@ -829,56 +768,15 @@ iat_get_timeout(uint16_t port_id,
 
     timeout_ns = avg_iat * timeout_factor[missing_segs_nb];
 
-    /* cap by cutoff delay */
-    if (timeout_ns > cutoff_ns)
+    /* apply gamma distribution to timeout too */
+    if (timeout_ns > IAT_for_1Gbps * timeout_factor[DEFAULT_iMTU / DEFAULT_eMTU])
     {
-        timeout_ns = cutoff_ns;
+        /* too large timeout window, give up delaying */
+        // printf("IAT: avg_iat %u, missing_segs_nb %u, "
+        //        "timeout_ns %u > cutoff_ns %u, no delay\n",
+        //        avg_iat, missing_segs_nb, timeout_ns, cutoff_ns);
+        return 0;
     }
-
-#if LOG_DELAY
-    int len;
-    uint32_t max_seg_nb = target_segsz / orig_segsz;
-    /* log only HW timestamp */
-    len = snprintf(g_delay_log_buffer[queue_id] + g_delay_log_offset[queue_id],
-                   LOG_BUFFER_SIZE - g_delay_log_offset[queue_id],
-                   "%d.%d.%d.%d:%d -> %d.%d.%d.%d:%d "
-                   "max_seg_nb: %1u, missing_segs_nb: %1u, "
-                   "orig_segsz: %5hu, target_segsz: %5hu, cur_segsz: %5hu"
-                   "diff_ns: %5ld, avg_iat: %5u, "
-                   "timeout_ns: %6u\n",
-                   *(uint8_t *)&key->src_ip, *((uint8_t *)&key->src_ip + 1),
-                   *((uint8_t *)&key->src_ip + 2), *((uint8_t *)&key->src_ip + 3),
-                   rte_be_to_cpu_16(key->src_port),
-                   *((uint8_t *)&key->dst_ip), *((uint8_t *)&key->dst_ip + 1),
-                   *((uint8_t *)&key->dst_ip + 2), *((uint8_t *)&key->dst_ip + 3),
-                   rte_be_to_cpu_16(key->dst_port),
-                   max_seg_nb, missing_segs_nb,
-                   orig_segsz, target_segsz, data_len,
-                   now_ns - timestamp, avg_iat,
-                   timeout_ns);
-    if (len < 0)
-    {
-        fprintf(stderr, "snprintf failed\n");
-        len = 0;
-    }
-    else if (len >= (int)(LOG_BUFFER_SIZE - g_delay_log_offset[queue_id]))
-    {
-        fprintf(stderr, "log buffer overflow\n");
-        len = LOG_BUFFER_SIZE - g_delay_log_offset[queue_id];
-    }
-    if (len > 0)
-    {
-        g_delay_log_offset[queue_id] += len;
-        if (g_delay_log_offset[queue_id] > (float)LOG_BUFFER_SIZE * 0.95)
-        {
-            fwrite(g_delay_log_buffer[queue_id],
-                   1,
-                   g_delay_log_offset[queue_id],
-                   g_delay_log_fp[queue_id]);
-            g_delay_log_offset[queue_id] = 0;
-        }
-    }
-#endif
 
     return timeout_ns;
 #endif
@@ -893,11 +791,11 @@ void iat_local_stat(uint16_t port_id,
 {
     struct px_iat_ctx *ctx = &g_iat_ctx[port_id][queue_id];
     struct flow_iat_entry *entry;
-    uint32_t global_avg_iat, iter = 0;
     struct four_tuple *next_key;
     void *next_data;
     uint64_t temp_burst_iat = 0, temp_global_iat = 0;
     uint64_t temp_data_len = 0, temp_count = 0;
+    uint32_t iter = 0;
 
     if (!ctx->tbl)
     {
@@ -914,38 +812,17 @@ void iat_local_stat(uint16_t port_id,
         entry = (struct flow_iat_entry *)next_data;
 
         /* update average throughput */
-        entry->avg_bytes_per_sec = entry->bytes;
-
-        /* update average yield */
-        entry->prev_yield = entry->yield;
-        entry->yield =
-            (entry->_1_seg_cnt ||
-             entry->_2_seg_cnt ||
-             entry->_3_seg_cnt ||
-             entry->_4_seg_cnt ||
-             entry->_5_seg_cnt ||
-             entry->iMTU_cnt)
-                ? (uint32_t)((float)entry->iMTU_cnt * 6 /
-                             (entry->_1_seg_cnt * 1 +
-                              entry->_2_seg_cnt * 2 +
-                              entry->_3_seg_cnt * 3 +
-                              entry->_4_seg_cnt * 4 +
-                              entry->_5_seg_cnt * 5 +
-                              entry->iMTU_cnt * 6) *
-                             100)
-                : 0;
-
         if (entry->avg_burst_iat < ctx->cutoff_ns * 1000 &&
-            entry->avg_bytes_per_sec * 8 > E6) // skip small flow (e.g., ACK-only < 1Mbps)
+            entry->bytes * 8 > E6) // skip small flow (e.g., ACK-only < 1Mbps)
         {
-            global_avg_iat = entry->avg_bytes_per_sec
-                                 ? ((uint64_t)ctx->emtu_size *
-                                    NS_PER_S /
-                                    entry->avg_bytes_per_sec)
-                                 : 0;
+            entry->global_avg_iat = entry->bytes
+                                        ? (uint32_t)((float)ctx->emtu_size *
+                                                     NS_PER_S /
+                                                     entry->bytes)
+                                        : 0;
             /* aggregate stats */
             temp_burst_iat += entry->avg_burst_iat;
-            temp_global_iat += global_avg_iat;
+            temp_global_iat += entry->global_avg_iat;
             temp_data_len += entry->avg_data_len;
             temp_count++;
 
@@ -954,15 +831,13 @@ void iat_local_stat(uint16_t port_id,
                     "  IAT stats: burst_iat: %9u ns, "
                     "global_iat: %9u ns, "
                     "data_len: %9u bytes, "
-                    "yield: %2.0f%%, "
-                    "tput: %9lu Mbps, "
-                    "oscillate: %d\n",
+                    "yield: %2u%%, "
+                    "tput: %9lu Mbps\n",
                     entry->avg_burst_iat,
-                    global_avg_iat,
+                    entry->global_avg_iat,
                     entry->avg_data_len,
-                    entry->yield,
-                    entry->avg_bytes_per_sec * 8 / E6,
-                    entry->oscillate);
+                    iat_get_yield(entry),
+                    entry->bytes * 8 / E6);
             if (entry->avg_data_len >= UINT16_MAX)
             {
                 px_dump_tuple(next_key);
@@ -981,16 +856,6 @@ void iat_local_stat(uint16_t port_id,
         entry->_4_seg_cnt = 0;
         entry->_5_seg_cnt = 0;
         entry->iMTU_cnt = 0;
-    }
-
-    if (temp_count == 0 || temp_burst_iat == 0 ||
-        total_global_iat == 0 || temp_data_len == 0)
-    {
-        *total_burst_iat = 0;
-        *total_global_iat = 0;
-        *total_data_len = 0;
-        *total_count = 0;
-        return;
     }
 
     // fprintf(stdout,
