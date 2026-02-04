@@ -3,7 +3,9 @@
 /*----------------------------------------------------------------------------*/
 #ifdef __cplusplus
 #include <atomic> // C++ atomics
+typedef std::atomic<uint64_t> atomic_u64_t;
 typedef std::atomic<uint32_t> atomic_u32_t;
+typedef std::atomic<uint16_t> atomic_u16_t;
 typedef std::atomic<uint8_t> atomic_u8_t;
 using std::memory_order;
 using std::memory_order_acq_rel;
@@ -14,7 +16,9 @@ using std::memory_order_seq_cst;
 #else
 #include <stdatomic.h> // C11 atomics
 #include <stdint.h>
+typedef _Atomic uint64_t atomic_u64_t;
 typedef _Atomic uint32_t atomic_u32_t;
+typedef _Atomic uint16_t atomic_u16_t;
 typedef _Atomic uint8_t atomic_u8_t;
 #endif
 /*----------------------------------------------------------------------------*/
@@ -108,7 +112,7 @@ extern "C"
 #define PX_MEASURE_DIST 0
 #define MEASURE_DELAY 0
 /*----------------------------------------------------------------------------*/
-#define LOG_RX_HW_TIMESTAMP 0
+#define LOG_HW_RX_TIMESTAMP 0
 #define LOG_BUFFER_SIZE (1024 * 1024)
 /*----------------------------------------------------------------------------*/
 #define FIXED_TIMEOUT 0
@@ -1808,6 +1812,40 @@ reset_sw_timestamp(struct rte_mbuf *pkt)
 #endif
 }
 /*----------------------------------------------------------------------------*/
+static inline uint32_t
+_bit_mix(uint32_t h) {
+    h ^= h >> 16;
+    h *= 0x85ebca6b;
+    h ^= h >> 13;
+    h *= 0xc2b2ae35;
+    h ^= h >> 16;
+    return h;
+}
+/*----------------------------------------------------------------------------*/
+static inline uint16_t
+xor_hash0(const void *data) {
+    const uint32_t *d = (const uint32_t *)data;
+    /* Seed 0x12345678 */
+    uint32_t h = d[0] ^ d[1] ^ d[2] ^ 0x12345678;
+    return (uint16_t)_bit_mix(h);
+}
+/*----------------------------------------------------------------------------*/
+static inline uint16_t
+xor_hash1(const void *data) {
+    const uint32_t *d = (const uint32_t *)data;
+    /* Use a different seed and combination to ensure independence from hash0 */
+    uint32_t h = (d[0] * 0xcc9e2d51) ^ (d[1] * 0x1b873593) ^ d[2];
+    return (uint16_t)_bit_mix(h ^ 0xdeadbeef);
+}
+/*----------------------------------------------------------------------------*/
+static inline uint16_t
+xor_hash2(const void *data) {
+    const uint32_t *d = (const uint32_t *)data;
+    /* Mix rotate operations to generate a completely different bit pattern */
+    uint32_t h = (d[0] << 13 | d[0] >> 19) ^ d[1] ^ (d[2] >> 7);
+    return (uint16_t)_bit_mix(h ^ 0xfaceb00c);
+}
+/*----------------------------------------------------------------------------*/
 /* Incremental checksum update for 16-bit value change */
 static inline uint16_t
 inc_csum_update(uint16_t csum,
@@ -2618,7 +2656,8 @@ px_chained_trim(struct rte_mbuf *pkt, uint32_t len)
     pkt->nb_segs = seg_idx + 1;
 }
 /*----------------------------------------------------------------------------*/
-/* Recompute pkt_len/nb_segs for a chain head (payload-only here).
+/**
+ * Recompute pkt_len/nb_segs for a chain head (payload-only here).
  * (costly but safe; OK for bring-up)
  */
 static inline void

@@ -23,6 +23,7 @@ extern "C"
 #define INVALID_INDEX UINT16_MAX
 #define MAX_KEY_LEN 32
 #define NB_CLONE_MBUF ((1 << 25) - 1)
+#define COUNT_BASED_DELAYED_MERGING 0
 /*----------------------------------------------------------------------------*/
 struct px_flow
 {

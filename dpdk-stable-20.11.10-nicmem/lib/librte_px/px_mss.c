@@ -8,6 +8,275 @@ static volatile int g_mss_shutdown = 0;
 extern struct px_dev g_px_dev[RTE_MAX_ETHPORTS];
 extern uint8_t *g_px_rss_key;
 /*----------------------------------------------------------------------------*/
+/* Writer-side helpers */
+/* writer wraps sections from begin to end */
+/* single writer entry: CAS from even e to odd e+1 */
+static inline void
+bloom_update_begin(atomic_u32_t *epoch)
+{
+    uint32_t e =
+        atomic_load_explicit(
+            epoch,
+            memory_order_acquire);
+    for (;;)
+    {
+        if ((e & 1u) == 0u)
+        {
+            if (atomic_compare_exchange_weak_explicit(
+                    epoch,
+                    &e,
+                    e + 1u,
+                    memory_order_acq_rel,
+                    memory_order_acquire))
+            {
+                /* success to update to odd (updating) */
+                break;
+            }
+        }
+        cpu_relax();
+        e =
+            atomic_load_explicit(
+                epoch,
+                memory_order_acquire);
+    }
+}
+/*----------------------------------------------------------------------------*/
+/* single writer exit: CAS from odd e to even e+1 */
+static inline void
+bloom_update_end(atomic_u32_t *epoch)
+{
+    atomic_fetch_add_explicit(
+        epoch,
+        1u,
+        memory_order_release);
+}
+/*----------------------------------------------------------------------------*/
+static inline atomic_u8_t *
+bloom_filter_init(void)
+{
+    /* 65536 entries (0 .. 65535) */
+    /* ToDo: Make it parameterized */
+    size_t n = (size_t)UINT16_MAX + 1u;
+
+    /* calloc based on the size of atomic_u8_t */
+    atomic_u8_t *filter =
+        (atomic_u8_t *)calloc(n, sizeof(atomic_u8_t));
+    if (!filter)
+    {
+        fprintf(stderr, "bloom_filter_init: calloc failed\n");
+        return NULL;
+    }
+
+    return filter;
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+bloom_filter_destroy(atomic_u8_t *filter)
+{
+    free(filter);
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+bloom_filter_insert(atomic_u8_t *filter,
+                    atomic_u32_t *epoch,
+                    size_t bf_size,
+                    const struct four_tuple *key)
+{
+    uint16_t h0 = xor_hash0(key) % bf_size;
+    uint16_t h1 = xor_hash1(key) % bf_size;
+    uint16_t h2 = xor_hash2(key) % bf_size;
+
+    bloom_update_begin(epoch);
+
+    uint8_t o0 =
+        atomic_fetch_add_explicit(
+            &filter[h0],
+            1,
+            memory_order_relaxed);
+    if (o0 == UINT8_MAX)
+    {
+        /* overflow: return without restoration (not increased) */
+        bloom_update_end(epoch);
+        fprintf(stderr,
+                "bloom_filter_insert overflow, h0=%u\n", h0);
+        return;
+    }
+
+    uint8_t o1 =
+        atomic_fetch_add_explicit(
+            &filter[h1],
+            1,
+            memory_order_relaxed);
+    if (o1 == UINT8_MAX)
+    {
+        /* h1 failure due to overflow: restore h0 and return */
+        atomic_fetch_sub_explicit(
+            &filter[h0],
+            1,
+            memory_order_relaxed);
+        bloom_update_end(epoch);
+        fprintf(stderr,
+                "bloom_filter_insert overflow, h1=%u\n", h1);
+        return;
+    }
+
+    uint8_t o2 =
+        atomic_fetch_add_explicit(
+            &filter[h2],
+            1,
+            memory_order_relaxed);
+    if (o2 == UINT8_MAX)
+    {
+        /* h2 failure due to overflow: restore h1, h0 and return */
+        atomic_fetch_sub_explicit(
+            &filter[h1],
+            1,
+            memory_order_relaxed);
+        atomic_fetch_sub_explicit(
+            &filter[h0],
+            1,
+            memory_order_relaxed);
+        bloom_update_end(epoch);
+        fprintf(stderr,
+                "bloom_filter_insert overflow, h2=%u\n", h2);
+        return;
+    }
+
+    bloom_update_end(epoch);
+}
+/*----------------------------------------------------------------------------*/
+static inline void
+bloom_filter_delete(atomic_u8_t *filter,
+                    atomic_u32_t *epoch,
+                    size_t bf_size,
+                    const struct four_tuple *key)
+{
+    uint16_t h0 = xor_hash0(key) % bf_size;
+    uint16_t h1 = xor_hash1(key) % bf_size;
+    uint16_t h2 = xor_hash2(key) % bf_size;
+
+    bloom_update_begin(epoch);
+
+    uint8_t o0 =
+        atomic_fetch_sub_explicit(
+            &filter[h0],
+            1,
+            memory_order_relaxed);
+    if (o0 == 0)
+    {
+        /* no data: restore and return */
+        atomic_fetch_add_explicit(
+            &filter[h0],
+            1,
+            memory_order_relaxed);
+        bloom_update_end(epoch);
+        fprintf(stderr,
+                "bloom_filter_delete: no data, h0=%u\n", h0);
+        return;
+    }
+
+    uint8_t o1 =
+        atomic_fetch_sub_explicit(
+            &filter[h1],
+            1,
+            memory_order_relaxed);
+    if (o1 == 0)
+    {
+        /* h1 failure due to no data: restore h1, h0 and return */
+        atomic_fetch_add_explicit(
+            &filter[h1],
+            1,
+            memory_order_relaxed);
+        atomic_fetch_add_explicit(
+            &filter[h0],
+            1,
+            memory_order_relaxed);
+        bloom_update_end(epoch);
+        fprintf(stderr,
+                "bloom_filter_delete: no data, h1=%u\n", h1);
+        return;
+    }
+
+    uint8_t o2 =
+        atomic_fetch_sub_explicit(
+            &filter[h2],
+            1,
+            memory_order_relaxed);
+    if (o2 == 0)
+    {
+        /* h2 failure due to no data: restore h2, h1, h0 and return */
+        atomic_fetch_add_explicit(
+            &filter[h2],
+            1,
+            memory_order_relaxed);
+        atomic_fetch_add_explicit(
+            &filter[h1],
+            1,
+            memory_order_relaxed);
+        atomic_fetch_add_explicit(
+            &filter[h0],
+            1,
+            memory_order_relaxed);
+        bloom_update_end(epoch);
+        fprintf(stderr,
+                "bloom_filter_delete: no data, h2=%u\n", h2);
+        return;
+    }
+
+    bloom_update_end(epoch);
+}
+/*----------------------------------------------------------------------------*/
+/* reader verifies three counters in the same epoch snapshot */
+static inline int
+bloom_filter_search(const atomic_u8_t *filter,
+                    const atomic_u32_t *epoch,
+                    size_t bf_size,
+                    const struct four_tuple *key)
+{
+    for (;;)
+    {
+        uint32_t e1 = atomic_load_explicit(epoch, memory_order_acquire);
+        if (e1 & 1u)
+        {
+            /* updating... wait a minute */
+            cpu_relax();
+            continue;
+        }
+
+        const uint16_t h0 = xor_hash0(key) % bf_size;
+        const uint8_t v0 =
+            atomic_load_explicit(
+                &filter[h0],
+                memory_order_relaxed);
+
+        const uint16_t h1 = xor_hash1(key) % bf_size;
+        const uint8_t v1 =
+            atomic_load_explicit(
+                &filter[h1],
+                memory_order_relaxed);
+
+        const uint16_t h2 = xor_hash2(key) % bf_size;
+        const uint8_t v2 =
+            atomic_load_explicit(
+                &filter[h2],
+                memory_order_relaxed);
+
+        uint32_t e2 =
+            atomic_load_explicit(
+                epoch,
+                memory_order_acquire);
+        if (e1 != e2)
+        {
+            /* while reading, writer has entered... try again */
+            cpu_relax();
+            continue;
+        }
+
+        /* 0: no value, otherwise: value exists (but might be FP) */
+        return v0 * v1 * v2;
+    }
+}
+/*----------------------------------------------------------------------------*/
 static void *
 mss_periodic_cleanup(void *arg)
 {
@@ -75,7 +344,7 @@ int mss_init_ctx(uint16_t port_id,
                                    NULL,
                                    NULL,
                                    rte_socket_id(),
-                                   0);
+                                   RTE_HASH_EXTRA_FLAGS_RW_CONCURRENCY_LF);
     if (!ctx->pool)
     {
         fprintf(stderr, "rte_mempool_create failed\n");
@@ -104,7 +373,7 @@ int mss_init_ctx(uint16_t port_id,
         return -1;
     }
 
-    ctx->bf = mss_bloom_init();
+    ctx->bf = bloom_filter_init();
     if (!ctx->bf)
     {
         fprintf(stderr, "Failed to create counting bloom filter\n");
@@ -113,6 +382,9 @@ int mss_init_ctx(uint16_t port_id,
         rte_free(ctx);
         return -1;
     }
+    // ctx->bf_size = num_entry * 16;
+    ctx->bf_size = (size_t)UINT16_MAX + 1u;
+    printf("BF size: %zu\n", ctx->bf_size);
 
     atomic_init(&ctx->epoch, 0);
 
@@ -122,7 +394,7 @@ int mss_init_ctx(uint16_t port_id,
     // if (pthread_create(&g_mss_tid, NULL, mss_periodic_cleanup, num_cores) != 0)
     // {
     //     fprintf(stderr, "Failed to create cleanup thread\n");
-    //     mss_bloom_destroy(ctx->bf);
+    //     bloom_filter_destroy(ctx->bf);
     //     rte_hash_free(ctx->tbl);
     //     rte_mempool_free(ctx->pool);
     //     rte_free(ctx);
@@ -158,7 +430,7 @@ int mss_destroy_ctx(uint16_t port_id,
     }
 
     /* Free the hash table and mempool */
-    mss_bloom_destroy(ctx->bf);
+    bloom_filter_destroy(ctx->bf);
     rte_hash_free(ctx->tbl);
     rte_mempool_free(ctx->pool);
 
@@ -197,7 +469,6 @@ get_reverse_queue(uint16_t port_id, uint32_t reverse_rss)
 /*----------------------------------------------------------------------------*/
 int mss_search_entry(uint16_t port_id,
                      uint16_t queue_id,
-                     uint32_t rss,
                      struct four_tuple *key,
                      uint16_t *mss,
                      uint64_t now_ns)
@@ -212,7 +483,7 @@ int mss_search_entry(uint16_t port_id,
         return -1;
     }
 
-    if (!mss_bloom_search(ctx->bf, &ctx->epoch, rss, key))
+    if (!bloom_filter_search(ctx->bf, &ctx->epoch, ctx->bf_size, key))
     {
         /* not exist in bloom filter */
         *mss = px_dev->emtu_size -
@@ -232,7 +503,8 @@ int mss_search_entry(uint16_t port_id,
             return 0;
         }
 
-        printf("rte_hash_lookup_data: %d\n", errno);
+        fprintf(stderr, "rte_hash_lookup_data failed: %s (%d)\n",
+                strerror(errno), errno);
         return -1;
     }
 
@@ -275,7 +547,6 @@ int mss_search_reverse(uint16_t port_id,
 
     return mss_search_entry(port_id,
                             reverse_queue_id,
-                            reverse_rss,
                             &reverse_key,
                             mss,
                             now_ns);
@@ -283,7 +554,6 @@ int mss_search_reverse(uint16_t port_id,
 /*----------------------------------------------------------------------------*/
 int mss_insert_entry(uint16_t port_id,
                      uint16_t queue_id,
-                     uint32_t rss,
                      struct four_tuple *key,
                      uint16_t mss,
                      uint64_t now_ns)
@@ -319,13 +589,14 @@ int mss_insert_entry(uint16_t port_id,
         rte_mempool_put(ctx->pool, entry);
 
         /* delete from bloom filter */
-        mss_bloom_delete(ctx->bf, &ctx->epoch, rss, key);
+        bloom_filter_delete(ctx->bf, &ctx->epoch, ctx->bf_size, key);
     }
     else
     {
-        if (errno != ENOENT)
+        if (errno && errno != ENOENT)
         {
-            fprintf(stderr, "rte_hash_lookup_data failed\n");
+            fprintf(stderr, "rte_hash_lookup_data failed: %s (%d)\n",
+                    strerror(errno), errno);
             return -1;
         }
     }
@@ -340,7 +611,6 @@ int mss_insert_entry(uint16_t port_id,
 
     /* fill entry */
     entry->mss = mss;
-    entry->rss = rss;
     entry->last_update = now_ns;
 
     /* insert into the hash table */
@@ -352,7 +622,7 @@ int mss_insert_entry(uint16_t port_id,
     }
 
     /* insert to bloom filter */
-    mss_bloom_insert(ctx->bf, &ctx->epoch, rss, key);
+    bloom_filter_insert(ctx->bf, &ctx->epoch, ctx->bf_size, key);
 
     return 0;
 }
@@ -398,7 +668,6 @@ int mss_insert_reverse(uint16_t port_id,
 
     return mss_insert_entry(port_id,
                             reverse_queue_id,
-                            reverse_rss,
                             &reverse_key,
                             mss,
                             now_ns);
@@ -406,7 +675,6 @@ int mss_insert_reverse(uint16_t port_id,
 /*----------------------------------------------------------------------------*/
 int mss_evict_entry(uint16_t port_id,
                     uint16_t queue_id,
-                    uint32_t rss,
                     struct four_tuple *key)
 {
     struct px_mss_ctx *ctx = &g_mss_ctx[port_id][queue_id];
@@ -419,7 +687,7 @@ int mss_evict_entry(uint16_t port_id,
     }
 
     /* search from bloom filter first */
-    if (!mss_bloom_search(ctx->bf, &ctx->epoch, rss, key))
+    if (!bloom_filter_search(ctx->bf, &ctx->epoch, ctx->bf_size, key))
     {
         /* not exist in bloom filter */
         return 0;
@@ -440,7 +708,8 @@ int mss_evict_entry(uint16_t port_id,
     /* remove the entry from the hash table */
     if (rte_hash_del_key(ctx->tbl, key) < 0)
     {
-        fprintf(stderr, "Unable to delete existing flow from hash table\n");
+        fprintf(stderr, "rte_hash_lookup_data failed: %s (%d)\n",
+                strerror(errno), errno);
         return -1;
     }
 
@@ -448,7 +717,7 @@ int mss_evict_entry(uint16_t port_id,
     rte_mempool_put(ctx->pool, entry);
 
     /* delete from bloom filter */
-    mss_bloom_delete(ctx->bf, &ctx->epoch, rss, key);
+    bloom_filter_delete(ctx->bf, &ctx->epoch, ctx->bf_size, key);
 
     return 0;
 }
@@ -483,22 +752,20 @@ int mss_evict_reverse(uint16_t port_id,
 
     return mss_evict_entry(port_id,
                            reverse_queue_id,
-                           reverse_rss,
                            &reverse_key);
 }
 /*----------------------------------------------------------------------------*/
 int mss_update_entry(uint16_t port_id,
                      uint16_t queue_id,
-                     uint32_t rss,
                      struct four_tuple *key,
                      uint16_t mss,
                      uint64_t now_ns)
 {
-    if (mss_evict_entry(port_id, queue_id, rss, key) < 0)
+    if (mss_evict_entry(port_id, queue_id, key) < 0)
     {
         return -1;
     }
-    if (mss_insert_entry(port_id, queue_id, rss, key, mss, now_ns) < 0)
+    if (mss_insert_entry(port_id, queue_id, key, mss, now_ns) < 0)
     {
         return -1;
     }
@@ -539,7 +806,6 @@ int mss_update_reverse(uint16_t port_id,
 
     return mss_update_entry(port_id,
                             reverse_queue_id,
-                            reverse_rss,
                             &reverse_key,
                             mss,
                             now_ns);
@@ -566,12 +832,13 @@ void mss_flush_timeout(uint16_t port_id,
             /* Remove the entry from the hash table */
             if (rte_hash_del_key(ctx->tbl, next_key) < 0)
             {
-                fprintf(stderr, "Unable to delete existing flow from hash table\n");
+                fprintf(stderr, "mss_flush_timeout: rte_hash_del_key "
+                                "Unable to delete existing flow from hash table\n");
                 continue;
             }
 
             /* delete from bloom filter */
-            mss_bloom_delete(ctx->bf, &ctx->epoch, entry->rss, next_key);
+            bloom_filter_delete(ctx->bf, &ctx->epoch, ctx->bf_size, next_key);
 
             /* free the entry back to the mempool */
             rte_mempool_put(ctx->pool, entry);

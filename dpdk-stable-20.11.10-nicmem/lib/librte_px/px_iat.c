@@ -4,7 +4,6 @@ struct px_iat_ctx g_iat_ctx[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
 static uint16_t g_num_cores = 0;
 static pthread_t g_iat_tid = 0;
 static volatile int g_iat_shutdown = 0;
-struct rpow_tbl_t g_rpow_tbl = {.alpha_cached = NAN};
 extern int g_is_semantic_test;
 static int (*g_is_uplink)(struct rte_mbuf *pkt) = NULL;
 static int (*g_is_downlink)(struct rte_mbuf *pkt) = NULL;
@@ -260,15 +259,48 @@ int iat_init_ctx(uint16_t port_id,
         return -1;
     }
 
+#if USE_CMS
+    ctx->cms_size = num_entry * 16;
+    printf("CMS size: %zu\n", ctx->cms_size);
+    ctx->cms_active_idx = 0;
+    for (int i = 0; i < 2; i++)
+    {
+        snprintf(name, sizeof(name), "iat-cms-%d-%d-%d", port_id, queue_id, i);
+        ctx->cms_filters[i] = rte_zmalloc_socket(name,
+                                                 sizeof(uint64_t) * ctx->cms_size,
+                                                 RTE_CACHE_LINE_SIZE,
+                                                 rte_socket_id());
+        if (!ctx->cms_filters[i])
+        {
+            fprintf(stderr, "Failed to create counting CMS filter[%d]\n", i);
+            if (i == 1)
+            {
+                rte_free(ctx->cms_filters[0]);
+            }
+            rte_hash_free(ctx->tbl);
+            rte_mempool_free(ctx->pool);
+            return -1;
+        }
+    }
+#endif
+
     // /* Create a new thread for periodic cleanup */
     // uint16_t *num_cores = calloc(1, sizeof(uint16_t));
     // *num_cores = rte_lcore_count();
     // if (pthread_create(&g_iat_tid, NULL, iat_periodic_cleanup, num_cores) != 0)
     // {
     //     fprintf(stderr, "Failed to create cleanup thread\n");
+    //     /* Free the counting CMS, hash table and mempool */
+    //     if (ctx->cms_filters[0])
+    //     {
+    //         rte_free(ctx->cms_filters[0]);
+    //     }
+    //     if (ctx->cms_filters[1])
+    //     {
+    //         rte_free(ctx->cms_filters[1]);
+    //     }
     //     rte_hash_free(ctx->tbl);
     //     rte_mempool_free(ctx->pool);
-    //     rte_free(ctx);
     //     return -1;
     // }
     RTE_SET_USED(iat_periodic_cleanup);
@@ -280,8 +312,6 @@ int iat_init_ctx(uint16_t port_id,
     ctx->cutoff_ns = cutoff_ns;
     ctx->ewma_alpha = ewma_alpha;
     ctx->initialized = 1;
-
-    rpow_build(&g_rpow_tbl, ewma_alpha);
 
     return 0;
 }
@@ -306,7 +336,19 @@ int iat_destroy_ctx(uint16_t port_id,
         rte_mempool_put(ctx->pool, next_data);
     }
 
-    /* Free the hash table and mempool */
+#if USE_CMS
+    /* Free the counting CMS, hash table and mempool */
+    if (ctx->cms_filters[0])
+    {
+        rte_free(ctx->cms_filters[0]);
+        ctx->cms_filters[0] = NULL;
+    }
+    if (ctx->cms_filters[1])
+    {
+        rte_free(ctx->cms_filters[1]);
+        ctx->cms_filters[1] = NULL;
+    }
+#endif
     rte_hash_free(ctx->tbl);
     rte_mempool_free(ctx->pool);
 
@@ -324,6 +366,7 @@ int iat_destroy_ctx(uint16_t port_id,
 
     return 0;
 }
+#if USE_HW_RX_TIMESTAMP
 /*----------------------------------------------------------------------------*/
 int iat_update_entry_iat(uint16_t port_id,
                          uint16_t queue_id,
@@ -335,6 +378,7 @@ int iat_update_entry_iat(uint16_t port_id,
     struct flow_iat_entry *entry;
     rte_mbuf_timestamp_t ts;
     uint32_t nb_segs, burst_iat = 0, data_len = get_data_len(pkt);
+    int ret, retry_count;
 
     /* check initialized */
     if (!ctx->initialized)
@@ -355,8 +399,10 @@ int iat_update_entry_iat(uint16_t port_id,
     }
     ts = get_rx_hw_timestamp(pkt);
 
+    retry_count = 0;
+Try_lookup:
     /* try update first */
-    if (rte_hash_lookup_data(ctx->tbl, key, (void **)&entry) >= 0)
+    if ((ret = rte_hash_lookup_data(ctx->tbl, key, (void **)&entry)) >= 0)
     {
         entry->last_update = now_ns;
 
@@ -414,45 +460,223 @@ int iat_update_entry_iat(uint16_t port_id,
         return 0;
     }
 
-    /* Allocate a new entry from the mempool */
-    if (rte_mempool_get(ctx->pool, (void **)&entry) < 0)
+    if (ret == -EAGAIN || errno == EAGAIN)
     {
-        fprintf(stderr, "Unable to allocate memory for IAT entry\n");
-        return -1;
-    }
-    memset(entry, 0, sizeof(struct flow_iat_entry));
-
-    /* Fill the entry */
-    entry->last_timestamp = ts;
-    entry->avg_data_len = data_len;
-    entry->last_update = now_ns;
-    entry->bytes = pkt->pkt_len + ETHER_OVR;
-    if (is_tso(pkt))
-    {
-        /* consider duplicated headers after TSO */
-        entry->bytes += (CEIL_DIV(data_len, pkt->tso_segsz) - 1) *
-                        (get_hdr_len(pkt) + ETHER_OVR);
-    }
-    entry->pkts = 1;
-
-    /* Insert into the hash table */
-    if (rte_hash_add_key_data(ctx->tbl, key, entry) < 0)
-    {
-        fprintf(stderr, "Unable to add flow to hash table\n");
-        rte_mempool_put(ctx->pool, entry);
+        retry_count++;
+        if (retry_count <= 3)
+        {
+            goto Try_lookup;
+        }
+        fprintf(stderr, "iat_update_entry_iat: rte_hash_lookup_data "
+                        "keeps returning EAGAIN\n");
         return -1;
     }
 
-    return 0;
+    if (ret == -ENOENT || errno == ENOENT)
+    {
+        /* Allocate a new entry from the mempool */
+        if (rte_mempool_get(ctx->pool, (void **)&entry) < 0)
+        {
+            fprintf(stderr, "Unable to allocate memory for IAT entry\n");
+            return -1;
+        }
+        memset(entry, 0, sizeof(struct flow_iat_entry));
+
+        /* Fill the entry */
+        entry->last_timestamp = ts;
+        entry->avg_data_len = data_len;
+        entry->last_update = now_ns;
+        entry->bytes = pkt->pkt_len + ETHER_OVR;
+        if (is_tso(pkt))
+        {
+            /* consider duplicated headers after TSO */
+            entry->bytes += (CEIL_DIV(data_len, pkt->tso_segsz) - 1) *
+                            (get_hdr_len(pkt) + ETHER_OVR);
+        }
+        entry->pkts = 1;
+
+        /* Insert into the hash table */
+        retry_count = 0;
+    Try_insert:
+        if ((ret = rte_hash_add_key_data(ctx->tbl, key, entry)) < 0)
+        {
+            if (ret == -EAGAIN || errno == EAGAIN)
+            {
+                retry_count++;
+                if (retry_count <= 3)
+                {
+                    goto Try_insert;
+                }
+                fprintf(stderr, "iat_update_entry_iat: rte_hash_add_key_data "
+                                "keeps returning EAGAIN\n");
+                rte_mempool_put(ctx->pool, entry);
+                return -1;
+            }
+            fprintf(stderr, "Unable to add flow to hash table\n");
+            rte_mempool_put(ctx->pool, entry);
+            return -1;
+        }
+
+        return 0;
+    }
+    fprintf(stderr, "iat_update_entry_iat: rte_hash_lookup_data failed: "
+                    "%s (%d)\n",
+            strerror(errno), errno);
+    return -1;
+}
+#endif
+/*----------------------------------------------------------------------------*/
+void iat_periodic_update(uint16_t port_id,
+                         uint16_t queue_id,
+                         uint64_t now_ns)
+{
+    struct px_iat_ctx *ctx = &g_iat_ctx[port_id][queue_id];
+    struct flow_iat_entry *entry;
+    const void *next_key;
+    void *next_data;
+    uint64_t temp_global_iat = 0;
+#if USE_HW_RX_TIMESTAMP
+    uint64_t temp_burst_iat = 0;
+    uint64_t temp_data_len = 0;
+#endif
+    uint64_t temp_count = 0;
+    uint32_t iter = 0;
+
+    if (!ctx->initialized)
+    {
+        fprintf(stderr, "iat_periodic_update: IAT context not initialized\n");
+        return;
+    }
+
+    /* update throughput and swap CMS filters if needed */
+#if USE_CMS
+    /**
+     * 1. Swap roles: the filter that was previously used for estimation (B)
+     * becomes the active filter (A)
+     */
+    ctx->cms_active_idx = 1 - ctx->cms_active_idx;
+
+    /**
+     * 2. Clear the filter that has now become active
+     * (previously the previous filter)
+     */
+    memset(ctx->cms_filters[ctx->cms_active_idx], 0,
+           sizeof(uint64_t) * ctx->cms_size);
+#endif
+    ctx->last_update = now_ns;
+
+    /* Iterate through the hash table and get global average of iat */
+    while (rte_hash_iterate(ctx->tbl, &next_key, &next_data, &iter) >= 0)
+    {
+        entry = (struct flow_iat_entry *)next_data;
+        if (unlikely(!entry))
+        {
+            fprintf(stderr, "IAT entry is NULL during stat collection\n");
+            continue;
+        }
+
+        /* update average throughput */
+#if USE_HW_RX_TIMESTAMP
+        if (entry->avg_burst_iat < ctx->cutoff_ns * 1000)
+        {
+#endif
+            if (entry->bytes * 8 > E6) // skip small flow (e.g., ACK-only < 1Mbps)
+            {
+                entry->global_avg_iat = entry->bytes
+                                            ? (uint32_t)((float)ctx->emtu_size *
+                                                         NS_PER_S /
+                                                         entry->bytes)
+                                            : 0;
+                /* aggregate stats */
+                temp_global_iat += entry->global_avg_iat;
+#if USE_HW_RX_TIMESTAMP
+                temp_data_len += entry->avg_data_len;
+                temp_burst_iat += entry->avg_burst_iat;
+#endif
+                temp_count++;
+
+#if LOG_IAT_ENTRIES
+                fprintf(stdout,
+                        "  IAT stats: global_iat: %9u ns, "
+#if USE_HW_RX_TIMESTAMP
+                        "burst_iat: %9u ns, "
+                        "data_len: %9u bytes, "
+#endif
+                        "yield: %2u%%, "
+                        "tput: %9lu Mbps\n",
+                        entry->global_avg_iat,
+#if USE_HW_RX_TIMESTAMP
+                        entry->avg_burst_iat,
+                        entry->avg_data_len,
+#endif
+                        iat_get_yield(entry),
+                        entry->bytes * 8 / E6);
+                if (entry->avg_data_len >= UINT16_MAX)
+                {
+                    px_dump_tuple(next_key);
+                }
+#endif
+            }
+#if USE_HW_RX_TIMESTAMP
+        }
+#endif
+
+        /* reset temporary fields for throughput */
+        entry->bytes = 0;
+        entry->pkts = 0;
+
+        /* reset temporary fields for yield */
+        entry->_1_seg_cnt = 0;
+        entry->_2_seg_cnt = 0;
+        entry->_3_seg_cnt = 0;
+        entry->_4_seg_cnt = 0;
+        entry->_5_seg_cnt = 0;
+        entry->iMTU_cnt = 0;
+    }
+
+    // fprintf(stdout,
+    //         "IAT stats: burst_iat: %lu, data_len: %lu, count: %lu\n",
+    //         temp_burst_iat / temp_count, temp_data_len / temp_count, temp_count);
+
+    //     ctx->total_global_iat = temp_global_iat;
+    // #if USE_HW_RX_TIMESTAMP
+    //     ctx->total_burst_iat = temp_burst_iat;
+    //     ctx->total_data_len = temp_data_len;
+    // #endif
+    //     ctx->total_count = temp_count;
+
+    /**
+     * below guarantees atomicity for each field,
+     * but not for the entire structure
+     * ToDo: one day, make them fully atomic
+     * nevertheless, it is acceptable
+     * since these stats are only for monitoring
+     */
+    atomic_store_explicit(&ctx->total_global_iat,
+                          temp_global_iat,
+                          memory_order_relaxed);
+#if USE_HW_RX_TIMESTAMP
+    atomic_store_explicit(&ctx->total_burst_iat,
+                          temp_burst_iat,
+                          memory_order_relaxed);
+    atomic_store_explicit(&ctx->total_data_len,
+                          temp_data_len,
+                          memory_order_relaxed);
+#endif
+    atomic_store_explicit(&ctx->total_count,
+                          temp_count,
+                          memory_order_relaxed);
 }
 /*----------------------------------------------------------------------------*/
 struct flow_iat_entry *
 iat_search_entry(uint16_t port_id,
                  uint16_t queue_id,
-                 struct four_tuple *key)
+                 struct rte_mbuf *pkt)
 {
     struct px_iat_ctx *ctx = &g_iat_ctx[port_id][queue_id];
     struct flow_iat_entry *entry;
+    const struct four_tuple *key = get_four_tuple(pkt);
+    int ret, retry_count;
 
     if (!ctx->initialized)
     {
@@ -460,23 +684,88 @@ iat_search_entry(uint16_t port_id,
         return NULL;
     }
 
-    if (rte_hash_lookup_data(ctx->tbl, key, (void **)&entry) < 0)
+#if USE_CMS
+    /**
+     * stage 1: CMS Search
+     * check whether this flow is larger than 1 Gbps
+     * reference filter with data accumulated during the previous 1 second
+     */
+    uint64_t *prev_filter;
+    uint64_t v0, v1, v2, estimated_bytes;
+    uint32_t idx0 = xor_hash0(key) % ctx->cms_size;
+    uint32_t idx1 = xor_hash1(key) % ctx->cms_size;
+    uint32_t idx2 = xor_hash2(key) % ctx->cms_size;
+    prev_filter = ctx->cms_filters[1 - ctx->cms_active_idx];
+    v0 = prev_filter[idx0];
+    v1 = prev_filter[idx1];
+    v2 = prev_filter[idx2];
+    estimated_bytes = MIN(MIN(v0, v1), v2);
+    if (estimated_bytes < TPUT_THRESHOLD_1G)
     {
-        /* Allocate a new entry from the mempool */
-        if (rte_mempool_get(ctx->pool, (void **)&entry) < 0)
-        {
-            fprintf(stderr, "Unable to allocate memory for IAT entry\n");
-            return NULL;
-        }
-        memset(entry, 0, sizeof(struct flow_iat_entry));
+        /* return for < 1 Gbps flow without table lookup */
+        return NULL;
+    }
+#endif
 
-        /* Insert into the hash table */
-        if (rte_hash_add_key_data(ctx->tbl, key, entry) < 0)
+    retry_count = 0;
+Try_lookup:
+    /**
+     * stage 2: Table Search & Create
+     * only for flows larger than 1 Gbps
+     */
+    if ((ret = rte_hash_lookup_data(ctx->tbl, key, (void **)&entry)) < 0)
+    {
+        if (ret == -EAGAIN || errno == EAGAIN)
         {
-            fprintf(stderr, "Unable to add flow to hash table\n");
-            rte_mempool_put(ctx->pool, entry);
-            return NULL;
+            retry_count++;
+            if (retry_count <= 3)
+            {
+                goto Try_lookup;
+            }
+            fprintf(stderr, "iat_search_entry: rte_hash_lookup_data "
+                            "keeps returning EAGAIN, give up to search\n");
         }
+        if (ret == -ENOENT || errno == ENOENT)
+        {
+            /* Allocate a new entry from the mempool */
+            if (rte_mempool_get(ctx->pool, (void **)&entry) < 0)
+            {
+                fprintf(stderr, "Unable to allocate memory for IAT entry\n");
+                return NULL;
+            }
+            memset(entry, 0, sizeof(struct flow_iat_entry));
+
+            /* Insert into the hash table */
+            retry_count = 0;
+        Try_insert:
+            if ((ret = rte_hash_add_key_data(ctx->tbl, key, entry)) < 0)
+            {
+                if (ret == -EAGAIN || errno == EAGAIN)
+                {
+                    retry_count++;
+                    if (retry_count <= 3)
+                    {
+                        goto Try_insert;
+                    }
+                    fprintf(stderr, "iat_search_entry: rte_hash_add_key_data "
+                                    "keeps returning EAGAIN, give up to add\n");
+                    rte_mempool_put(ctx->pool, entry);
+                    return NULL;
+                }
+                fprintf(stderr, "Unable to add flow to hash table\n");
+                rte_mempool_put(ctx->pool, entry);
+                return NULL;
+            }
+            return entry;
+        }
+        fprintf(stderr, "iat_search_entry: rte_hash_lookup_data "
+                        "unexpected error: %d\n",
+                ret);
+        return NULL;
+    }
+    if (!entry)
+    {
+        fprintf(stderr, "IAT entry is NULL after lookup\n");
     }
 
     return entry;
@@ -499,12 +788,29 @@ int iat_update_entry(uint16_t port_id,
         return -1;
     }
 
-    if (!data_len || !entry)
+    if (!data_len)
     {
         return 0; // No data to process
     }
 
-    /* start update */
+#if USE_CMS
+    /* update CMS active counting filter first */
+    const struct four_tuple *key = get_four_tuple(pkt);
+    uint32_t idx0 = xor_hash0(key) % ctx->cms_size;
+    uint32_t idx1 = xor_hash1(key) % ctx->cms_size;
+    uint32_t idx2 = xor_hash2(key) % ctx->cms_size;
+    uint64_t *active_filter = ctx->cms_filters[ctx->cms_active_idx];
+    active_filter[idx0] += pkt->pkt_len + ETHER_OVR;
+    active_filter[idx1] += pkt->pkt_len + ETHER_OVR;
+    active_filter[idx2] += pkt->pkt_len + ETHER_OVR;
+#endif
+
+    if (!entry)
+    {
+        return 0; // only update CMS for non-tracked flows
+    }
+
+    /* start IAT update */
     entry->last_update = now_ns;
 
     /* update throughput */
@@ -610,6 +916,7 @@ int iat_evict_entry(uint16_t port_id,
     struct px_iat_ctx *ctx = &g_iat_ctx[port_id][queue_id];
     struct flow_iat_entry *entry;
     struct four_tuple *key = get_four_tuple(pkt);
+    int ret, retry_count;
 
     if (!ctx->initialized)
     {
@@ -617,11 +924,31 @@ int iat_evict_entry(uint16_t port_id,
         return -1;
     }
 
-    if (rte_hash_lookup_data(ctx->tbl, key, (void **)&entry) >= 0)
+    retry_count = 0;
+Try_lookup:
+    if ((ret = rte_hash_lookup_data(ctx->tbl, key, (void **)&entry)) >= 0)
     {
         /* Remove the entry from the hash table */
-        if (rte_hash_del_key(ctx->tbl, key) < 0)
+        retry_count = 0;
+    Try_evict:
+        if ((ret = rte_hash_del_key(ctx->tbl, key)) < 0)
         {
+            if (errno == ENOENT || ret == -ENOENT)
+            {
+                /* Entry not found, nothing to free */
+                return 0;
+            }
+            if (ret == -EAGAIN || errno == EAGAIN)
+            {
+                retry_count++;
+                if (retry_count <= 3)
+                {
+                    goto Try_evict;
+                }
+                fprintf(stderr, "iat_evict_entry: rte_hash_del_key "
+                                "keeps returning EAGAIN, give up to evict\n");
+                return -1;
+            }
             fprintf(stderr, "Unable to delete existing flow from hash table\n");
             return -1;
         }
@@ -633,10 +960,24 @@ int iat_evict_entry(uint16_t port_id,
     }
     else
     {
-        if (errno != ENOENT)
+        if (errno == ENOENT || ret == -ENOENT)
         {
+            /* Entry not found, nothing to evict */
+            return 0;
+        }
+        if (errno == EAGAIN || ret == -EAGAIN)
+        {
+            retry_count++;
+            if (retry_count <= 3)
+            {
+                goto Try_lookup;
+            }
+            fprintf(stderr, "iat_evict_entry: rte_hash_lookup_data "
+                            "keeps returning EAGAIN, give up to evict\n");
             return -1;
         }
+        fprintf(stderr, "Error during rte_hash_lookup_data: %d\n", ret);
+        return -1;
     }
 
     return 0;
@@ -651,6 +992,7 @@ void iat_flush_timeout(uint16_t port_id,
     const void *next_key;
     void *next_data;
     uint32_t iter = 0;
+    int ret, retry_count;
 
     if (!ctx->initialized)
     {
@@ -666,11 +1008,32 @@ void iat_flush_timeout(uint16_t port_id,
             (uint64_t)IAT_TIMEOUT * NS_PER_S)
         {
             /* Remove the entry from the hash table */
-            if (rte_hash_del_key(ctx->tbl, next_key) < 0)
+            retry_count = 0;
+        Try_evict:
+            if ((ret = rte_hash_del_key(ctx->tbl, next_key)) < 0)
             {
-                fprintf(stderr, "Unable to delete existing flow from hash table\n");
+                if (ret == -EAGAIN || errno == EAGAIN)
+                {
+                    retry_count++;
+                    if (retry_count <= 3)
+                    {
+                        goto Try_evict;
+                    }
+                    fprintf(stderr, "iat_flush_timeout: rte_hash_del_key "
+                                    "keeps returning EAGAIN\n");
+                    continue;
+                }
+                if (ret == -ENOENT || errno == ENOENT)
+                {
+                    /* Entry not found, nothing to free */
+                    continue;
+                }
+                fprintf(stderr, "iat_flush_timeout: rte_hash_del_key "
+                                "Unable to delete existing flow from hash table\n");
                 continue;
             }
+
+            /* Free the entry back to the mempool */
             rte_mempool_put(ctx->pool, entry);
         }
     }
@@ -689,12 +1052,18 @@ iat_get_timeout(struct flow_iat_entry *entry,
     return FIXED_TIMEOUT;
 #else
     const float *timeout_factor;
-    uint32_t avg_iat = 0, avg_data_len = 0;
+    uint32_t avg_iat = 0;
     uint32_t missing_segs_nb;
     uint32_t timeout_ns;
 
     // printf("IAT: data_len=%hu, orig_segsz=%hu, target_segsz=%hu\n",
     //        data_len, orig_segsz, target_segsz);
+
+    if (!entry)
+    {
+        /* no entry, it might be small flow filtered by CMS */
+        return 0;
+    }
 
     /**
      * if payload len is not multiple of eMSS
@@ -706,7 +1075,7 @@ iat_get_timeout(struct flow_iat_entry *entry,
         return 0;
     }
 
-    if (entry->global_avg_iat > IAT_for_1Gbps)
+    if (entry->global_avg_iat > IAT_THRESHOLD_1G)
     {
         /* too large timeout window, give up delaying */
         return 0;
@@ -721,8 +1090,11 @@ iat_get_timeout(struct flow_iat_entry *entry,
     /* try update first */
     entry->last_update = now_ns;
 
-    // avg_iat = MIN(entry->avg_burst_iat, entry->global_avg_iat);
+#if USE_HW_RX_TIMESTAMP
+    avg_iat = MIN(entry->avg_burst_iat, entry->global_avg_iat);
+#else
     avg_iat = entry->global_avg_iat;
+#endif
 
     /* choose one of below */
     // timeout_factor = timeout_factor_no_delay;
@@ -745,18 +1117,20 @@ iat_get_timeout(struct flow_iat_entry *entry,
         timeout_factor = timeout_factor_no_delay;
     }
 
+#if USE_HW_RX_TIMESTAMP
     /**
      * if average LRO'ed data len is under original segment size,
      * use orig_segsz to avoid too many missing_segs
      */
-    // avg_data_len = entry->avg_data_len;
-    // if (avg_data_len < orig_segsz)
-    // {
-    //     avg_data_len = orig_segsz;
-    // }
-    // missing_segs_nb = (target_segsz - data_len) / avg_data_len;
+    uint32_t avg_data_len = entry->avg_data_len;
+    if (avg_data_len < orig_segsz)
+    {
+        avg_data_len = orig_segsz;
+    }
+    missing_segs_nb = (target_segsz - data_len) / avg_data_len;
+#else
     missing_segs_nb = (target_segsz - data_len) / orig_segsz;
-    RTE_SET_USED(avg_data_len);
+#endif
     if (!missing_segs_nb)
     {
         missing_segs_nb = 1;
@@ -769,7 +1143,8 @@ iat_get_timeout(struct flow_iat_entry *entry,
     timeout_ns = avg_iat * timeout_factor[missing_segs_nb];
 
     /* apply gamma distribution to timeout too */
-    if (timeout_ns > IAT_for_1Gbps * timeout_factor[DEFAULT_iMTU / DEFAULT_eMTU])
+    if (timeout_ns > IAT_THRESHOLD_1G *
+                         timeout_factor[DEFAULT_iMTU / DEFAULT_eMTU])
     {
         /* too large timeout window, give up delaying */
         // printf("IAT: avg_iat %u, missing_segs_nb %u, "
@@ -784,87 +1159,50 @@ iat_get_timeout(struct flow_iat_entry *entry,
 /*----------------------------------------------------------------------------*/
 void iat_local_stat(uint16_t port_id,
                     uint16_t queue_id,
-                    uint64_t *total_burst_iat,
                     uint64_t *total_global_iat,
+#if USE_HW_RX_TIMESTAMP
+                    uint64_t *total_burst_iat,
                     uint64_t *total_data_len,
+#endif
                     uint64_t *total_count)
 {
     struct px_iat_ctx *ctx = &g_iat_ctx[port_id][queue_id];
-    struct flow_iat_entry *entry;
-    struct four_tuple *next_key;
-    void *next_data;
-    uint64_t temp_burst_iat = 0, temp_global_iat = 0;
-    uint64_t temp_data_len = 0, temp_count = 0;
-    uint32_t iter = 0;
 
-    if (!ctx->tbl)
+    if (!ctx->initialized)
     {
-        *total_burst_iat = 0;
+        fprintf(stderr, "iat_local_stat: IAT context not initialized\n");
         *total_global_iat = 0;
+#if USE_HW_RX_TIMESTAMP
+        *total_burst_iat = 0;
         *total_data_len = 0;
+#endif
         *total_count = 0;
         return;
     }
 
-    /* Iterate through the hash table and get global average of iat */
-    while (rte_hash_iterate(ctx->tbl, (const void **)&next_key, &next_data, &iter) >= 0)
-    {
-        entry = (struct flow_iat_entry *)next_data;
+    //     *total_global_iat = ctx->total_global_iat;
+    // #if USE_HW_RX_TIMESTAMP
+    //     *total_burst_iat = ctx->total_burst_iat;
+    //     *total_data_len = ctx->total_data_len;
+    // #endif
+    //     *total_count = ctx->total_count;
 
-        /* update average throughput */
-        if (entry->avg_burst_iat < ctx->cutoff_ns * 1000 &&
-            entry->bytes * 8 > E6) // skip small flow (e.g., ACK-only < 1Mbps)
-        {
-            entry->global_avg_iat = entry->bytes
-                                        ? (uint32_t)((float)ctx->emtu_size *
-                                                     NS_PER_S /
-                                                     entry->bytes)
-                                        : 0;
-            /* aggregate stats */
-            temp_burst_iat += entry->avg_burst_iat;
-            temp_global_iat += entry->global_avg_iat;
-            temp_data_len += entry->avg_data_len;
-            temp_count++;
-
-#if LOG_IAT_ENTRIES
-            fprintf(stdout,
-                    "  IAT stats: burst_iat: %9u ns, "
-                    "global_iat: %9u ns, "
-                    "data_len: %9u bytes, "
-                    "yield: %2u%%, "
-                    "tput: %9lu Mbps\n",
-                    entry->avg_burst_iat,
-                    entry->global_avg_iat,
-                    entry->avg_data_len,
-                    iat_get_yield(entry),
-                    entry->bytes * 8 / E6);
-            if (entry->avg_data_len >= UINT16_MAX)
-            {
-                px_dump_tuple(next_key);
-            }
+    /**
+     * below guarantees atomicity for each field,
+     * but not for the entire structure
+     * ToDo: one day, make them fully atomic
+     * nevertheless, it is acceptable
+     * since these stats are only for monitoring
+     */
+    *total_global_iat = atomic_load_explicit(&ctx->total_global_iat,
+                                             memory_order_relaxed);
+#if USE_HW_RX_TIMESTAMP
+    *total_burst_iat = atomic_load_explicit(&ctx->total_burst_iat,
+                                            memory_order_relaxed);
+    *total_data_len = atomic_load_explicit(&ctx->total_data_len,
+                                           memory_order_relaxed);
 #endif
-        }
-
-        /* reset temporary fields for throughput */
-        entry->bytes = 0;
-        entry->pkts = 0;
-
-        /* reset temporary fields for yield */
-        entry->_1_seg_cnt = 0;
-        entry->_2_seg_cnt = 0;
-        entry->_3_seg_cnt = 0;
-        entry->_4_seg_cnt = 0;
-        entry->_5_seg_cnt = 0;
-        entry->iMTU_cnt = 0;
-    }
-
-    // fprintf(stdout,
-    //         "IAT stats: burst_iat: %lu, data_len: %lu, count: %lu\n",
-    //         temp_burst_iat / temp_count, temp_data_len / temp_count, temp_count);
-
-    *total_burst_iat = temp_burst_iat;
-    *total_global_iat = temp_global_iat;
-    *total_data_len = temp_data_len;
-    *total_count = temp_count;
+    *total_count = atomic_load_explicit(&ctx->total_count,
+                                        memory_order_relaxed);
 }
 /*----------------------------------------------------------------------------*/

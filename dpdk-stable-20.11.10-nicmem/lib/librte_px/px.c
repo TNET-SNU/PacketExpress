@@ -4,7 +4,7 @@
 struct px_dev g_px_dev[RTE_MAX_ETHPORTS] = {0};
 static struct px_ctx g_pctx[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
 static struct rte_mempool *g_clone_pool[RTE_MAX_NUMA_NODES] = {NULL};
-#if LOG_RX_HW_TIMESTAMP
+#if LOG_HW_RX_TIMESTAMP
 char g_log_buffer[RTE_MAX_LCORE][LOG_BUFFER_SIZE] = {0};
 size_t g_log_offset[RTE_MAX_LCORE] = {0};
 static FILE *g_rx_hw_timestamp_fp[RTE_MAX_LCORE] = {NULL};
@@ -1657,7 +1657,7 @@ px_parse_packet(struct px_ctx *pctx,
         rte_pktmbuf_trim(pkt, pkt->pkt_len - real_pkt_len);
     }
 
-#if LOG_RX_HW_TIMESTAMP
+#if LOG_HW_RX_TIMESTAMP
     /* log only when delayed merging is enabled */
     if (!pctx->do_delayed_merging)
     {
@@ -1773,7 +1773,7 @@ Skip_log_rx_hw_timestamp:
             return ret;
         }
 
-#if USE_RX_HW_TIMESTAMP
+#if USE_HW_RX_TIMESTAMP
         /* mark uplink and update IAT for delayed merging */
         if (pctx->stash_array)
         {
@@ -1837,7 +1837,7 @@ Skip_log_rx_hw_timestamp:
             return ret;
         }
 
-#if USE_RX_HW_TIMESTAMP
+#if USE_HW_RX_TIMESTAMP
         /* mark uplink and update IAT for delayed merging */
         if (pctx->stash_array)
         {
@@ -2140,7 +2140,6 @@ link_and_flush(struct px_ctx *pctx,
                         /* eMSS table lookup only once for each flow */
                         if (mss_search_entry(port_id,
                                              queue_id,
-                                             cur_pkt->hash.rss,
                                              get_four_tuple(cur_pkt),
                                              &saved_segsz,
                                              pctx->now_ns) < 0)
@@ -2197,7 +2196,7 @@ link_and_flush(struct px_ctx *pctx,
                 {
                     iat_entry = iat_search_entry(port_id,
                                                  queue_id,
-                                                 get_four_tuple(cur_pkt));
+                                                 cur_pkt);
                 }
 #if NVME_TCP_PX
                 if (!is_nvme_tcp(cur_pkt))
@@ -2624,7 +2623,6 @@ link_and_flush(struct px_ctx *pctx,
                     /* if this item is the last item and delay nsec is marginal */
                     if ((item_idx == INVALID_INDEX) &&
                         is_delay_needed(pctx,
-                                        // if (is_delay_needed(pctx,
                                         iat_entry,
                                         get_data_len(cur_pkt),
                                         IPPROTO_TCP,
@@ -2757,7 +2755,7 @@ link_and_flush(struct px_ctx *pctx,
                 {
                     iat_entry = iat_search_entry(port_id,
                                                  queue_id,
-                                                 get_four_tuple(cur_pkt));
+                                                 cur_pkt);
                 }
 
                 /* check if current packet should be delayed */
@@ -2853,9 +2851,12 @@ link_and_flush(struct px_ctx *pctx,
                 out[idx++] = cur_pkt;
             }
 
-            /* if downlink flow, update throughput and yield */
-            iat_update_entry(pctx->port_id, pctx->queue_id,
-                             iat_entry, cur_pkt, pctx->now_ns);
+            /* if downlink flow, update CMS and IAT */
+            if (!g_is_semantic_test || !pctx->is_uplink(cur_pkt))
+            {
+                iat_update_entry(pctx->port_id, pctx->queue_id,
+                                 iat_entry, cur_pkt, pctx->now_ns);
+            }
         }
     }
 
@@ -2981,16 +2982,28 @@ px_core(struct px_ctx *pctx,
             /* check FIN/RST */
             else if (tcp_flags & (RTE_TCP_FIN_FLAG | RTE_TCP_RST_FLAG))
             {
-                /* if uplink flow, evict MSS */
                 if (g_is_semantic_test && pctx->is_uplink(pkt))
                 {
+                    /* if uplink flow, evict MSS and IAT */
                     if (mss_evict_entry(pkt->port,
                                         pctx->queue_id,
-                                        pkt->hash.rss,
                                         get_four_tuple(pkt)) < 0)
                     {
                         rte_exit(EXIT_FAILURE,
-                                 "mss_evict_entry: MSS table is not initialized\n");
+                                 "[P%hu][Q%hu] mss_evict_entry: MSS table is not initialized\n",
+                                 pkt->port, pctx->queue_id);
+                    }
+                }
+                else
+                {
+                    /* if downlink flow, evict IAT */
+                    if (iat_evict_entry(pkt->port,
+                                        pctx->queue_id,
+                                        pkt) < 0)
+                    {
+                        rte_exit(EXIT_FAILURE,
+                                 "[P%hu][Q%hu] iat_evict_entry: IAT table is not initialized\n",
+                                 pkt->port, pctx->queue_id);
                     }
                 }
 #if NVME_TCP_PX
@@ -3048,7 +3061,7 @@ void px_deinit(uint16_t port_id)
 
     for (queue_id = 0; queue_id < px_dev->num_rxq; queue_id++)
     {
-#if LOG_RX_HW_TIMESTAMP
+#if LOG_HW_RX_TIMESTAMP
         /* close rx_hw_timestamp log file */
         if (g_rx_hw_timestamp_fp[queue_id])
         {
@@ -3324,7 +3337,7 @@ int px_init(uint16_t port_id,
         /* set this rule as primary rule */
         pctx->rule = rule_search(port_id, queue_id, rule_id);
 
-#if LOG_RX_HW_TIMESTAMP
+#if LOG_HW_RX_TIMESTAMP
         /* open a log file for RX HW timestamp logging */
         if (!g_rx_hw_timestamp_fp[queue_id])
         {
@@ -3792,12 +3805,14 @@ int px_eth_dev_configure(uint16_t port_id,
         px_dev->initialized_hairpin = 1;
     }
 
+#if USE_HW_RX_TIMESTAMP
     /* init RX hardware timestamp if necessary */
     ret = init_rx_hw_timestamp();
     if (ret < 0)
     {
         rte_exit(EXIT_FAILURE, "init_rx_hw_timestamp failed: %d\n", ret);
     }
+#endif
 
     /* set as PX is initialized for this port */
     px_dev->initialized_px = 1;
@@ -4081,12 +4096,38 @@ px_eth_rx_burst(uint16_t port_id,
     uint16_t active_rxq_cnt = 0;
     struct rte_mbuf **orig_batch = rx_pkts;
 
+    /* print stats on MONITOR_CORE after STAT_INTERVAL */
+    uint64_t now_ns = PX_GETTIME(CLOCK_CPUTSC_PRECISE);
+    static uint64_t prev_now_ns = 0;
+    if (!prev_now_ns)
+    {
+        prev_now_ns = now_ns;
+        goto IO_phase;
+    }
+    /* not enough time has passed */
+    if (now_ns - prev_now_ns < STAT_INTERVAL * NS_PER_S)
+    {
+        goto IO_phase;
+    }
+
+    /* update IAT table and CMS */
+    iat_periodic_update(port_id, queue_id, now_ns);
+
     /* printing should be done by STAT_MONITOR_CORE_ID! */
     if (queue_id == STAT_MONITOR_CORE_ID)
     {
         px_stat_print(STAT_MONITOR_CORE_ID);
     }
 
+    /* minimize drift */
+    prev_now_ns += STAT_INTERVAL * NS_PER_S;
+    /* remove drift */
+    if (now_ns - prev_now_ns >= STAT_INTERVAL * NS_PER_S)
+    {
+        prev_now_ns = now_ns;
+    }
+
+IO_phase:
     /* check gear has been shifted */
     if (px_latent_gear_check_notify(port_id))
     {

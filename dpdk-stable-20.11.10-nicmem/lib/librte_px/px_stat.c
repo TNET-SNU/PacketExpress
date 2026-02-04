@@ -281,27 +281,14 @@ void px_stat_print(uint16_t main_core_id)
     struct px_rx_stat *rx_iter, rx_total = {0};
     struct px_tx_stat *tx_iter, tx_total = {0};
     struct perf_metric cur;
+    uint64_t iat_global_iat_iter, iat_global_iat_total = 0;
+#if USE_HW_RX_TIMESTAMP
     uint64_t iat_burst_iat_iter, iat_burst_iat_total = 0;
     uint64_t iat_data_len_iter, iat_data_len_total = 0;
-    uint64_t iat_global_iat_iter, iat_global_iat_total = 0;
+#endif
     uint64_t iat_count_iter, iat_count_total = 0;
     uint16_t port_id, queue_id;
     int ret;
-
-    /* print stats on MONITOR_CORE after STAT_INTERVAL */
-    uint64_t now_ns = PX_GETTIME(CLOCK_CPUTSC_PRECISE);
-    static uint64_t prev_now_ns = 0;
-    if (!prev_now_ns)
-    {
-        prev_now_ns = now_ns;
-        return;
-    }
-
-    /* not enough time has passed */
-    if (now_ns - prev_now_ns < STAT_INTERVAL * NS_PER_S)
-    {
-        return;
-    }
 
     /* aggregate per port stats */
     for (port_id = 0; port_id < RTE_MAX_ETHPORTS; port_id++)
@@ -318,9 +305,11 @@ void px_stat_print(uint16_t main_core_id)
             /* get IAT stat */
             iat_local_stat(port_id,
                            queue_id,
-                           &iat_burst_iat_iter,
                            &iat_global_iat_iter,
+#if USE_HW_RX_TIMESTAMP
+                           &iat_burst_iat_iter,
                            &iat_data_len_iter,
+#endif
                            &iat_count_iter);
 
             /* get TCP stat */
@@ -397,8 +386,10 @@ void px_stat_print(uint16_t main_core_id)
                     "RXpktsize: %6lu "
                     "TXpktsize: %5u "
                     "globalIAT: %5lu ns "
+#if USE_HW_RX_TIMESTAMP
                     "burstIAT: %5lu ns "
                     "LROsize: %6lu \n"
+#endif
                     "flows/rxq: %2.1f "
                     "pkts/rxq: %2.1f "
                     "active_rxq/available: %2.1f%% "
@@ -421,6 +412,7 @@ void px_stat_print(uint16_t main_core_id)
                         ? iat_global_iat_iter /
                               iat_count_iter
                         : 0,
+#if USE_HW_RX_TIMESTAMP
                     iat_count_iter
                         ? iat_burst_iat_iter /
                               iat_count_iter
@@ -429,6 +421,7 @@ void px_stat_print(uint16_t main_core_id)
                         ? iat_data_len_iter /
                               iat_count_iter
                         : 0,
+#endif
                     rx_iter->batch_cnt
                         ? (float)rx_iter->num_flows_per_rxq /
                               rx_iter->batch_cnt
@@ -502,8 +495,10 @@ void px_stat_print(uint16_t main_core_id)
             tx_total.data_pkt_cnt += tx_iter->data_pkt_cnt;
 
             iat_global_iat_total += iat_global_iat_iter;
+#if USE_HW_RX_TIMESTAMP
             iat_burst_iat_total += iat_burst_iat_iter;
             iat_data_len_total += iat_data_len_iter;
+#endif
             iat_count_total += iat_count_iter;
 
             tcp_total.syn_cnt += tcp_iter->syn_cnt;
@@ -692,8 +687,10 @@ void px_stat_print(uint16_t main_core_id)
             "RXpktsize: %6lu "
             "TXpktsize: %5u "
             "globalIAT: %5lu ns "
+#if USE_HW_RX_TIMESTAMP
             "burstIAT: %5lu ns "
             "LROsize: %6lu \n"
+#endif
             "flows/rxq: %2.1f "
             "pkts/rxq: %2.1f "
             "active_rxq/available: %2.1f%% "
@@ -717,6 +714,7 @@ void px_stat_print(uint16_t main_core_id)
                 ? iat_global_iat_total /
                       iat_count_total
                 : 0,
+#if USE_HW_RX_TIMESTAMP
             iat_count_total
                 ? iat_burst_iat_total /
                       iat_count_total
@@ -725,6 +723,7 @@ void px_stat_print(uint16_t main_core_id)
                 ? iat_data_len_total /
                       iat_count_total
                 : 0,
+#endif
             num_flows_per_rxq_total,
             num_pkts_per_rxq_total,
             active_rxq_per_available_rxq_total,
@@ -807,14 +806,6 @@ void px_stat_print(uint16_t main_core_id)
                 return;
             }
         }
-    }
-
-    /* minimize drift */
-    prev_now_ns += STAT_INTERVAL * NS_PER_S;
-    /* remove drift */
-    if (now_ns - prev_now_ns >= STAT_INTERVAL * NS_PER_S)
-    {
-        prev_now_ns = now_ns;
     }
 }
 /*----------------------------------------------------------------------------*/
