@@ -332,6 +332,15 @@ int mss_init_ctx(uint16_t port_id,
         return -1;
     }
 
+    /* num_entry should be a power of 2 */
+    if (num_entry & (num_entry - 1))
+    {
+        fprintf(stderr,
+                "ERROR: num_entry (%u) must be a power of 2 (e.g., 65536)\n",
+                num_entry);
+        return -1;
+    }
+
     /* Initialize the mempool for flow_mss_entry structs */
     snprintf(name, sizeof(name), "emss-mempool-%d-%d", port_id, queue_id);
     ctx->pool = rte_mempool_create(name,
@@ -382,10 +391,8 @@ int mss_init_ctx(uint16_t port_id,
         rte_free(ctx);
         return -1;
     }
-    // ctx->bf_size = num_entry * 16;
-    ctx->bf_size = (size_t)UINT16_MAX + 1u;
-    printf("BF size: %zu\n", ctx->bf_size);
-
+    ctx->bf_size = num_entry * 8;
+    // printf("BF size: %zu\n", ctx->bf_size);
     atomic_init(&ctx->epoch, 0);
 
     /* Create a new thread for periodic cleanup */

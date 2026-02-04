@@ -4095,39 +4095,17 @@ px_eth_rx_burst(uint16_t port_id,
     uint16_t num_pkts_per_rxq = 0;
     uint16_t active_rxq_cnt = 0;
     struct rte_mbuf **orig_batch = rx_pkts;
-
-    /* print stats on MONITOR_CORE after STAT_INTERVAL */
     uint64_t now_ns = PX_GETTIME(CLOCK_CPUTSC_PRECISE);
-    static uint64_t prev_now_ns = 0;
-    if (!prev_now_ns)
-    {
-        prev_now_ns = now_ns;
-        goto IO_phase;
-    }
-    /* not enough time has passed */
-    if (now_ns - prev_now_ns < STAT_INTERVAL * NS_PER_S)
-    {
-        goto IO_phase;
-    }
-
-    /* update IAT table and CMS */
-    iat_periodic_update(port_id, queue_id, now_ns);
 
     /* printing should be done by STAT_MONITOR_CORE_ID! */
     if (queue_id == STAT_MONITOR_CORE_ID)
     {
-        px_stat_print(STAT_MONITOR_CORE_ID);
+        px_stat_print(STAT_MONITOR_CORE_ID, now_ns);
     }
+    
+    /* update IAT table and CMS */
+    iat_periodic_update(port_id, queue_id, now_ns);
 
-    /* minimize drift */
-    prev_now_ns += STAT_INTERVAL * NS_PER_S;
-    /* remove drift */
-    if (now_ns - prev_now_ns >= STAT_INTERVAL * NS_PER_S)
-    {
-        prev_now_ns = now_ns;
-    }
-
-IO_phase:
     /* check gear has been shifted */
     if (px_latent_gear_check_notify(port_id))
     {

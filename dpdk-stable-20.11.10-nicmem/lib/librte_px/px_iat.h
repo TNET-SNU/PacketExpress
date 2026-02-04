@@ -17,14 +17,16 @@ extern "C"
  * It might be a bug in ConnectX NIC.
  */
 #define USE_HW_RX_TIMESTAMP 0
+#define USE_CMS 1
+#define CMS_SATURATE_VAL UINT16_MAX
 #define IAT_THREAD_PERIOD 60
 #define IAT_TIMEOUT 600
 #define EWMA_ALPHA 0.125 // α = 1/8
-#define NMAX 45
 #define PER_FLOW_YIELD_THRESHOLD 93
 #define IAT_THRESHOLD_1G 12000               /* 12 us */
-#define TPUT_THRESHOLD_1G 125000000ULL // 1 Gbps in bytes per second
-#define USE_CMS 0
+#define TPUT_THRESHOLD_1G 50000000ULL // 0.4 Gbps in bytes per second
+#define IAT_UPDATE_INTERVAL 1000000000ULL /* 1s in ns */
+#define CMS_UPDATE_INTERVAL 100000000ULL /* 100ms in ns */
 /*----------------------------------------------------------------------------*/
 /* Structure to encapsulate mempool and hash table */
 struct px_iat_ctx
@@ -40,12 +42,12 @@ struct px_iat_ctx
     float ewma_alpha;
     struct rte_hash *tbl;
     struct rte_mempool *pool;
-    uint64_t last_update;
 #if USE_CMS
     /* below are for double buffered CMS */
-    uint64_t *cms_filters[2]; /* one is for update, one is for evaluation */
+    uint16_t *cms_filters[2]; /* one is for update, one is for evaluation */
     uint8_t cms_active_idx;   /* filter index in update phase */
-    size_t cms_size;
+    size_t cms_mask;
+    uint64_t cms_last_update;
 #endif
     /* below are for statistics */
     uint64_t total_global_iat;

@@ -113,7 +113,7 @@ void px_stat_update_tx(uint16_t port_id,
                        struct rte_mbuf **pkts,
                        const uint16_t nb_pkts);
 /*----------------------------------------------------------------------------*/
-void px_stat_print(uint16_t main_core_id);
+void px_stat_print(uint16_t main_core_id, uint64_t now_ns);
 /*----------------------------------------------------------------------------*/
 int px_stat_configure(unsigned int stat_interval,
                       uint16_t port_id,

@@ -215,6 +215,15 @@ int iat_init_ctx(uint16_t port_id,
         return -1;
     }
 
+    /* num_entry should be a power of 2 */
+    if (num_entry & (num_entry - 1))
+    {
+        fprintf(stderr,
+                "ERROR: num_entry (%u) must be a power of 2 (e.g., 65536)\n",
+                num_entry);
+        return -1;
+    }
+
     /* setup uplink / downlink classifiers */
     g_is_uplink = is_uplink;
     g_is_downlink = is_downlink;
@@ -260,14 +269,15 @@ int iat_init_ctx(uint16_t port_id,
     }
 
 #if USE_CMS
-    ctx->cms_size = num_entry * 16;
-    printf("CMS size: %zu\n", ctx->cms_size);
+    ctx->cms_mask = num_entry * 8 - 1;
+    // printf("CMS size: %zu\n", ctx->cms_mask + 1);
     ctx->cms_active_idx = 0;
     for (int i = 0; i < 2; i++)
     {
         snprintf(name, sizeof(name), "iat-cms-%d-%d-%d", port_id, queue_id, i);
         ctx->cms_filters[i] = rte_zmalloc_socket(name,
-                                                 sizeof(uint64_t) * ctx->cms_size,
+                                                 sizeof(ctx->cms_filters[0][0]) * 
+                                                     (ctx->cms_mask + 1),
                                                  RTE_CACHE_LINE_SIZE,
                                                  rte_socket_id());
         if (!ctx->cms_filters[i])
@@ -550,20 +560,42 @@ void iat_periodic_update(uint16_t port_id,
 
     /* update throughput and swap CMS filters if needed */
 #if USE_CMS
-    /**
-     * 1. Swap roles: the filter that was previously used for estimation (B)
-     * becomes the active filter (A)
-     */
-    ctx->cms_active_idx = 1 - ctx->cms_active_idx;
+    if (now_ns - ctx->cms_last_update >= CMS_UPDATE_INTERVAL)
+    {
+        /**
+         * 1. Swap roles: the filter that was previously used for estimation (B)
+         * becomes the active filter (A)
+         */
+        ctx->cms_active_idx = 1 - ctx->cms_active_idx;
 
-    /**
-     * 2. Clear the filter that has now become active
-     * (previously the previous filter)
-     */
-    memset(ctx->cms_filters[ctx->cms_active_idx], 0,
-           sizeof(uint64_t) * ctx->cms_size);
+        /**
+         * 2. Clear the filter that has now become active
+         * (previously the previous filter)
+         */
+        memset(ctx->cms_filters[ctx->cms_active_idx], 0,
+               sizeof(ctx->cms_filters[0][0]) * (ctx->cms_mask + 1));
+        ctx->cms_last_update = now_ns;
+
+        /* minimize drift */
+        ctx->cms_last_update += CMS_UPDATE_INTERVAL;
+        if (now_ns - ctx->cms_last_update >= CMS_UPDATE_INTERVAL)
+        {
+            ctx->cms_last_update = now_ns;
+        }
+    }
 #endif
-    ctx->last_update = now_ns;
+
+    static uint64_t prev_now_ns = 0;
+    if (!prev_now_ns)
+    {
+        prev_now_ns = now_ns;
+    }
+    
+    /* not enough time for IAT update has passed */
+    if (now_ns - prev_now_ns < IAT_UPDATE_INTERVAL)
+    {
+        return;
+    }
 
     /* Iterate through the hash table and get global average of iat */
     while (rte_hash_iterate(ctx->tbl, &next_key, &next_data, &iter) >= 0)
@@ -666,6 +698,13 @@ void iat_periodic_update(uint16_t port_id,
     atomic_store_explicit(&ctx->total_count,
                           temp_count,
                           memory_order_relaxed);
+
+    /* minimize drift */
+    prev_now_ns += IAT_UPDATE_INTERVAL;
+    if (now_ns - prev_now_ns >= IAT_UPDATE_INTERVAL)
+    {
+        prev_now_ns = now_ns;
+    }
 }
 /*----------------------------------------------------------------------------*/
 struct flow_iat_entry *
@@ -675,7 +714,7 @@ iat_search_entry(uint16_t port_id,
 {
     struct px_iat_ctx *ctx = &g_iat_ctx[port_id][queue_id];
     struct flow_iat_entry *entry;
-    const struct four_tuple *key = get_four_tuple(pkt);
+    const struct four_tuple *key;
     int ret, retry_count;
 
     if (!ctx->initialized)
@@ -684,29 +723,32 @@ iat_search_entry(uint16_t port_id,
         return NULL;
     }
 
-#if USE_CMS
-    /**
-     * stage 1: CMS Search
-     * check whether this flow is larger than 1 Gbps
-     * reference filter with data accumulated during the previous 1 second
-     */
-    uint64_t *prev_filter;
-    uint64_t v0, v1, v2, estimated_bytes;
-    uint32_t idx0 = xor_hash0(key) % ctx->cms_size;
-    uint32_t idx1 = xor_hash1(key) % ctx->cms_size;
-    uint32_t idx2 = xor_hash2(key) % ctx->cms_size;
-    prev_filter = ctx->cms_filters[1 - ctx->cms_active_idx];
-    v0 = prev_filter[idx0];
-    v1 = prev_filter[idx1];
-    v2 = prev_filter[idx2];
-    estimated_bytes = MIN(MIN(v0, v1), v2);
-    if (estimated_bytes < TPUT_THRESHOLD_1G)
-    {
-        /* return for < 1 Gbps flow without table lookup */
-        return NULL;
-    }
-#endif
-
+// #if USE_CMS
+//     /**
+//      * stage 1: CMS Search
+//      * check whether this flow is larger than 1 Gbps
+//      * reference filter with data accumulated during the previous phase
+//      */
+//     uint16_t *prev_filter;
+//     uint16_t v0, v1, v2;
+//     uint64_t estimated_bytes;
+//     uint32_t rss = pkt->hash.rss;
+//     uint16_t idx0 = (uint16_t)(rss & 0xFFFF) & ctx->cms_mask;
+//     uint16_t idx1 = (uint16_t)(rss >> 16) & ctx->cms_mask;
+//     uint16_t idx2 = ((idx0 ^ idx1) ^ 0x9e37) & ctx->cms_mask;
+//     prev_filter = ctx->cms_filters[1 - ctx->cms_active_idx];
+//     v0 = prev_filter[idx0];
+//     v1 = prev_filter[idx1];
+//     v2 = prev_filter[idx2];
+//     estimated_bytes = MIN(MIN(v0, v1), v2) << 8;
+//     if (estimated_bytes * (NS_PER_S / CMS_UPDATE_INTERVAL) < TPUT_THRESHOLD_1G)
+//     {
+//         /* return for < 1 Gbps flow without table lookup */
+//         return NULL;
+//     }
+// #endif
+    
+    key = get_four_tuple(pkt);
     retry_count = 0;
 Try_lookup:
     /**
@@ -795,14 +837,31 @@ int iat_update_entry(uint16_t port_id,
 
 #if USE_CMS
     /* update CMS active counting filter first */
-    const struct four_tuple *key = get_four_tuple(pkt);
-    uint32_t idx0 = xor_hash0(key) % ctx->cms_size;
-    uint32_t idx1 = xor_hash1(key) % ctx->cms_size;
-    uint32_t idx2 = xor_hash2(key) % ctx->cms_size;
-    uint64_t *active_filter = ctx->cms_filters[ctx->cms_active_idx];
-    active_filter[idx0] += pkt->pkt_len + ETHER_OVR;
-    active_filter[idx1] += pkt->pkt_len + ETHER_OVR;
-    active_filter[idx2] += pkt->pkt_len + ETHER_OVR;
+    uint16_t cms_add_val = (pkt->pkt_len + ETHER_OVR) >> 8; // in units of 256 bytes
+    if (cms_add_val == 0)
+    {
+        cms_add_val = 1;
+    }
+    uint32_t rss = pkt->hash.rss;
+    uint16_t idx0 = (uint16_t)(rss & 0xFFFF) & ctx->cms_mask;
+    uint16_t idx1 = (uint16_t)(rss >> 16) & ctx->cms_mask;
+    uint16_t idx2 = ((idx0 ^ idx1) ^ 0x9e37) & ctx->cms_mask;
+    uint16_t *active_filter = ctx->cms_filters[ctx->cms_active_idx];
+    active_filter[idx0] += cms_add_val;
+    if (active_filter[idx0] <= cms_add_val) // check overflow
+    {
+        active_filter[idx0] = CMS_SATURATE_VAL;
+    }
+    active_filter[idx1] += cms_add_val;
+    if (active_filter[idx1] <= cms_add_val) // check overflow
+    {
+        active_filter[idx1] = CMS_SATURATE_VAL;
+    }
+    active_filter[idx2] += cms_add_val;
+    if (active_filter[idx2] <= cms_add_val) // check overflow
+    {
+        active_filter[idx2] = CMS_SATURATE_VAL;
+    }
 #endif
 
     if (!entry)

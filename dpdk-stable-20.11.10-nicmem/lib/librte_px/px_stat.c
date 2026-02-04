@@ -10,7 +10,7 @@ static struct px_rx_stat
     g_rx_stat[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
 static struct px_tx_stat
     g_tx_stat[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT] = {0};
-static volatile int g_stat_interval = 0;
+static volatile uint64_t g_stat_interval = 0;
 extern int g_is_semantic_test;
 extern struct px_dev g_px_dev[RTE_MAX_ETHPORTS];
 static int g_port_enabled[RTE_MAX_ETHPORTS] = {0};
@@ -274,7 +274,7 @@ static void px_stat_shift_down_handler(int signum)
     g_shift_down_requested = 1;
 }
 /*----------------------------------------------------------------------------*/
-void px_stat_print(uint16_t main_core_id)
+void px_stat_print(uint16_t main_core_id, uint64_t now_ns)
 {
     struct px_dev *px_dev = &g_px_dev[0];
     struct px_tcp_stat *tcp_iter, tcp_total = {0};
@@ -289,6 +289,18 @@ void px_stat_print(uint16_t main_core_id)
     uint64_t iat_count_iter, iat_count_total = 0;
     uint16_t port_id, queue_id;
     int ret;
+
+    static uint64_t prev_now_ns = 0;
+    if (!prev_now_ns)
+    {
+        prev_now_ns = now_ns;
+    }
+    
+    /* not enough time for IAT update has passed */
+    if (now_ns - prev_now_ns < g_stat_interval)
+    {
+        return;
+    }
 
     /* aggregate per port stats */
     for (port_id = 0; port_id < RTE_MAX_ETHPORTS; port_id++)
@@ -807,6 +819,14 @@ void px_stat_print(uint16_t main_core_id)
             }
         }
     }
+
+    /* minimize drift */
+    prev_now_ns += g_stat_interval;
+    /* remove drift */
+    if (now_ns - prev_now_ns >= g_stat_interval)
+    {
+        prev_now_ns = now_ns;
+    }
 }
 /*----------------------------------------------------------------------------*/
 int px_stat_configure(unsigned int stat_interval,
@@ -909,12 +929,11 @@ int px_stat_configure(unsigned int stat_interval,
     RTE_SET_USED(px_stat_shift_down_handler);
 
     /* mark as initialized */
-    g_stat_interval = stat_interval;
+    g_stat_interval = (uint64_t)stat_interval * NS_PER_S;
 
     fprintf(stdout,
-            "PX stat monitor started with interval of %ds\n",
+            "PX stat monitor started with interval of %lu ns\n",
             g_stat_interval);
-
     return 0;
 }
 /*----------------------------------------------------------------------------*/
