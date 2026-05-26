@@ -1,1 +1,0 @@
-core=1 gbps=N/A yield=N/A log=/tmp/ae_9a_pxgw_c1_20260520_085942.log

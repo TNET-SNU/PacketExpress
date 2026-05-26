@@ -1,1 +1,0 @@
-core=2 gbps=70 yield=60% log=/tmp/ae_9a_baseline_c2_20260520_090316.log

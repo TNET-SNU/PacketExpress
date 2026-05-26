@@ -1,7 +1,0 @@
-mpps	pxgw-hdr-only_gbps	pxgw-hdr-only_yield	pxgw-hdr-only-hairpin_gbps	pxgw-hdr-only-hairpin_yield
-0	1470	93	1476	92
-50	1139	95	1440	93
-100	851	97	1441	92
-150	83	89	1355	92
-200	96	5	1258	91
-250	97	0	1098	90

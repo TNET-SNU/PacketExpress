@@ -1,1 +1,0 @@
-core=32 gbps=1485 yield=92% log=/tmp/ae_9a_pxgw_hdr_only_c32_20260520_092413.log

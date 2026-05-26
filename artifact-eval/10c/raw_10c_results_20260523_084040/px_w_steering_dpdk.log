@@ -1,8 +1,0 @@
-EAL: Detected 36 lcore(s)
-EAL: Detected 2 NUMA nodes
-EAL: Detected shared linkage of DPDK
-EAL: Cannot create lock on '/var/run/dpdk/rte/config'. Is another primary process running?
-EAL: FATAL: Cannot init config
-EAL: Cannot init config
-EAL: Error - exiting with code: 1
-  Cause: Invalid EAL args

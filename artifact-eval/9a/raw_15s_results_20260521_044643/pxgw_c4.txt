@@ -1,1 +1,0 @@
-core=4 gbps=634 yield=92% log=/tmp/ae_9a_pxgw_c4_20260521_045734.log

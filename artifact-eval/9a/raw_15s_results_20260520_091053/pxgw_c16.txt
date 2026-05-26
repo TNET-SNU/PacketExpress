@@ -1,1 +1,0 @@
-core=16 gbps=N/A yield=N/A log=/tmp/ae_9a_pxgw_c16_20260520_092227.log

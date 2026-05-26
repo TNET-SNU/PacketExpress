@@ -1,1 +1,0 @@
-core=16 gbps=176 yield=84% log=/tmp/ae_9a_baseline_c16_20260521_050805.log

@@ -1,9 +1,0 @@
-/home/junghan/PacketExpress/artifact-eval/10c/run_10c_smoke_common.sh: line 27: 603343 Killed                  sudo -n pkill -KILL -f './baseline' > /dev/null 2>&1
-/home/junghan/PacketExpress/artifact-eval/10c/run_10c_smoke_common.sh: line 27: 603346 Killed                  sudo -n pkill -KILL -f './pxgw-hdr-only' > /dev/null 2>&1
-/home/junghan/PacketExpress/artifact-eval/10c/run_10c_smoke_common.sh: line 27: 603349 Killed                  sudo -n pkill -KILL -f './pxgw-hdr-only-hairpin' > /dev/null 2>&1
-/home/junghan/PacketExpress/artifact-eval/10c/run_10c_smoke_common.sh: line 27: 603463 Killed                  sudo -n pkill -KILL -f './baseline' > /dev/null 2>&1
-/home/junghan/PacketExpress/artifact-eval/10c/run_10c_smoke_common.sh: line 27: 603466 Killed                  sudo -n pkill -KILL -f './pxgw-hdr-only' > /dev/null 2>&1
-/home/junghan/PacketExpress/artifact-eval/10c/run_10c_smoke_common.sh: line 27: 603469 Killed                  sudo -n pkill -KILL -f './pxgw-hdr-only-hairpin' > /dev/null 2>&1
-/home/junghan/PacketExpress/artifact-eval/10c/run_10c_smoke_common.sh: line 27: 603618 Killed                  tee "$RESULT_FILE"
-/home/junghan/PacketExpress/artifact-eval/10c/run_10c_smoke_common.sh: line 27: 603621 Killed                  tee "$RESULT_FILE"
-/home/junghan/PacketExpress/artifact-eval/10c/run_10c_smoke_common.sh: line 27: 603624 Killed                  tee "$RESULT_FILE"
