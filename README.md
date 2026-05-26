@@ -60,27 +60,27 @@ Clients and servers' ARP tables should be set up correctly.
 Our prototype UPF is implemented as modular network functions on BESS. So, build BESS first.
 1. Configure bess/core/Makefile to turn on LRO and GRO.
 2. Modify BDF codes of PCIe devices in bess/core/dpdk.cc
-4. Run below for data plane (It will build and install DPDK in bess/deps/, and run "make -j" on bess/core/)
+3. Run below for data plane (It will build and install DPDK in bess/deps/, and run "make -j" on bess/core/)
    ```Bash
    cd $rootdir/bess
    ./build.py
-5. Run below for control plane
+4. Run below for control plane
    ```Bash
    cd $rootdir/upf-epc/pfcpiface
    go build
    ```
-6. (Optional) If you want to use hairpin, modify upf-epc/scripts/hairpin_setup.sh and run it. It makes the firmwares to prepare hairpin setup. Note that hairpin_setup.sh requires sudo.
+5. (Optional) If you want to use hairpin, modify upf-epc/scripts/hairpin_setup.sh and run it. It makes the firmwares to prepare hairpin setup. Note that hairpin_setup.sh requires sudo.
    ```Bash
    cd $rootdir/upf-epc/scripts
    sudo ./hairpin_setup.sh
    ```
-7. Modify upf-epc/scripts/setup_interfaces.sh to your testbed environment and run it. It manually adjusts routing table and ARP table in kernel. Note that setup_interfaces.sh requires sudo.
+6. Modify upf-epc/scripts/setup_interfaces.sh to your testbed environment and run it. It manually adjusts routing table and ARP table in kernel. Note that setup_interfaces.sh requires sudo.
    ```Bash
    cd $rootdir/upf-epc/scripts
    sudo ./setup_interfaces_one_arm.sh
    ```
-8. Configure bess/bessctl/conf/upf.json
-9. (Optional) If you need, adjust rules by modifying upf-epc/pfcpiface/grpcsim.go. You should re-build the go binary by running below after modification.
+7. Configure bess/bessctl/conf/upf.json
+8. (Optional) If you need, adjust rules by modifying upf-epc/pfcpiface/grpcsim.go. You should re-build the go binary by running below after modification.
    ```Bash
    cd $rootdir/upf-epc/pfcpiface
    go build
@@ -119,6 +119,7 @@ Our NAT is implemented as an application on mOS, which transparently monitors TC
    cd core/src
    make -j
    ```
+
 2. Move to nat directory and build nat application.
    ```Bash
    cd $rootdir/nat
@@ -147,6 +148,7 @@ For L4LB, we use DPVS, which is a DPDK implementation of IPVS. IPVS provides man
    sudo ./src/dpvs -c conf/1.conf
    ```
 Again, you should make your own configuration for DPVS.
+
 2. Then, open new ssh session and run dpip. We provide an all-in-one script named setup.sh.
    ```Bash
    cd $rootdir/dpvs/bin
