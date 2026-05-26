@@ -41,7 +41,7 @@ const struct px_arp_entry g_arp_table_default[] = {
     {"10.1.90.2", "58:a2:e1:a7:a9:ee"}, // stream1
     {"10.2.90.2", "a0:88:c2:d6:9e:32"}, // stream3
     // {"10.3.90.2", "58:a2:e1:a7:a9:fe"}, // stream5
-    {"10.3.90.2", "a0:88:c2:d2:df:f2"}, // stream10
+    {"10.3.90.2", "a0:88:c2:d2:df:4a"}, // stream10
     {"10.4.90.2", "58:a2:e1:a7:a9:7e"}, // stream7
 
     {"10.1.95.2", "a0:88:c2:d6:9d:d2"}, // stream2
@@ -54,10 +54,15 @@ const struct px_arp_entry g_arp_table_default[] = {
     {"10.3.90.1", "58:a2:e1:a7:a8:c6"}, // rapids1.eth2
     {"10.4.90.1", "a0:88:c2:d7:81:0e"}, // rapids1.eth3
 
-    {"10.1.95.1", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
-    {"10.2.95.1", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
-    {"10.3.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
-    {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
+    // {"10.1.95.1", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
+    // {"10.2.95.1", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
+    // {"10.3.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
+    // {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
+
+    {"10.1.95.1", "a0:88:c2:d2:df:f2"}, // rapids0.eth0
+    {"10.2.95.1", "58:a2:e1:a7:a9:8e"}, // rapids0.eth1
+    {"10.3.95.1", "58:a2:e1:a7:7c:be"}, // rapids0.eth2
+    {"10.4.95.1", "58:a2:e1:a7:7c:d6"}, // rapids0.eth3
 };
 /*----------------------------------------------------------------------------*/
 /* Check if TCP advertised window fields equal. */
@@ -2954,14 +2959,10 @@ px_core(struct px_ctx *pctx,
                 else if (pctx->is_downlink(pkt))
                 {
                     /* insert MSS to reverse flow */
-                    if (mss_insert_reverse(pkt->port,
-                                           get_four_tuple(pkt),
-                                           rte_be_to_cpu_16(*mss_ptr),
-                                           pctx->now_ns) < 0)
-                    {
-                        rte_exit(EXIT_FAILURE,
-                                 "mss_insert_reverse: MSS table is not initialized\n");
-                    }
+                    mss_insert_reverse(pkt->port,
+                                       get_four_tuple(pkt),
+                                       rte_be_to_cpu_16(*mss_ptr),
+                                       pctx->now_ns);
                     /*
                      * if this flow need delayed merging,
                      * update MSS field to iMSS
@@ -3400,14 +3401,14 @@ int px_init(uint16_t port_id,
     }
 
     /* insert default hairpin rule */
-    // ret = px_hairpin_start(port_id);
-    // if (ret < 0)
-    // {
-    //     fprintf(stderr,
-    //             "[port %d] px_hairpin_start failed\n",
-    //             port_id);
-    //     return -1;
-    // }
+    ret = px_hairpin_start(port_id);
+    if (ret < 0)
+    {
+        fprintf(stderr,
+                "[port %d] px_hairpin_start failed\n",
+                port_id);
+        return -1;
+    }
 
     /* configure stat monitor */
     ret = px_stat_configure(STAT_INTERVAL,
@@ -4095,16 +4096,15 @@ px_eth_rx_burst(uint16_t port_id,
     uint16_t num_pkts_per_rxq = 0;
     uint16_t active_rxq_cnt = 0;
     struct rte_mbuf **orig_batch = rx_pkts;
-    uint64_t now_ns = PX_GETTIME(CLOCK_CPUTSC_PRECISE);
 
     /* printing should be done by STAT_MONITOR_CORE_ID! */
     if (queue_id == STAT_MONITOR_CORE_ID)
     {
-        px_stat_print(STAT_MONITOR_CORE_ID, now_ns);
+        px_stat_print(STAT_MONITOR_CORE_ID);
     }
-    
+
     /* update IAT table and CMS */
-    iat_periodic_update(port_id, queue_id, now_ns);
+    iat_periodic_update(port_id, queue_id);
 
     /* check gear has been shifted */
     if (px_latent_gear_check_notify(port_id))
@@ -4177,10 +4177,10 @@ px_eth_tx_burst0(uint16_t port_id,
     int offset = 0;
 
     /* stage 0: create offload hairpin flow for opt-out policy */
-    if (px_dev->initialized_hairpin && px_dev->hp_policy == 1)
-    {
-        px_flow_create_burst(port_id, queue_id, tx_pkts, nb_pkts);
-    }
+    // if (px_dev->initialized_hairpin && px_dev->hp_policy == 1)
+    // {
+    //     px_flow_create_burst(port_id, queue_id, tx_pkts, nb_pkts);
+    // }
 
     /* stage 1: enqueue packets from app to PX TX ring */
     if (pctx->do_link)
@@ -4256,10 +4256,10 @@ px_eth_tx_burst(uint16_t port_id,
     int offset = 0, i;
 
     /* stage 0: create offload hairpin flow for opt-out policy */
-    if (px_dev->initialized_hairpin && px_dev->hp_policy == 1)
-    {
-        px_flow_create_burst(port_id, queue_id, tx_pkts, nb_pkts);
-    }
+    // if (px_dev->initialized_hairpin && px_dev->hp_policy == 1)
+    // {
+    //     px_flow_create_burst(port_id, queue_id, tx_pkts, nb_pkts);
+    // }
 
     /* stage 1: TX packets from app */
     if (pctx->do_link)

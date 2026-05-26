@@ -224,6 +224,12 @@ int iat_init_ctx(uint16_t port_id,
         return -1;
     }
 
+    /* set at least larger than RTE_MEMPOOL_CACHE_MAX_SIZE */
+    if (num_entry <= RTE_MEMPOOL_CACHE_MAX_SIZE)
+    {
+        num_entry = RTE_MEMPOOL_CACHE_MAX_SIZE * 2;
+    }
+
     /* setup uplink / downlink classifiers */
     g_is_uplink = is_uplink;
     g_is_downlink = is_downlink;
@@ -257,7 +263,18 @@ int iat_init_ctx(uint16_t port_id,
         .hash_func = rte_jhash,
         .hash_func_init_val = 0,
         .socket_id = rte_socket_id(),
+#ifdef RTE_HASH_EXTRA_FLAGS_EXT_TABLE
+        .extra_flag = RTE_HASH_EXTRA_FLAGS_EXT_TABLE,
+#endif
     };
+#if IAT_LOG
+    fprintf(stderr,
+            "IAT init: port=%u queue=%u num_entry=%u key_len=%zu entry_size=%zu socket=%d\n",
+            port_id, queue_id, num_entry,
+            sizeof(struct four_tuple),
+            sizeof(struct flow_iat_entry),
+            rte_socket_id());
+#endif
 
     ctx->tbl = rte_hash_create(&hash_params);
     if (!ctx->tbl)
@@ -270,13 +287,12 @@ int iat_init_ctx(uint16_t port_id,
 
 #if USE_CMS
     ctx->cms_mask = num_entry * 8 - 1;
-    // printf("CMS size: %zu\n", ctx->cms_mask + 1);
     ctx->cms_active_idx = 0;
     for (int i = 0; i < 2; i++)
     {
         snprintf(name, sizeof(name), "iat-cms-%d-%d-%d", port_id, queue_id, i);
         ctx->cms_filters[i] = rte_zmalloc_socket(name,
-                                                 sizeof(ctx->cms_filters[0][0]) * 
+                                                 sizeof(ctx->cms_filters[0][0]) *
                                                      (ctx->cms_mask + 1),
                                                  RTE_CACHE_LINE_SIZE,
                                                  rte_socket_id());
@@ -463,7 +479,6 @@ Try_lookup:
             entry->bytes += (CEIL_DIV(data_len, pkt->tso_segsz) - 1) *
                             (get_hdr_len(pkt) + ETHER_OVR);
         }
-        entry->pkts += 1;
 
         /* update the last timestamp */
         entry->last_timestamp = ts;
@@ -503,7 +518,6 @@ Try_lookup:
             entry->bytes += (CEIL_DIV(data_len, pkt->tso_segsz) - 1) *
                             (get_hdr_len(pkt) + ETHER_OVR);
         }
-        entry->pkts = 1;
 
         /* Insert into the hash table */
         retry_count = 0;
@@ -537,8 +551,7 @@ Try_lookup:
 #endif
 /*----------------------------------------------------------------------------*/
 void iat_periodic_update(uint16_t port_id,
-                         uint16_t queue_id,
-                         uint64_t now_ns)
+                         uint16_t queue_id)
 {
     struct px_iat_ctx *ctx = &g_iat_ctx[port_id][queue_id];
     struct flow_iat_entry *entry;
@@ -551,6 +564,7 @@ void iat_periodic_update(uint16_t port_id,
 #endif
     uint64_t temp_count = 0;
     uint32_t iter = 0;
+    uint64_t now_ns = PX_GETTIME(TIME_FLAG);
 
     if (!ctx->initialized)
     {
@@ -590,7 +604,7 @@ void iat_periodic_update(uint16_t port_id,
     {
         prev_now_ns = now_ns;
     }
-    
+
     /* not enough time for IAT update has passed */
     if (now_ns - prev_now_ns < IAT_UPDATE_INTERVAL)
     {
@@ -655,7 +669,6 @@ void iat_periodic_update(uint16_t port_id,
 
         /* reset temporary fields for throughput */
         entry->bytes = 0;
-        entry->pkts = 0;
 
         /* reset temporary fields for yield */
         entry->_1_seg_cnt = 0;
@@ -713,7 +726,7 @@ iat_search_entry(uint16_t port_id,
                  struct rte_mbuf *pkt)
 {
     struct px_iat_ctx *ctx = &g_iat_ctx[port_id][queue_id];
-    struct flow_iat_entry *entry;
+    struct flow_iat_entry *entry = NULL;
     const struct four_tuple *key;
     int ret, retry_count;
 
@@ -723,94 +736,157 @@ iat_search_entry(uint16_t port_id,
         return NULL;
     }
 
-// #if USE_CMS
-//     /**
-//      * stage 1: CMS Search
-//      * check whether this flow is larger than 1 Gbps
-//      * reference filter with data accumulated during the previous phase
-//      */
-//     uint16_t *prev_filter;
-//     uint16_t v0, v1, v2;
-//     uint64_t estimated_bytes;
-//     uint32_t rss = pkt->hash.rss;
-//     uint16_t idx0 = (uint16_t)(rss & 0xFFFF) & ctx->cms_mask;
-//     uint16_t idx1 = (uint16_t)(rss >> 16) & ctx->cms_mask;
-//     uint16_t idx2 = ((idx0 ^ idx1) ^ 0x9e37) & ctx->cms_mask;
-//     prev_filter = ctx->cms_filters[1 - ctx->cms_active_idx];
-//     v0 = prev_filter[idx0];
-//     v1 = prev_filter[idx1];
-//     v2 = prev_filter[idx2];
-//     estimated_bytes = MIN(MIN(v0, v1), v2) << 8;
-//     if (estimated_bytes * (NS_PER_S / CMS_UPDATE_INTERVAL) < TPUT_THRESHOLD_1G)
-//     {
-//         /* return for < 1 Gbps flow without table lookup */
-//         return NULL;
-//     }
-// #endif
-    
-    key = get_four_tuple(pkt);
-    retry_count = 0;
-Try_lookup:
+#if USE_CMS
     /**
-     * stage 2: Table Search & Create
-     * only for flows larger than 1 Gbps
+     * stage 1: CMS Search
+     * check whether this flow is larger than 1 Gbps
+     * reference filter with data accumulated during the previous phase
      */
-    if ((ret = rte_hash_lookup_data(ctx->tbl, key, (void **)&entry)) < 0)
-    {
-        if (ret == -EAGAIN || errno == EAGAIN)
-        {
-            retry_count++;
-            if (retry_count <= 3)
-            {
-                goto Try_lookup;
-            }
-            fprintf(stderr, "iat_search_entry: rte_hash_lookup_data "
-                            "keeps returning EAGAIN, give up to search\n");
-        }
-        if (ret == -ENOENT || errno == ENOENT)
-        {
-            /* Allocate a new entry from the mempool */
-            if (rte_mempool_get(ctx->pool, (void **)&entry) < 0)
-            {
-                fprintf(stderr, "Unable to allocate memory for IAT entry\n");
-                return NULL;
-            }
-            memset(entry, 0, sizeof(struct flow_iat_entry));
+    uint16_t *prev_filter;
+    uint16_t v0, v1, v2;
+    uint64_t estimated_bytes;
+    uint32_t rss = pkt->hash.rss;
+    uint16_t idx0 = (uint16_t)(rss & 0xFFFF) & ctx->cms_mask;
+    uint16_t idx1 = (uint16_t)(rss >> 16) & ctx->cms_mask;
+    uint16_t idx2 = ((idx0 ^ idx1) ^ 0x9e37) & ctx->cms_mask;
+    prev_filter = ctx->cms_filters[1 - ctx->cms_active_idx];
+    v0 = prev_filter[idx0];
+    v1 = prev_filter[idx1];
+    v2 = prev_filter[idx2];
+    estimated_bytes = MIN(MIN(v0, v1), v2) << 8;
 
-            /* Insert into the hash table */
-            retry_count = 0;
-        Try_insert:
-            if ((ret = rte_hash_add_key_data(ctx->tbl, key, entry)) < 0)
-            {
-                if (ret == -EAGAIN || errno == EAGAIN)
-                {
-                    retry_count++;
-                    if (retry_count <= 3)
-                    {
-                        goto Try_insert;
-                    }
-                    fprintf(stderr, "iat_search_entry: rte_hash_add_key_data "
-                                    "keeps returning EAGAIN, give up to add\n");
-                    rte_mempool_put(ctx->pool, entry);
-                    return NULL;
-                }
-                fprintf(stderr, "Unable to add flow to hash table\n");
-                rte_mempool_put(ctx->pool, entry);
-                return NULL;
-            }
-            return entry;
-        }
-        fprintf(stderr, "iat_search_entry: rte_hash_lookup_data "
-                        "unexpected error: %d\n",
-                ret);
+    if (estimated_bytes * (NS_PER_S / CMS_UPDATE_INTERVAL) < CMS_TPUT_THRESHOLD)
+    {
+        /* return for small flows without table lookup */
         return NULL;
     }
-    if (!entry)
+#endif
+
+    key = get_four_tuple(pkt);
+
+    /*
+     * stage 2: Table Search & Create
+     * only for large flows
+     */
+    retry_count = 0;
+
+Try_lookup:
+    ret = rte_hash_lookup_data(ctx->tbl, key, (void **)&entry);
+
+    if (ret >= 0)
     {
-        fprintf(stderr, "IAT entry is NULL after lookup\n");
+        if (!entry)
+        {
+            fprintf(stderr,
+                    "iat_search_entry: IAT entry is NULL after lookup "
+                    "port=%u queue=%u ret=%d\n",
+                    port_id, queue_id, ret);
+        }
+        return entry;
     }
 
-    return entry;
+    if (ret == -EAGAIN)
+    {
+        retry_count++;
+        if (retry_count <= 3)
+            goto Try_lookup;
+
+        fprintf(stderr,
+                "iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, "
+                "give up to search port=%u queue=%u ret=%d reason=%s\n",
+                port_id, queue_id, ret, strerror(-ret));
+        return NULL;
+    }
+
+    if (ret != -ENOENT)
+    {
+        fprintf(stderr,
+                "iat_search_entry: rte_hash_lookup_data unexpected error "
+                "port=%u queue=%u ret=%d reason=%s\n",
+                port_id, queue_id, ret, strerror(-ret));
+        return NULL;
+    }
+
+    /*
+     * ret == -ENOENT: new flow. Allocate a new entry.
+     */
+    ret = rte_mempool_get(ctx->pool, (void **)&entry);
+    if (ret < 0)
+    {
+        fprintf(stderr,
+                "iat_search_entry: rte_mempool_get failed "
+                "port=%u queue=%u ret=%d reason=%s "
+                "pool_avail=%u pool_in_use=%u\n",
+                port_id, queue_id,
+                ret, strerror(-ret),
+                rte_mempool_avail_count(ctx->pool),
+                rte_mempool_in_use_count(ctx->pool));
+        return NULL;
+    }
+
+    memset(entry, 0, sizeof(struct flow_iat_entry));
+
+    /*
+     * Insert into the hash table.
+     */
+    retry_count = 0;
+
+Try_insert:
+    ret = rte_hash_add_key_data(ctx->tbl, key, entry);
+
+    if (ret >= 0)
+    {
+        return entry;
+    }
+
+    if (ret == -EAGAIN)
+    {
+        retry_count++;
+        if (retry_count <= 3)
+            goto Try_insert;
+
+        fprintf(stderr,
+                "iat_search_entry: rte_hash_add_key_data keeps returning EAGAIN, "
+                "give up to add port=%u queue=%u ret=%d reason=%s "
+                "pool_avail=%u pool_in_use=%u\n",
+                port_id, queue_id,
+                ret, strerror(-ret),
+                rte_mempool_avail_count(ctx->pool),
+                rte_mempool_in_use_count(ctx->pool));
+
+        rte_mempool_put(ctx->pool, entry);
+        return NULL;
+    }
+
+    /*
+     * Another core may have inserted the same key between lookup and add.
+     * In that case, release our newly allocated entry and retry lookup.
+     */
+    if (ret == -EEXIST)
+    {
+        rte_mempool_put(ctx->pool, entry);
+        entry = NULL;
+
+        retry_count = 0;
+        goto Try_lookup;
+    }
+
+    /*
+     * Common failure here is -ENOSPC:
+     *   - hash table full, or
+     *   - cuckoo insertion failed due to collision pressure.
+     */
+    fprintf(stderr,
+            "iat_search_entry: rte_hash_add_key_data failed "
+            "port=%u queue=%u ret=%d reason=%s "
+            "pool_avail=%u pool_in_use=%u\n",
+            port_id, queue_id,
+            ret, strerror(-ret),
+            rte_mempool_avail_count(ctx->pool),
+            rte_mempool_in_use_count(ctx->pool));
+
+    rte_mempool_put(ctx->pool, entry);
+    return NULL;
 }
 /*----------------------------------------------------------------------------*/
 int iat_update_entry(uint16_t port_id,
@@ -820,6 +896,7 @@ int iat_update_entry(uint16_t port_id,
                      uint64_t now_ns)
 {
     struct px_iat_ctx *ctx = &g_iat_ctx[port_id][queue_id];
+    uint64_t add_val;
     uint32_t leftover = 0, data_len = get_data_len(pkt);
     uint32_t orig_segsz, target_segsz;
     int max_segnum;
@@ -835,13 +912,17 @@ int iat_update_entry(uint16_t port_id,
         return 0; // No data to process
     }
 
+    add_val = pkt->pkt_len + ETHER_OVR;
+    if (is_tso(pkt))
+    {
+        /* consider duplicated headers after TSO */
+        add_val += (CEIL_DIV(data_len, pkt->tso_segsz) - 1) *
+                   (get_hdr_len(pkt) + ETHER_OVR);
+    }
 #if USE_CMS
     /* update CMS active counting filter first */
-    uint16_t cms_add_val = (pkt->pkt_len + ETHER_OVR) >> 8; // in units of 256 bytes
-    if (cms_add_val == 0)
-    {
-        cms_add_val = 1;
-    }
+    uint64_t cms_add_val = MAX(add_val >> 8, 1);
+    assert(cms_add_val <= UINT16_MAX && cms_add_val > 0);
     uint32_t rss = pkt->hash.rss;
     uint16_t idx0 = (uint16_t)(rss & 0xFFFF) & ctx->cms_mask;
     uint16_t idx1 = (uint16_t)(rss >> 16) & ctx->cms_mask;
@@ -873,14 +954,7 @@ int iat_update_entry(uint16_t port_id,
     entry->last_update = now_ns;
 
     /* update throughput */
-    entry->bytes += pkt->pkt_len + ETHER_OVR;
-    if (is_tso(pkt))
-    {
-        /* consider duplicated headers after TSO */
-        entry->bytes += (CEIL_DIV(data_len, pkt->tso_segsz) - 1) *
-                        (get_hdr_len(pkt) + ETHER_OVR);
-    }
-    entry->pkts += 1;
+    entry->bytes += add_val;
 
     /* calculate conversion yield */
     if (is_tcp(pkt))
@@ -1128,23 +1202,23 @@ iat_get_timeout(struct flow_iat_entry *entry,
      * if payload len is not multiple of eMSS
      * it is the end of cwnd or end of content
      */
-    if ((proto_id == IPPROTO_TCP) &&
-        (data_len % orig_segsz))
-    {
-        return 0;
-    }
+    // if ((proto_id == IPPROTO_TCP) &&
+    //     (data_len % orig_segsz))
+    // {
+    //     return 0;
+    // }
 
-    if (entry->global_avg_iat > IAT_THRESHOLD_1G)
-    {
-        /* too large timeout window, give up delaying */
-        return 0;
-    }
+    // if (entry->global_avg_iat > IAT_THRESHOLD_1G * 1.5)
+    // {
+    //     /* too large timeout window, give up delaying */
+    //     return 0;
+    // }
 
-    if (iat_get_yield(entry) > PER_FLOW_YIELD_THRESHOLD)
-    {
-        /* already high yield flow, no need to delay */
-        return 0;
-    }
+    // if (iat_get_yield(entry) > PER_FLOW_YIELD_THRESHOLD)
+    // {
+    //     /* already high yield flow, no need to delay */
+    //     return 0;
+    // }
 
     /* try update first */
     entry->last_update = now_ns;
@@ -1168,7 +1242,7 @@ iat_get_timeout(struct flow_iat_entry *entry,
     }
     else if (proto_id == IPPROTO_UDP)
     {
-        timeout_factor = timeout_factor_95;
+        timeout_factor = timeout_factor_999;
     }
     else
     {
@@ -1201,17 +1275,6 @@ iat_get_timeout(struct flow_iat_entry *entry,
 
     timeout_ns = avg_iat * timeout_factor[missing_segs_nb];
 
-    /* apply gamma distribution to timeout too */
-    if (timeout_ns > IAT_THRESHOLD_1G *
-                         timeout_factor[DEFAULT_iMTU / DEFAULT_eMTU])
-    {
-        /* too large timeout window, give up delaying */
-        // printf("IAT: avg_iat %u, missing_segs_nb %u, "
-        //        "timeout_ns %u > cutoff_ns %u, no delay\n",
-        //        avg_iat, missing_segs_nb, timeout_ns, cutoff_ns);
-        return 0;
-    }
-
     return timeout_ns;
 #endif
 }
@@ -1229,7 +1292,11 @@ void iat_local_stat(uint16_t port_id,
 
     if (!ctx->initialized)
     {
-        fprintf(stderr, "iat_local_stat: IAT context not initialized\n");
+        /**
+         * IAT context might not be initialized if PX is not used.
+         * For baseline test, just return zero stats without logging error.
+         */
+        // fprintf(stderr, "iat_local_stat: IAT context not initialized\n");
         *total_global_iat = 0;
 #if USE_HW_RX_TIMESTAMP
         *total_burst_iat = 0;

@@ -53,8 +53,8 @@ nhipaddrs=(10.1.90.2 10.1.95.2  # stream1 stream2
 # nhmacaddrs=(58:a2:e1:a7:a9:ee a0:88:c2:d6:9d:d2) # stream1 stream2
 nhmacaddrs=(58:a2:e1:a7:a9:ee a0:88:c2:d6:9d:d2  # stream1 stream2
 			a0:88:c2:d6:9e:32 58:a2:e1:a7:a8:b6  # stream3 stream4
-			# 58:a2:e1:a7:a9:fe 58:a2:e1:a7:aa:7e  # stream5 stream6
-			a0:88:c2:d2:df:f2 58:a2:e1:a7:aa:7e  # stream10 stream6
+			#58:a2:e1:a7:a9:fe 58:a2:e1:a7:aa:7e  # stream5 stream6
+			a0:88:c2:d2:df:4a 58:a2:e1:a7:aa:7e  # stream10 stream6
 			58:a2:e1:a7:a9:7e 58:a2:e1:a7:aa:86) # stream7 stream8
 
 # IPv4 route table entries in cidr format per port

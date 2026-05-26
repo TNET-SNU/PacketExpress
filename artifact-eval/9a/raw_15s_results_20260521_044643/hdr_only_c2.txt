@@ -1,0 +1,1 @@
+core=2 gbps=726 yield=92% log=/tmp/ae_9a_pxgw_hdr_only_c2_20260521_045133.log

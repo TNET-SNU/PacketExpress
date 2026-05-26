@@ -110,6 +110,7 @@ extern "C"
 #define PX_MEASURE_STATS 1
 #define PX_MEASURE_PER_QUEUE_STAT 0
 #define PX_MEASURE_DIST 0
+#define PX_MEASURE_HAIRPIN 0
 #define MEASURE_DELAY 0
 /*----------------------------------------------------------------------------*/
 #define LOG_HW_RX_TIMESTAMP 0

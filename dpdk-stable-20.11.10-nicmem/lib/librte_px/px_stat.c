@@ -274,7 +274,7 @@ static void px_stat_shift_down_handler(int signum)
     g_shift_down_requested = 1;
 }
 /*----------------------------------------------------------------------------*/
-void px_stat_print(uint16_t main_core_id, uint64_t now_ns)
+void px_stat_print(uint16_t main_core_id)
 {
     struct px_dev *px_dev = &g_px_dev[0];
     struct px_tcp_stat *tcp_iter, tcp_total = {0};
@@ -289,6 +289,7 @@ void px_stat_print(uint16_t main_core_id, uint64_t now_ns)
     uint64_t iat_count_iter, iat_count_total = 0;
     uint16_t port_id, queue_id;
     int ret;
+    uint64_t now_ns = PX_GETTIME(CLOCK_CPUTSC_PRECISE);
 
     static uint64_t prev_now_ns = 0;
     if (!prev_now_ns)
@@ -402,6 +403,7 @@ void px_stat_print(uint16_t main_core_id, uint64_t now_ns)
                     "burstIAT: %5lu ns "
                     "LROsize: %6lu \n"
 #endif
+                    "IAT_num: %5lu "
                     "flows/rxq: %2.1f "
                     "pkts/rxq: %2.1f "
                     "active_rxq/available: %2.1f%% "
@@ -434,6 +436,7 @@ void px_stat_print(uint16_t main_core_id, uint64_t now_ns)
                               iat_count_iter
                         : 0,
 #endif
+                    iat_count_iter,
                     rx_iter->batch_cnt
                         ? (float)rx_iter->num_flows_per_rxq /
                               rx_iter->batch_cnt
@@ -703,6 +706,7 @@ void px_stat_print(uint16_t main_core_id, uint64_t now_ns)
             "burstIAT: %5lu ns "
             "LROsize: %6lu \n"
 #endif
+            "IAT_num: %5lu "
             "flows/rxq: %2.1f "
             "pkts/rxq: %2.1f "
             "active_rxq/available: %2.1f%% "
@@ -736,6 +740,7 @@ void px_stat_print(uint16_t main_core_id, uint64_t now_ns)
                       iat_count_total
                 : 0,
 #endif
+            iat_count_total,
             num_flows_per_rxq_total,
             num_pkts_per_rxq_total,
             active_rxq_per_available_rxq_total,
@@ -767,7 +772,9 @@ void px_stat_print(uint16_t main_core_id, uint64_t now_ns)
                     : "\n");
     }
 #endif
+#if PX_MEASURE_HAIRPIN
     print_cache_stats();
+#endif
 
     /* handling gear using current stats */
     if (px_dev->initialized_dyn_rxq)

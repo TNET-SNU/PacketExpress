@@ -1,0 +1,1 @@
+core=32 gbps=224 yield=59% log=/tmp/ae_9a_baseline_c32_20260521_051236.log

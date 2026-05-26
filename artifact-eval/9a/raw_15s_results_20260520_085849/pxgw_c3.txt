@@ -1,0 +1,1 @@
+core=3 gbps=N/A yield=N/A log=/tmp/ae_9a_pxgw_c3_20260520_090503.log

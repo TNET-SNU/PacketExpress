@@ -1,0 +1,1 @@
+core=2 gbps=N/A yield=N/A log=/tmp/ae_9a_pxgw_c2_20260520_091426.log

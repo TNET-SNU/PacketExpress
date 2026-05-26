@@ -1,0 +1,1 @@
+core=3 gbps=91 yield=67% log=/tmp/ae_9a_baseline_c3_20260520_090556.log

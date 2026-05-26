@@ -1,0 +1,9 @@
+--- log ---
+EAL: Detected 24 lcore(s)
+EAL: Detected 1 NUMA nodes
+EAL: Detected shared linkage of DPDK
+EAL: Cannot create lock on '/var/run/dpdk/rte/config'. Is another primary process running?
+EAL: FATAL: Cannot init config
+EAL: Cannot init config
+EAL: Error - exiting with code: 1
+  Cause: ERROR: EAL init failed

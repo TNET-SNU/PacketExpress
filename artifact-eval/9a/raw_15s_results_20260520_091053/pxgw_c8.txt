@@ -1,0 +1,1 @@
+core=8 gbps=N/A yield=N/A log=/tmp/ae_9a_pxgw_c8_20260520_091946.log

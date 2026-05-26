@@ -17,14 +17,14 @@ extern "C"
  * It might be a bug in ConnectX NIC.
  */
 #define USE_HW_RX_TIMESTAMP 0
-#define USE_CMS 1
+#define USE_CMS 0
 #define CMS_SATURATE_VAL UINT16_MAX
 #define IAT_THREAD_PERIOD 60
 #define IAT_TIMEOUT 600
 #define EWMA_ALPHA 0.125 // α = 1/8
 #define PER_FLOW_YIELD_THRESHOLD 93
 #define IAT_THRESHOLD_1G 12000               /* 12 us */
-#define TPUT_THRESHOLD_1G 50000000ULL // 0.4 Gbps in bytes per second
+#define CMS_TPUT_THRESHOLD 100000000ULL // 0.8 Gbps in bytes per second
 #define IAT_UPDATE_INTERVAL 1000000000ULL /* 1s in ns */
 #define CMS_UPDATE_INTERVAL 100000000ULL /* 100ms in ns */
 /*----------------------------------------------------------------------------*/
@@ -59,26 +59,25 @@ struct px_iat_ctx
 };
 struct flow_iat_entry
 {
-    uint32_t global_avg_iat; /* global IAT (from throughput) */
+    uint32_t global_avg_iat; /* global IAT (from throughput) */ // --> can be 4 bit with microsecond unit
 #if USE_HW_RX_TIMESTAMP
     /* HW timestamp of last packet */
     rte_mbuf_timestamp_t last_timestamp;
     uint32_t avg_burst_iat; /* avg. burst IAT (EWMA) */
     uint32_t avg_data_len;  /* avg. packet size (EWMA) */
 #endif
-    uint64_t bytes;
-    uint64_t pkts;
+    uint64_t bytes; // --> can be 4B if we use 64B unit
 
     /* calculate conversion yield in real time */
-    uint64_t _1_seg_cnt;
-    uint64_t _2_seg_cnt;
-    uint64_t _3_seg_cnt;
-    uint64_t _4_seg_cnt;
-    uint64_t _5_seg_cnt;
-    uint64_t iMTU_cnt;
+    uint64_t _1_seg_cnt; //
+    uint64_t _2_seg_cnt; //
+    uint64_t _3_seg_cnt; //
+    uint64_t _4_seg_cnt; //
+    uint64_t _5_seg_cnt; //
+    uint64_t iMTU_cnt; // these 6 fields can be a single 4B iMTU_bytes with 64B unit
 
     /* SW timestamp of this entry */
-    uint64_t last_update;
+    uint64_t last_update; // can be 28 bit (resolution: 22.9 seconds)
 };
 #if USE_HW_RX_TIMESTAMP
 /*----------------------------------------------------------------------------*/
@@ -197,8 +196,7 @@ int iat_destroy_ctx(uint16_t port_id,
                     uint16_t queue_id);
 /*----------------------------------------------------------------------------*/
 void iat_periodic_update(uint16_t port_id,
-                         uint16_t queue_id,
-                         uint64_t now_ns);
+                         uint16_t queue_id);
 /*----------------------------------------------------------------------------*/
 struct flow_iat_entry *
 iat_search_entry(uint16_t port_id,

@@ -6,6 +6,7 @@ OBJS    := $(SRCS:.c=.o)
 
 CC      := gcc
 CFLAGS  := -O3 -g -Wall -march=native -D_GNU_SOURCE -Wno-deprecated-declarations
+# CFLAGS  := -O0 -g -Wall -march=native -D_GNU_SOURCE -Wno-deprecated-declarations
 # PKGCONF := $(shell which pkg-config)
 # DPDK_CFLAGS := $(shell $(PKGCONF) --cflags libdpdk)
 # DPDK_LDFLAGS := $(shell $(PKGCONF) --libs libdpdk)
@@ -51,10 +52,10 @@ CFLAGS += -D HW_CSUM=1
 # Choose one of below
 
 # 1. Semantic test on (split uplink flows and merge downlink flows)
-# CFLAGS += -D SEMANTIC_TEST=1
+CFLAGS += -D SEMANTIC_TEST=1
 
 # 2. Semantic test off (merge all flows)
-CFLAGS += -D SEMANTIC_TEST=0
+# CFLAGS += -D SEMANTIC_TEST=0
 
 ################################################################################
 
@@ -100,18 +101,8 @@ CFLAGS += -D USE_PX=1
 
 # Choose one of below
 
-# 1. Dynamic RXQ scaling on
-# CFLAGS += -D USE_DYNRXQ=1
-
-# 2. Dynamic RXQ scaling off
-CFLAGS += -D USE_DYNRXQ=0
-
-################################################################################
-
-# Choose one of below
-
 # 1. delayed-merging on
-CFLAGS += -D CUTOFF_NS=120000
+CFLAGS += -D CUTOFF_NS=72000
 
 # 2. delayed-merging off
 # CFLAGS += -D CUTOFF_NS=0
@@ -121,10 +112,20 @@ CFLAGS += -D CUTOFF_NS=120000
 # Choose one of below
 
 # 1. NICMEM on (To use nicmem, make sure to use DPDK version 20.11)
-# CFLAGS += -D NICMEM=1
+CFLAGS += -D NICMEM=1
 
 # 2. NICMEM off
-CFLAGS += -D NICMEM=0
+# CFLAGS += -D NICMEM=0
+
+################################################################################
+
+# Choose one of below
+
+# 1. Dynamic RXQ scaling on
+CFLAGS += -D USE_DYNRXQ=1
+
+# 2. Dynamic RXQ scaling off
+# CFLAGS += -D USE_DYNRXQ=0
 
 ################################################################################
 

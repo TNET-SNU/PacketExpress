@@ -9,10 +9,8 @@
 #include "px_stat.h"
 #include "px_mss.h"
 #include "px_nicmem.h"
-#include "px_delay.h"
 #include "px_flow.h"
 #include "px_offload.h"
-#include "px_4tuple.h"
 #include "px_arp.h"
 
 #ifdef __cplusplus

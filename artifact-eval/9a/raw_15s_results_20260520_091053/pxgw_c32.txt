@@ -1,0 +1,1 @@
+core=32 gbps=N/A yield=N/A log=/tmp/ae_9a_pxgw_c32_20260520_092507.log

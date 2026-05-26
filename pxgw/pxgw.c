@@ -75,12 +75,11 @@ const struct px_arp_entry g_arp_entries_normal[] = {
     {"10.1.90.2", "58:a2:e1:a7:a9:ee"}, // stream1
     {"10.2.90.2", "a0:88:c2:d6:9e:32"}, // stream3
     // {"10.3.90.2", "58:a2:e1:a7:a9:fe"}, // stream5
-    {"10.3.90.2", "a0:88:c2:d2:df:f2"}, // stream10
+    {"10.3.90.2", "a0:88:c2:d2:df:4a"}, // stream10
     {"10.4.90.2", "58:a2:e1:a7:a9:7e"}, // stream7
 
     {"10.1.95.2", "a0:88:c2:d6:9d:d2"}, // stream2
     {"10.2.95.2", "58:a2:e1:a7:a8:b6"}, // stream4
-    // {"10.2.95.2", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
     {"10.3.95.2", "58:a2:e1:a7:aa:7e"}, // stream6
     {"10.4.95.2", "58:a2:e1:a7:aa:86"}, // stream8
 
@@ -89,100 +88,79 @@ const struct px_arp_entry g_arp_entries_normal[] = {
     {"10.3.90.1", "58:a2:e1:a7:a8:c6"}, // rapids1.eth2
     {"10.4.90.1", "a0:88:c2:d7:81:0e"}, // rapids1.eth3
 
-    {"10.1.95.1", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
-    {"10.2.95.1", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
-    {"10.3.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
-    {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
-};
-const struct px_arp_entry g_arp_entries_sink_to_rapids2[] = {
-    // {"10.1.90.2", "58:a2:e1:a7:a9:ee"}, // stream1
-    // {"10.2.90.2", "a0:88:c2:d6:9e:32"}, // stream3
-    // {"10.3.90.2", "a0:88:c2:d2:df:f2"}, // stream10
-    // {"10.4.90.2", "58:a2:e1:a7:a9:7e"}, // stream7
-
-    {"10.1.90.2", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
-    {"10.2.90.2", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
-    {"10.3.90.2", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
-    {"10.4.90.2", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
-
-    // {"10.1.95.2", "a0:88:c2:d6:9d:d2"}, // stream2
-    // {"10.2.95.2", "58:a2:e1:a7:a8:b6"}, // stream4
-    // {"10.3.95.2", "58:a2:e1:a7:aa:7e"}, // stream6
-    // {"10.4.95.2", "58:a2:e1:a7:aa:86"}, // stream8
-
-    {"10.1.95.2", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
-    {"10.2.95.2", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
-    {"10.3.95.2", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
-    {"10.4.95.2", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
+    {"10.1.95.1", "a0:88:c2:d2:df:f2"}, // rapids0.eth0
+    {"10.2.95.1", "58:a2:e1:a7:a9:8e"}, // rapids0.eth1
+    {"10.3.95.1", "58:a2:e1:a7:7c:be"}, // rapids0.eth2
+    {"10.4.95.1", "58:a2:e1:a7:7c:d6"}, // rapids0.eth3
 };
 const struct px_arp_entry g_arp_entries_two_hops[] = {
-    {"10.1.90.2", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
-    {"10.2.90.2", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
-    {"10.3.90.2", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
-    {"10.4.90.2", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
+    {"10.1.90.2", "a0:88:c2:d2:df:f2"}, // rapids0.eth0
+    {"10.2.90.2", "58:a2:e1:a7:a9:8e"}, // rapids0.eth1
+    {"10.3.90.2", "58:a2:e1:a7:7c:be"}, // rapids0.eth2
+    {"10.4.90.2", "58:a2:e1:a7:7c:d6"}, // rapids0.eth3
 
     {"10.1.95.2", "a0:88:c2:d6:9d:d2"}, // stream2
     {"10.2.95.2", "58:a2:e1:a7:a8:b6"}, // stream4
     {"10.3.95.2", "58:a2:e1:a7:aa:7e"}, // stream6
     {"10.4.95.2", "58:a2:e1:a7:aa:86"}, // stream8
-
-    {"10.1.90.1", "58:a2:e1:a7:a8:46"}, // rapids1.eth0
-    {"10.2.90.1", "58:a2:e1:a7:a9:be"}, // rapids1.eth1
-    {"10.3.90.1", "58:a2:e1:a7:a8:c6"}, // rapids1.eth2
-    {"10.4.90.1", "a0:88:c2:d7:81:0e"}, // rapids1.eth3
-
-    {"10.1.95.1", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
-    {"10.2.95.1", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
-    {"10.3.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
-    {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
 };
 const struct px_arp_entry g_arp_entries_two_hops_dpvs[] = {
-    {"10.1.90.10", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
-    {"10.2.90.10", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
-    {"10.3.90.10", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
-    {"10.4.90.10", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
+    {"10.1.90.10", "a0:88:c2:d2:df:f2"}, // rapids0.eth0
+    {"10.2.90.10", "58:a2:e1:a7:a9:8e"}, // rapids0.eth1
+    {"10.3.90.10", "58:a2:e1:a7:7c:be"}, // rapids0.eth2
+    {"10.4.90.10", "58:a2:e1:a7:7c:d6"}, // rapids0.eth3
 
-    {"10.1.90.20", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
-    {"10.2.90.20", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
-    {"10.3.90.20", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
-    {"10.4.90.20", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
+    {"10.1.90.20", "a0:88:c2:d2:df:f2"}, // rapids0.eth0
+    {"10.2.90.20", "58:a2:e1:a7:a9:8e"}, // rapids0.eth1
+    {"10.3.90.20", "58:a2:e1:a7:7c:be"}, // rapids0.eth2
+    {"10.4.90.20", "58:a2:e1:a7:7c:d6"}, // rapids0.eth3
+
+    {"10.1.95.10", "a0:88:c2:d2:df:f2"}, // rapids0.eth0
+    {"10.2.95.10", "58:a2:e1:a7:a9:8e"}, // rapids0.eth1
+    {"10.3.95.10", "58:a2:e1:a7:7c:be"}, // rapids0.eth2
+    {"10.4.95.10", "58:a2:e1:a7:7c:d6"}, // rapids0.eth3
+
+    {"10.1.95.20", "a0:88:c2:d2:df:f2"}, // rapids0.eth0
+    {"10.2.95.20", "58:a2:e1:a7:a9:8e"}, // rapids0.eth1
+    {"10.3.95.20", "58:a2:e1:a7:7c:be"}, // rapids0.eth2
+    {"10.4.95.20", "58:a2:e1:a7:7c:d6"}, // rapids0.eth3
+
+    {"10.1.90.2", "a0:88:c2:d2:df:f2"}, // rapids0.eth0
+    {"10.2.90.2", "58:a2:e1:a7:a9:8e"}, // rapids0.eth1
+    {"10.3.90.2", "58:a2:e1:a7:7c:be"}, // rapids0.eth2
+    {"10.4.90.2", "58:a2:e1:a7:7c:d6"}, // rapids0.eth3
 
     {"10.1.95.2", "a0:88:c2:d6:9d:d2"}, // stream2
     {"10.2.95.2", "58:a2:e1:a7:a8:b6"}, // stream4
     {"10.3.95.2", "58:a2:e1:a7:aa:7e"}, // stream6
     {"10.4.95.2", "58:a2:e1:a7:aa:86"}, // stream8
-
-    {"10.1.90.1", "58:a2:e1:a7:a8:46"}, // rapids1.eth0
-    {"10.2.90.1", "58:a2:e1:a7:a9:be"}, // rapids1.eth1
-    {"10.3.90.1", "58:a2:e1:a7:a8:c6"}, // rapids1.eth2
-    {"10.4.90.1", "a0:88:c2:d7:81:0e"}, // rapids1.eth3
-
-    {"10.1.95.1", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
-    {"10.2.95.1", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
-    {"10.3.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
-    {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
 };
 const struct px_arp_entry g_arp_entries_two_hops_for_skew_test[] = {
-    {"10.1.95.2", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
-    {"10.2.95.2", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
-    {"10.3.95.2", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
-    {"10.4.95.2", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
+    {"10.1.95.2", "a0:88:c2:d2:df:f2"}, // rapids2.eth0
+    {"10.2.95.2", "58:a2:e1:a7:a9:8e"}, // rapids2.eth1
+    {"10.3.95.2", "58:a2:e1:a7:7c:be"}, // rapids2.eth2
+    {"10.4.95.2", "58:a2:e1:a7:7c:d6"}, // rapids2.eth3
 
     {"10.1.90.2", "58:a2:e1:a7:a9:ee"}, // stream1
     {"10.2.90.2", "a0:88:c2:d6:9e:32"}, // stream3
     // {"10.3.90.2", "58:a2:e1:a7:a9:fe"}, // stream5
-    {"10.3.90.2", "a0:88:c2:d2:df:f2"}, // stream10
+    {"10.3.90.2", "a0:88:c2:d2:df:4a"}, // stream10
     {"10.4.90.2", "58:a2:e1:a7:a9:7e"}, // stream7
 
-    {"10.1.90.1", "58:a2:e1:a7:a8:46"}, // rapids1.eth0
-    {"10.2.90.1", "58:a2:e1:a7:a9:be"}, // rapids1.eth1
-    {"10.3.90.1", "58:a2:e1:a7:a8:c6"}, // rapids1.eth2
-    {"10.4.90.1", "a0:88:c2:d7:81:0e"}, // rapids1.eth3
-
-    {"10.1.95.1", "58:a2:e1:a7:a9:8e"}, // rapids2.eth0
-    {"10.2.95.1", "58:a2:e1:a7:7c:d6"}, // rapids2.eth1
-    {"10.3.95.1", "58:a2:e1:a7:7c:c6"}, // rapids2.eth2
-    {"10.4.95.1", "58:a2:e1:a7:7c:be"}, // rapids2.eth3
+    {"10.1.95.1", "a0:88:c2:d2:df:f2"}, // rapids0.eth0
+    {"10.2.95.1", "58:a2:e1:a7:a9:8e"}, // rapids0.eth1
+    {"10.3.95.1", "58:a2:e1:a7:7c:be"}, // rapids0.eth2
+    {"10.4.95.1", "58:a2:e1:a7:7c:d6"}, // rapids0.eth3
+};
+/*----------------------------------------------------------------------------*/
+#define FLOW_QUEUE_NUM 64
+#define FLOW_QUEUE_SIZE 64
+struct flow_queue
+{
+    struct four_tuple key;
+    struct rte_mbuf *bufs[FLOW_QUEUE_SIZE];
+    uint16_t count;
+    uint16_t idx;
 };
 /*----------------------------------------------------------------------------*/
 /* global information for port configuration */
@@ -336,7 +314,7 @@ port_init(uint16_t port_id, uint16_t num_queue)
     ret = px_eth_dev_configure(port_id,
                                num_queue,
                                num_queue,
-                               0,
+                               9000,
                                0,
                                NICMEM ? nb_rxd : 0,
                                USE_PX ? CUTOFF_NS : 0,
@@ -434,8 +412,8 @@ port_init(uint16_t port_id, uint16_t num_queue)
     /* Start PX */
     ret = px_init(port_id,
                   MAX_PKT_BURST,
-                  !JUMBO_FRAME ? 65536 : 0,
-                  CUTOFF_NS ? 65536 : 0,
+                  !JUMBO_FRAME ? 65536 / g_num_ports : 0,
+                  CUTOFF_NS ? 65536 / g_num_ports : 0,
                   NULL,
                   NULL,
                   USE_LINK,
@@ -446,7 +424,7 @@ port_init(uint16_t port_id, uint16_t num_queue)
     }
 #else
     /* configure stat monitor */
-    ret = px_stat_configure(STAT_INTERVAL,
+    ret = px_stat_configure(1,
                             port_id,
                             num_queue,
                             num_queue,
@@ -516,6 +494,12 @@ int lcore_main(void *args)
     uint32_t queue_id = rte_lcore_id();
     uint16_t port_id = 0;
     int ret, i;
+#define INTERLEAVING_TEST 0
+#if INTERLEAVING_TEST
+    struct flow_queue flow_list[FLOW_QUEUE_NUM] = {0};
+    uint16_t active_flow_count = 0;
+    uint64_t prev_ns = PX_GETTIME(TIME_FLAG);
+#endif
 
     while (!g_shutdown)
     {
@@ -531,6 +515,14 @@ int lcore_main(void *args)
         {
             px_stat_print(STAT_MONITOR_CORE_ID);
         }
+#if INTERLEAVING_TEST
+        while (PX_GETTIME(TIME_FLAG) - prev_ns < 5000) // 5us
+        {
+            // busy wait
+            ;
+        }
+        prev_ns = PX_GETTIME(TIME_FLAG);
+#endif
         nb_rx = rte_eth_rx_burst(port_id,
                                  queue_id,
                                  rmbufs,
@@ -689,10 +681,86 @@ int lcore_main(void *args)
                 continue;
             }
 #endif
-
+#if INTERLEAVING_TEST
+            /* 1. Classify by flow (Enqueue) */
+            int found_idx = -1;
+            for (int f = 0; f < active_flow_count; f++)
+            {
+                if (flow_list[f].count)
+                {
+                    if (!memcmp(&flow_list[f].key,
+                                get_four_tuple(m),
+                                sizeof(struct four_tuple)))
+                    {
+                        found_idx = f;
+                        break;
+                    }
+                }
+            }
+            // 새로운 Flow 발견 시 0번부터 차례대로 할당
+            if (found_idx == -1 && active_flow_count < FLOW_QUEUE_NUM)
+            {
+                found_idx = active_flow_count++;
+                flow_list[found_idx].key = *get_four_tuple(m);
+                flow_list[found_idx].count = 0;
+                flow_list[found_idx].idx = 0;
+            }
+            // Enqueue (Circular Buffer)
+            if (found_idx != -1)
+            {
+                struct flow_queue *fq = &flow_list[found_idx];
+                if (fq->count < FLOW_QUEUE_SIZE)
+                {
+                    uint16_t write_idx = (fq->idx + fq->count) % FLOW_QUEUE_SIZE;
+                    fq->bufs[write_idx] = m;
+                    fq->count++;
+                }
+                else
+                {
+                    fprintf(stderr,
+                            "Port %d: Flow queue %d full, dropping packet\n",
+                            port_id, found_idx);
+                    rte_pktmbuf_free(m);
+                }
+            }
+            else
+            {
+                fprintf(stderr,
+                        "Port %d: Exceeded FLOW_QUEUE_NUM, dropping packet\n",
+                        port_id);
+                rte_pktmbuf_free(m); // FLOW_QUEUE_NUM 초과 시 드랍
+            }
+#else
             /* insert to send buffer */
             wmbufs[nb_tx++] = m;
+#endif
         }
+#if INTERLEAVING_TEST
+        active_flow_count = 0;
+        /* 2. fill wmbufs in Round-Robin (Dequeue) */
+        int progress = 1;
+        while (nb_tx < PX_TX_BURST && progress)
+        {
+            progress = 0;
+            for (int f = 0; f < FLOW_QUEUE_NUM && nb_tx < PX_TX_BURST; f++)
+            {
+                struct flow_queue *fq = &flow_list[f];
+                if (fq->count > 0)
+                {
+                    // Circular read
+                    if (!nb_tx)
+                    {
+                        printf("\n");
+                    }
+                    wmbufs[nb_tx++] = fq->bufs[fq->idx];
+                    fq->idx = (fq->idx + 1) % FLOW_QUEUE_SIZE;
+                    fq->count--;
+                    progress = 1;
+                    px_dump_tuple(get_four_tuple(wmbufs[nb_tx - 1]));
+                }
+            }
+        }
+#endif
 
         /* Forward to the same port (L2 forward) */
 #if USE_PX
@@ -769,26 +837,28 @@ int main(int argc, char **argv)
                         g_num_cores, RTE_MAX_LCORE);
                 return -1;
             }
+            if (!g_num_cores)
+            {
+                fprintf(stderr, "Error: g_num_cores (%d) = 0\n",
+                        g_num_cores);
+                return -1;
+            }
         }
     }
     optind = 0;
 
     /* choose ARP table */
-    g_arp_entries = g_arp_entries_normal;
-    g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_normal) /
-                         sizeof(struct px_arp_entry);
-
-    // g_arp_entries = g_arp_entries_sink_to_rapids2;
-    // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_sink_to_rapids2) /
+    // g_arp_entries = g_arp_entries_normal;
+    // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_normal) /
     //                      sizeof(struct px_arp_entry);
 
     // g_arp_entries = g_arp_entries_two_hops;
     // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_two_hops) /
     //                      sizeof(struct px_arp_entry);
 
-    // g_arp_entries = g_arp_entries_two_hops_dpvs;
-    // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_two_hops_dpvs) /
-    //                      sizeof(struct px_arp_entry);
+    g_arp_entries = g_arp_entries_two_hops_dpvs;
+    g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_two_hops_dpvs) /
+                         sizeof(struct px_arp_entry);
 
     // g_arp_entries = g_arp_entries_two_hops_for_skew_test;
     // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_two_hops_for_skew_test) /
@@ -878,7 +948,15 @@ int main(int argc, char **argv)
 #endif
 
     g_num_sockets = rte_socket_count();
+    if (!g_num_sockets)
+    {
+        rte_exit(EXIT_FAILURE, "No NUMA sockets found - bye\n");
+    }
     g_num_ports = rte_eth_dev_count_avail();
+    if (!g_num_ports)
+    {
+        rte_exit(EXIT_FAILURE, "No Ethernet ports - bye\n");
+    }
 
 #if LOG_PXGW_INFO
     printf("socket_count: %u\n", g_num_sockets);

@@ -1,0 +1,1 @@
+core=16 gbps=1128 yield=91% log=/tmp/ae_9a_pxgw_c16_20260521_054921.log

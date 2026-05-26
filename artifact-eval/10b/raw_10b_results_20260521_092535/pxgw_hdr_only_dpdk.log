@@ -1,0 +1,1024 @@
+EAL: Detected 36 lcore(s)
+EAL: Detected 2 NUMA nodes
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'PA'
+EAL: No available hugepages reported in hugepages-2048kB
+EAL: Probing VFIO support...
+EAL: Probe PCI driver: mlx5_pci (15b3:1021) device: 0000:16:00.0 (socket 0)
+EAL: Probe PCI driver: mlx5_pci (15b3:1021) device: 0000:40:00.0 (socket 0)
+EAL: Probe PCI driver: mlx5_pci (15b3:1021) device: 0000:6a:00.0 (socket 0)
+EAL: Probe PCI driver: mlx5_pci (15b3:1021) device: 0000:94:00.0 (socket 1)
+EAL: No legacy callbacks, legacy socket not created
+socket_count: 2
+lcore_count: 8
+device_count: 4
+[port 0] Initializing port... 
+num_rxq: 8, max_rxq: 512, max_lxq_per_rxq: 64
+  gear 0 (num_lxq 2) invalid
+[port 0] Try device memory allocation for payload segmemt
+[port 0] Allocating NIC memory: elt_size: 65024, num: 2097152, buf_len: 3221225472
+mlx5_pci: Allocating NIC memory
+[port 0] Allocated device memory: buf_ptr: 0x1000, buf_len: 258048
+mlx5_pci: mlx5_get_dma_map mapping DM MR addr: 0x00000000 len: 0x00040000
+[port 0] Got DMA map: ptr: 0x1000, iova: (nil), len: 258048
+[port 0] Num of external memory: num_emem: 699051
+PX stat monitor started with interval of 1000000000 ns
+[port 0] px_init finished
+[port 1] Initializing port... 
+num_rxq: 8, max_rxq: 512, max_lxq_per_rxq: 64
+  gear 0 (num_lxq 2) invalid
+[port 1] Try device memory allocation for payload segmemt
+[port 1] Allocating NIC memory: elt_size: 65024, num: 2097152, buf_len: 3221225472
+mlx5_pci: Allocating NIC memory
+[port 1] Allocated device memory: buf_ptr: 0x1000, buf_len: 258048
+mlx5_pci: mlx5_get_dma_map mapping DM MR addr: 0x00000000 len: 0x00040000
+[port 1] Got DMA map: ptr: 0x1000, iova: (nil), len: 258048
+[port 1] Num of external memory: num_emem: 699051
+PX stat monitor started with interval of 1000000000 ns
+[port 1] px_init finished
+[port 2] Initializing port... 
+num_rxq: 8, max_rxq: 512, max_lxq_per_rxq: 64
+  gear 0 (num_lxq 2) invalid
+[port 2] Try device memory allocation for payload segmemt
+[port 2] Allocating NIC memory: elt_size: 65024, num: 2097152, buf_len: 3221225472
+mlx5_pci: Allocating NIC memory
+[port 2] Allocated device memory: buf_ptr: 0x1000, buf_len: 258048
+mlx5_pci: mlx5_get_dma_map mapping DM MR addr: 0x00000000 len: 0x00040000
+[port 2] Got DMA map: ptr: 0x1000, iova: (nil), len: 258048
+[port 2] Num of external memory: num_emem: 699051
+PX stat monitor started with interval of 1000000000 ns
+[port 2] px_init finished
+[port 3] Initializing port... 
+num_rxq: 8, max_rxq: 512, max_lxq_per_rxq: 64
+  gear 0 (num_lxq 2) invalid
+[port 3] Try device memory allocation for payload segmemt
+[port 3] Allocating NIC memory: elt_size: 65024, num: 2097152, buf_len: 3221225472
+mlx5_pci: Allocating NIC memory
+[port 3] Allocated device memory: buf_ptr: 0x1000, buf_len: 258048
+mlx5_pci: mlx5_get_dma_map mapping DM MR addr: 0x00000000 len: 0x00040000
+[port 3] Got DMA map: ptr: 0x1000, iova: (nil), len: 258048
+[port 3] Num of external memory: num_emem: 699051
+PX stat monitor started with interval of 1000000000 ns
+[port 3] px_init finished
+
+Checking link status
+done
+
+Port 0 Link Up - speed 400000 Mbps - full-duplex
+Port 1 Link Up - speed 400000 Mbps - full-duplex
+Port 2 Link Up - speed 400000 Mbps - full-duplex
+Port 3 Link Up - speed 400000 Mbps - full-duplex
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     80 TXpktsize:     0 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 4.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.1 pkts/batch: 0.0 pkts:    28
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     4
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     8
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:    151 TXpktsize:  1500 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.3 pkts/batch: 0.0 pkts:    12
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     4
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     4
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     4
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     4
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     8
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     8
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     4
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:    196 TXpktsize:  1500 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.5 pkts/batch: 0.0 pkts:     8
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+SYN/SYNACK: 80/80
+[ TOTAL ]   31 Gbps   156 Kpps delay:    399 ns yield: 92% RXpktsize:  34850 TXpktsize:  7773 globalIAT: 820854 ns IAT_num:    19 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.6% flows/active_rxq: 0.8 pkts/active_rxq: 1.1 flows/available_rxq: 0.5% pkts/available_rxq: 0.7% segs/pkt: 3.3 pkts/batch: 0.0 pkts: 113365
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 80/80
+[ TOTAL ]   86 Gbps   415 Kpps delay:    402 ns yield: 92% RXpktsize:  35053 TXpktsize:  7764 globalIAT: 212091 ns IAT_num:    41 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 1.7% flows/active_rxq: 0.8 pkts/active_rxq: 1.1 flows/available_rxq: 1.3% pkts/available_rxq: 1.8% segs/pkt: 3.4 pkts/batch: 0.0 pkts: 306793
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 80/80
+[ TOTAL ]   86 Gbps   426 Kpps delay:   4645 ns yield: 93% RXpktsize:  33707 TXpktsize:  7952 globalIAT: 67333 ns IAT_num:    54 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 3.9% flows/active_rxq: 1.0 pkts/active_rxq: 1.1 flows/available_rxq: 3.9% pkts/available_rxq: 4.3% segs/pkt: 3.7 pkts/batch: 0.0 pkts: 319020
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 80/80
+[ TOTAL ]   86 Gbps   429 Kpps delay:   6562 ns yield: 93% RXpktsize:  33174 TXpktsize:  8051 globalIAT: 54286 ns IAT_num:    68 flows/rxq: 0.1 pkts/rxq: 0.1 active_rxq/available: 5.1% flows/active_rxq: 1.0 pkts/active_rxq: 1.1 flows/available_rxq: 5.1% pkts/available_rxq: 5.6% segs/pkt: 3.6 pkts/batch: 0.0 pkts: 324198
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 80/80
+[ TOTAL ]   86 Gbps   438 Kpps delay:   8091 ns yield: 93% RXpktsize:  32190 TXpktsize:  8120 globalIAT: 53287 ns IAT_num:    69 flows/rxq: 0.1 pkts/rxq: 0.1 active_rxq/available: 6.3% flows/active_rxq: 1.0 pkts/active_rxq: 1.1 flows/available_rxq: 6.3% pkts/available_rxq: 6.7% segs/pkt: 3.7 pkts/batch: 0.0 pkts: 334147
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+SYN/SYNACK: 451/451
+[ TOTAL ]  300 Gbps  3013 Kpps delay:   2074 ns yield: 82% RXpktsize:  17943 TXpktsize:  7357 globalIAT: 239965 ns IAT_num:   193 flows/rxq: 0.2 pkts/rxq: 0.2 active_rxq/available: 12.3% flows/active_rxq: 1.3 pkts/active_rxq: 1.7 flows/available_rxq: 15.6% pkts/available_rxq: 20.6% segs/pkt: 5.4 pkts/batch: 0.1 pkts: 2091856
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+SYN/SYNACK: 880/877
+[ TOTAL ]  892 Gbps  9175 Kpps delay:   2390 ns yield: 82% RXpktsize:  18873 TXpktsize:  7449 globalIAT: 128671 ns IAT_num:   361 flows/rxq: 0.7 pkts/rxq: 1.0 active_rxq/available: 40.4% flows/active_rxq: 1.6 pkts/active_rxq: 2.4 flows/available_rxq: 66.1% pkts/available_rxq: 97.8% segs/pkt: 6.7 pkts/batch: 0.5 pkts: 5905324
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 883/880
+[ TOTAL ] 1177 Gbps 11823 Kpps delay:   4209 ns yield: 84% RXpktsize:  20138 TXpktsize:  7638 globalIAT: 65260 ns IAT_num:   535 flows/rxq: 1.4 pkts/rxq: 2.2 active_rxq/available: 70.5% flows/active_rxq: 2.1 pkts/active_rxq: 3.1 flows/available_rxq: 144.7% pkts/available_rxq: 215.2% segs/pkt: 7.5 pkts/batch: 1.1 pkts: 7300469
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 883/880
+[ TOTAL ] 1175 Gbps 11806 Kpps delay:   7873 ns yield: 87% RXpktsize:  20334 TXpktsize:  7839 globalIAT: 59061 ns IAT_num:   586 flows/rxq: 2.0 pkts/rxq: 2.8 active_rxq/available: 79.9% flows/active_rxq: 2.5 pkts/active_rxq: 3.6 flows/available_rxq: 202.5% pkts/available_rxq: 284.1% segs/pkt: 7.7 pkts/batch: 1.2 pkts: 7214522
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 883/880
+[ TOTAL ] 1174 Gbps 11811 Kpps delay:   9164 ns yield: 87% RXpktsize:  20406 TXpktsize:  7890 globalIAT: 53032 ns IAT_num:   655 flows/rxq: 2.2 pkts/rxq: 3.1 active_rxq/available: 82.8% flows/active_rxq: 2.7 pkts/active_rxq: 3.7 flows/available_rxq: 221.5% pkts/available_rxq: 306.3% segs/pkt: 7.7 pkts/batch: 1.2 pkts: 7186094
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+SYN/SYNACK: 883/880
+[ TOTAL ] 1447 Gbps 12177 Kpps delay:  10263 ns yield: 90% RXpktsize:  24841 TXpktsize:  8136 globalIAT: 653965 ns IAT_num:   803 flows/rxq: 2.5 pkts/rxq: 3.5 active_rxq/available: 51.3% flows/active_rxq: 1.2 pkts/active_rxq: 1.7 flows/available_rxq: 61.3% pkts/available_rxq: 86.3% segs/pkt: 3.8 pkts/batch: 1.4 pkts: 7278236
+P0:  32 | P1:  32 | P2:  32 | P3:  32
+SYN/SYNACK: 883/880
+[ TOTAL ] 1479 Gbps 12676 Kpps delay:  10836 ns yield: 90% RXpktsize:  24258 TXpktsize:  8165 globalIAT: 910795 ns IAT_num:  1014 flows/rxq: 2.8 pkts/rxq: 3.9 active_rxq/available: 57.3% flows/active_rxq: 1.2 pkts/active_rxq: 1.7 flows/available_rxq: 69.6% pkts/available_rxq: 97.5% segs/pkt: 3.8 pkts/batch: 1.6 pkts: 7617696
+P0:  32 | P1:  32 | P2:  32 | P3:  32
+SYN/SYNACK: 883/880
+[ TOTAL ] 1479 Gbps 13043 Kpps delay:  11763 ns yield: 91% RXpktsize:  23451 TXpktsize:  8216 globalIAT: 781319 ns IAT_num:  1015 flows/rxq: 3.0 pkts/rxq: 4.2 active_rxq/available: 60.0% flows/active_rxq: 1.2 pkts/active_rxq: 1.7 flows/available_rxq: 74.3% pkts/available_rxq: 104.1% segs/pkt: 3.8 pkts/batch: 1.7 pkts: 7876181
+P0:  32 | P1:  32 | P2:  32 | P3:  32
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+iat_search_entry: rte_hash_lookup_data keeps returning EAGAIN, give up to search
+SYN/SYNACK: 883/880
+[ TOTAL ] 1439 Gbps 11505 Kpps delay:  16209 ns yield: 92% RXpktsize:  27112 TXpktsize:  8331 globalIAT: 1194083 ns IAT_num:  1227 flows/rxq: 3.5 pkts/rxq: 5.4 active_rxq/available: 26.7% flows/active_rxq: 0.8 pkts/active_rxq: 1.3 flows/available_rxq: 21.8% pkts/available_rxq: 33.6% segs/pkt: 3.0 pkts/batch: 2.4 pkts: 6631153
+P0: 128 | P1: 128 | P2: 128 | P3: 128
+SYN/SYNACK: 883/880
+[ TOTAL ] 1473 Gbps 12231 Kpps delay:  16433 ns yield: 92% RXpktsize:  26026 TXpktsize:  8328 globalIAT: 811954 ns IAT_num:  1146 flows/rxq: 4.0 pkts/rxq: 6.1 active_rxq/available: 30.4% flows/active_rxq: 0.8 pkts/active_rxq: 1.3 flows/available_rxq: 24.8% pkts/available_rxq: 38.4% segs/pkt: 2.9 pkts/batch: 2.8 pkts: 7067928
+P0: 128 | P1: 128 | P2: 128 | P3: 128
+SYN/SYNACK: 883/880
+[ TOTAL ] 1473 Gbps 12200 Kpps delay:  16466 ns yield: 92% RXpktsize:  26065 TXpktsize:  8331 globalIAT: 1028326 ns IAT_num:  1313 flows/rxq: 4.0 pkts/rxq: 6.1 active_rxq/available: 30.4% flows/active_rxq: 0.8 pkts/active_rxq: 1.3 flows/available_rxq: 24.7% pkts/available_rxq: 38.3% segs/pkt: 2.9 pkts/batch: 2.8 pkts: 7060438
+P0: 128 | P1: 128 | P2: 128 | P3: 128
+SYN/SYNACK: 883/880
+[ TOTAL ] 1471 Gbps 12279 Kpps delay:  16736 ns yield: 92% RXpktsize:  25807 TXpktsize:  8343 globalIAT: 1027107 ns IAT_num:  1314 flows/rxq: 4.0 pkts/rxq: 6.2 active_rxq/available: 30.7% flows/active_rxq: 0.8 pkts/active_rxq: 1.3 flows/available_rxq: 25.0% pkts/available_rxq: 38.8% segs/pkt: 2.9 pkts/batch: 2.8 pkts: 7119718
+P0: 128 | P1: 128 | P2: 128 | P3: 128
+SYN/SYNACK: 883/880
+[ TOTAL ] 1472 Gbps 12333 Kpps delay:  15505 ns yield: 92% RXpktsize:  25660 TXpktsize:  8333 globalIAT: 882559 ns IAT_num:  1248 flows/rxq: 3.8 pkts/rxq: 6.0 active_rxq/available: 29.6% flows/active_rxq: 0.8 pkts/active_rxq: 1.3 flows/available_rxq: 23.6% pkts/available_rxq: 37.2% segs/pkt: 2.9 pkts/batch: 2.8 pkts: 7167877
+P0: 128 | P1: 128 | P2: 128 | P3: 128
+SYN/SYNACK: 883/880
+[ TOTAL ] 1471 Gbps 12308 Kpps delay:  16396 ns yield: 92% RXpktsize:  25650 TXpktsize:  8350 globalIAT: 828444 ns IAT_num:  1159 flows/rxq: 3.9 pkts/rxq: 6.1 active_rxq/available: 30.3% flows/active_rxq: 0.8 pkts/active_rxq: 1.3 flows/available_rxq: 24.4% pkts/available_rxq: 38.1% segs/pkt: 3.0 pkts/batch: 2.9 pkts: 7162421
+P0: 128 | P1: 128 | P2: 128 | P3: 128
+SYN/SYNACK: 883/880
+[ TOTAL ] 1433 Gbps 11989 Kpps delay:  16260 ns yield: 92% RXpktsize:  25626 TXpktsize:  8354 globalIAT: 762586 ns IAT_num:  1000 flows/rxq: 3.7 pkts/rxq: 5.8 active_rxq/available: 28.7% flows/active_rxq: 0.8 pkts/active_rxq: 1.3 flows/available_rxq: 23.2% pkts/available_rxq: 36.1% segs/pkt: 2.9 pkts/batch: 2.7 pkts: 6983734
+P0: 128 | P1: 128 | P2: 128 | P3: 128
+SYN/SYNACK: 883/880
+[ TOTAL ]   94 Gbps   425 Kpps delay:  10913 ns yield: 95% RXpktsize:  38810 TXpktsize:  8465 globalIAT: 561000 ns IAT_num:   846 flows/rxq: 0.1 pkts/rxq: 0.1 active_rxq/available: 0.8% flows/active_rxq: 0.8 pkts/active_rxq: 1.0 flows/available_rxq: 0.6% pkts/available_rxq: 0.8% segs/pkt: 3.2 pkts/batch: 0.1 pkts: 304554
+P0: 128 | P1: 128 | P2: 128 | P3: 128
+SYN/SYNACK: 883/880
+[ TOTAL ]   86 Gbps   410 Kpps delay:   9532 ns yield: 94% RXpktsize:  35215 TXpktsize:  8389 globalIAT: 940003 ns IAT_num:   892 flows/rxq: 0.1 pkts/rxq: 0.1 active_rxq/available: 2.1% flows/active_rxq: 0.9 pkts/active_rxq: 1.0 flows/available_rxq: 1.8% pkts/available_rxq: 2.1% segs/pkt: 3.2 pkts/batch: 0.0 pkts: 305395
+P0:  32 | P1:  32 | P2:  32 | P3:  32
+SYN/SYNACK: 883/880
+[ TOTAL ]   86 Gbps   417 Kpps delay:   8705 ns yield: 94% RXpktsize:  34478 TXpktsize:  8349 globalIAT: 1013098 ns IAT_num:   809 flows/rxq: 0.1 pkts/rxq: 0.1 active_rxq/available: 1.9% flows/active_rxq: 0.9 pkts/active_rxq: 1.0 flows/available_rxq: 1.7% pkts/available_rxq: 1.9% segs/pkt: 3.1 pkts/batch: 0.0 pkts: 311900
+P0:  32 | P1:  32 | P2:  32 | P3:  32
+SYN/SYNACK: 883/880
+[ TOTAL ]   86 Gbps   421 Kpps delay:   8863 ns yield: 94% RXpktsize:  34200 TXpktsize:  8335 globalIAT: 1125558 ns IAT_num:   728 flows/rxq: 0.1 pkts/rxq: 0.1 active_rxq/available: 2.0% flows/active_rxq: 0.9 pkts/active_rxq: 1.0 flows/available_rxq: 1.8% pkts/available_rxq: 2.0% segs/pkt: 3.1 pkts/batch: 0.0 pkts: 314427
+P0:  32 | P1:  32 | P2:  32 | P3:  32
+SYN/SYNACK: 883/880
+[ TOTAL ]   86 Gbps   441 Kpps delay:   8208 ns yield: 94% RXpktsize:  32258 TXpktsize:  8331 globalIAT: 1223967 ns IAT_num:   669 flows/rxq: 0.1 pkts/rxq: 0.1 active_rxq/available: 6.3% flows/active_rxq: 1.0 pkts/active_rxq: 1.1 flows/available_rxq: 6.1% pkts/available_rxq: 6.7% segs/pkt: 4.0 pkts/batch: 0.0 pkts: 333425
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 883/880
+[ TOTAL ]   86 Gbps   441 Kpps delay:   7347 ns yield: 94% RXpktsize:  32243 TXpktsize:  8324 globalIAT: 955482 ns IAT_num:   540 flows/rxq: 0.1 pkts/rxq: 0.1 active_rxq/available: 5.6% flows/active_rxq: 1.0 pkts/active_rxq: 1.1 flows/available_rxq: 5.4% pkts/available_rxq: 5.9% segs/pkt: 3.9 pkts/batch: 0.0 pkts: 333616
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 883/880
+[ TOTAL ]   24 Gbps   123 Kpps delay:   7450 ns yield: 94% RXpktsize:  32438 TXpktsize:  8317 globalIAT: 971797 ns IAT_num:   531 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 1.5% flows/active_rxq: 1.0 pkts/active_rxq: 1.1 flows/available_rxq: 1.5% pkts/available_rxq: 1.6% segs/pkt: 3.9 pkts/batch: 0.0 pkts: 93011
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 883/880
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT: 1070439 ns IAT_num:   482 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     8
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 883/880
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT: 527985 ns IAT_num:   286 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     4
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 883/880
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT: 672899 ns IAT_num:   224 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     4
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 883/880
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT:  6615 ns IAT_num:    87 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     4
+P0:   8 | P1:   8 | P2:   8 | P3:   8

@@ -1,0 +1,220 @@
+EAL: Detected 36 lcore(s)
+EAL: Detected 2 NUMA nodes
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'PA'
+EAL: No free hugepages reported in hugepages-2048kB
+EAL: Probing VFIO support...
+EAL: Probe PCI driver: mlx5_pci (15b3:1021) device: 0000:16:00.0 (socket 0)
+EAL: Probe PCI driver: mlx5_pci (15b3:1021) device: 0000:40:00.0 (socket 0)
+EAL: Probe PCI driver: mlx5_pci (15b3:1021) device: 0000:6a:00.0 (socket 0)
+EAL: Probe PCI driver: mlx5_pci (15b3:1021) device: 0000:94:00.0 (socket 1)
+EAL: No legacy callbacks, legacy socket not created
+socket_count: 2
+lcore_count: 8
+device_count: 4
+[port 0] Initializing port... 
+num_rxq: 8, max_rxq: 512, max_lxq_per_rxq: 64
+  gear 0 (num_lxq 2) invalid
+[port 0] Try device memory allocation for payload segmemt
+[port 0] Allocating NIC memory: elt_size: 65024, num: 2097152, buf_len: 3221225472
+mlx5_pci: Allocating NIC memory
+[port 0] Allocated device memory: buf_ptr: 0x1000, buf_len: 258048
+mlx5_pci: mlx5_get_dma_map mapping DM MR addr: 0x00000000 len: 0x00040000
+[port 0] Got DMA map: ptr: 0x1000, iova: (nil), len: 258048
+[port 0] Num of external memory: num_emem: 699051
+IAT init: port=0 queue=0 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=0 queue=1 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=0 queue=2 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=0 queue=3 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=0 queue=4 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=0 queue=5 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=0 queue=6 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=0 queue=7 num_entry=1048576 key_len=12 entry_size=72 socket=0
+PX stat monitor started with interval of 1000000000 ns
+[port 0] px_init finished
+[port 1] Initializing port... 
+num_rxq: 8, max_rxq: 512, max_lxq_per_rxq: 64
+  gear 0 (num_lxq 2) invalid
+[port 1] Try device memory allocation for payload segmemt
+[port 1] Allocating NIC memory: elt_size: 65024, num: 2097152, buf_len: 3221225472
+mlx5_pci: Allocating NIC memory
+[port 1] Allocated device memory: buf_ptr: 0x1000, buf_len: 258048
+mlx5_pci: mlx5_get_dma_map mapping DM MR addr: 0x00000000 len: 0x00040000
+[port 1] Got DMA map: ptr: 0x1000, iova: (nil), len: 258048
+[port 1] Num of external memory: num_emem: 699051
+IAT init: port=1 queue=0 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=1 queue=1 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=1 queue=2 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=1 queue=3 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=1 queue=4 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=1 queue=5 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=1 queue=6 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=1 queue=7 num_entry=1048576 key_len=12 entry_size=72 socket=0
+PX stat monitor started with interval of 1000000000 ns
+[port 1] px_init finished
+[port 2] Initializing port... 
+num_rxq: 8, max_rxq: 512, max_lxq_per_rxq: 64
+  gear 0 (num_lxq 2) invalid
+[port 2] Try device memory allocation for payload segmemt
+[port 2] Allocating NIC memory: elt_size: 65024, num: 2097152, buf_len: 3221225472
+mlx5_pci: Allocating NIC memory
+[port 2] Allocated device memory: buf_ptr: 0x1000, buf_len: 258048
+mlx5_pci: mlx5_get_dma_map mapping DM MR addr: 0x00000000 len: 0x00040000
+[port 2] Got DMA map: ptr: 0x1000, iova: (nil), len: 258048
+[port 2] Num of external memory: num_emem: 699051
+IAT init: port=2 queue=0 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=2 queue=1 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=2 queue=2 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=2 queue=3 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=2 queue=4 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=2 queue=5 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=2 queue=6 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=2 queue=7 num_entry=1048576 key_len=12 entry_size=72 socket=0
+PX stat monitor started with interval of 1000000000 ns
+[port 2] px_init finished
+[port 3] Initializing port... 
+num_rxq: 8, max_rxq: 512, max_lxq_per_rxq: 64
+  gear 0 (num_lxq 2) invalid
+[port 3] Try device memory allocation for payload segmemt
+[port 3] Allocating NIC memory: elt_size: 65024, num: 2097152, buf_len: 3221225472
+mlx5_pci: Allocating NIC memory
+[port 3] Allocated device memory: buf_ptr: 0x1000, buf_len: 258048
+mlx5_pci: mlx5_get_dma_map mapping DM MR addr: 0x00000000 len: 0x00040000
+[port 3] Got DMA map: ptr: 0x1000, iova: (nil), len: 258048
+[port 3] Num of external memory: num_emem: 699051
+IAT init: port=3 queue=0 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=3 queue=1 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=3 queue=2 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=3 queue=3 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=3 queue=4 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=3 queue=5 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=3 queue=6 num_entry=1048576 key_len=12 entry_size=72 socket=0
+IAT init: port=3 queue=7 num_entry=1048576 key_len=12 entry_size=72 socket=0
+PX stat monitor started with interval of 1000000000 ns
+[port 3] px_init finished
+
+Checking link status
+done
+
+Port 0 Link Up - speed 400000 Mbps - full-duplex
+Port 1 Link Up - speed 400000 Mbps - full-duplex
+Port 2 Link Up - speed 400000 Mbps - full-duplex
+Port 3 Link Up - speed 400000 Mbps - full-duplex
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     80 TXpktsize:  1500 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.2 pkts/active_rxq: 2.5 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.3 pkts/batch: 0.0 pkts:    37
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     4
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     4
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     4
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     4
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     8
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     86 TXpktsize:     0 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.3 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.3 pkts/batch: 0.0 pkts:    12
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:      0 TXpktsize:     0 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 0.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 0.0 pkts/batch: 0.0 pkts:     0
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     4
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     4
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     4
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     8
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 0/0
+[ TOTAL ]    0 Gbps     0 Kpps delay:      0 ns yield:  0% RXpktsize:     60 TXpktsize:     0 globalIAT:     0 ns IAT_num:     0 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.0 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.0 pkts/batch: 0.0 pkts:     8
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 557/552
+[ TOTAL ]  346 Gbps  3604 Kpps delay:    787 ns yield: 80% RXpktsize:  17729 TXpktsize:  7280 globalIAT: 24704 ns IAT_num:    27 flows/rxq: 0.1 pkts/rxq: 0.2 active_rxq/available: 8.7% flows/active_rxq: 1.4 pkts/active_rxq: 2.1 flows/available_rxq: 12.1% pkts/available_rxq: 18.6% segs/pkt: 5.9 pkts/batch: 0.1 pkts: 2439187
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 800/793
+[ TOTAL ] 1162 Gbps 11104 Kpps delay:   1324 ns yield: 83% RXpktsize:  20772 TXpktsize:  7529 globalIAT: 84527 ns IAT_num:   188 flows/rxq: 0.8 pkts/rxq: 1.4 active_rxq/available: 52.8% flows/active_rxq: 1.6 pkts/active_rxq: 2.6 flows/available_rxq: 83.6% pkts/available_rxq: 136.8% segs/pkt: 7.2 pkts/batch: 0.8 pkts: 6985959
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 806/799
+[ TOTAL ] 1178 Gbps 11200 Kpps delay:   5277 ns yield: 85% RXpktsize:  21245 TXpktsize:  7719 globalIAT:  8336 ns IAT_num:   345 flows/rxq: 1.5 pkts/rxq: 2.2 active_rxq/available: 68.6% flows/active_rxq: 2.2 pkts/active_rxq: 3.2 flows/available_rxq: 151.8% pkts/available_rxq: 218.5% segs/pkt: 7.5 pkts/batch: 1.0 pkts: 6926238
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 806/800
+[ TOTAL ] 1174 Gbps 11258 Kpps delay:   7929 ns yield: 87% RXpktsize:  21213 TXpktsize:  7876 globalIAT:  6596 ns IAT_num:   393 flows/rxq: 1.9 pkts/rxq: 2.6 active_rxq/available: 75.2% flows/active_rxq: 2.5 pkts/active_rxq: 3.5 flows/available_rxq: 186.0% pkts/available_rxq: 260.1% segs/pkt: 7.7 pkts/batch: 1.1 pkts: 6912006
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 806/800
+[ TOTAL ] 1173 Gbps 11266 Kpps delay:   9649 ns yield: 88% RXpktsize:  21266 TXpktsize:  7973 globalIAT:  5988 ns IAT_num:   554 flows/rxq: 2.1 pkts/rxq: 2.9 active_rxq/available: 79.8% flows/active_rxq: 2.7 pkts/active_rxq: 3.7 flows/available_rxq: 213.1% pkts/available_rxq: 292.3% segs/pkt: 7.7 pkts/batch: 1.1 pkts: 6891762
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 806/800
+[ TOTAL ] 1171 Gbps 11318 Kpps delay:  11382 ns yield: 89% RXpktsize:  21179 TXpktsize:  8066 globalIAT:  6390 ns IAT_num:   579 flows/rxq: 2.4 pkts/rxq: 3.2 active_rxq/available: 83.3% flows/active_rxq: 2.9 pkts/active_rxq: 3.9 flows/available_rxq: 238.8% pkts/available_rxq: 323.2% segs/pkt: 7.8 pkts/batch: 1.2 pkts: 6904281
+P0:   8 | P1:   8 | P2:   8 | P3:   8
+SYN/SYNACK: 806/800
+[ TOTAL ]  448 Gbps 120711 Kpps delay:   2158 ns yield: 96% RXpktsize:    442 TXpktsize:  8634 globalIAT: 1280329 ns IAT_num:   858 flows/rxq: 0.4 pkts/rxq: 7.9 active_rxq/available: 28.6% flows/active_rxq: 0.3 pkts/active_rxq: 6.9 flows/available_rxq: 9.5% pkts/available_rxq: 197.2% segs/pkt: 1.0 pkts/batch: 46.6 pkts: 120174609
+P0:  32 | P1:  32 | P2:  32 | P3:  32
+SYN/SYNACK: 806/800
+[ TOTAL ]  403 Gbps 132529 Kpps delay:   2086 ns yield: 98% RXpktsize:    357 TXpktsize:  8761 globalIAT: 1001381 ns IAT_num:   775 flows/rxq: 0.1 pkts/rxq: 9.9 active_rxq/available: 31.5% flows/active_rxq: 0.1 pkts/active_rxq: 7.8 flows/available_rxq: 3.5% pkts/available_rxq: 247.0% segs/pkt: 1.0 pkts/batch: 63.9 pkts: 132223642
+P0:  32 | P1:  32 | P2:  32 | P3:  32
+SYN/SYNACK: 806/800
+[ TOTAL ]  431 Gbps 132333 Kpps delay:   2085 ns yield: 98% RXpktsize:    384 TXpktsize:  8768 globalIAT: 1393549 ns IAT_num:  1048 flows/rxq: 0.1 pkts/rxq: 9.6 active_rxq/available: 31.3% flows/active_rxq: 0.1 pkts/active_rxq: 7.7 flows/available_rxq: 3.4% pkts/available_rxq: 239.5% segs/pkt: 1.0 pkts/batch: 63.8 pkts: 132014095
+P0:  32 | P1:  32 | P2:  32 | P3:  32
+SYN/SYNACK: 806/800
+[ TOTAL ]  188 Gbps 120095 Kpps delay:   1943 ns yield: 98% RXpktsize:    172 TXpktsize:  8829 globalIAT: 1591277 ns IAT_num:  1075 flows/rxq: 0.0 pkts/rxq: 6.8 active_rxq/available: 7.0% flows/active_rxq: 0.0 pkts/active_rxq: 6.0 flows/available_rxq: 0.2% pkts/available_rxq: 42.3% segs/pkt: 1.0 pkts/batch: 58.8 pkts: 120010961
+P0: 128 | P1: 128 | P2: 128 | P3: 128
+SYN/SYNACK: 806/800
+[ TOTAL ]   89 Gbps 124265 Kpps delay:   1912 ns yield: 90% RXpktsize:     66 TXpktsize:  7581 globalIAT: 1648365 ns IAT_num:  1057 flows/rxq: 0.0 pkts/rxq: 0.2 active_rxq/available: 6.3% flows/active_rxq: 0.0 pkts/active_rxq: 0.2 flows/available_rxq: 0.0% pkts/available_rxq: 1.1% segs/pkt: 1.0 pkts/batch: 64.0 pkts: 124256600
+P0: 128 | P1: 128 | P2: 128 | P3: 128
+SYN/SYNACK: 806/800
+[ TOTAL ]   87 Gbps 123115 Kpps delay:   1938 ns yield: 81% RXpktsize:     64 TXpktsize:  6609 globalIAT: 1868835 ns IAT_num:  1040 flows/rxq: 0.0 pkts/rxq: 0.2 active_rxq/available: 6.3% flows/active_rxq: 0.0 pkts/active_rxq: 0.2 flows/available_rxq: 0.0% pkts/available_rxq: 1.1% segs/pkt: 1.0 pkts/batch: 64.0 pkts: 123108015
+P0: 128 | P1: 128 | P2: 128 | P3: 128
+SYN/SYNACK: 806/800
+[ TOTAL ]  342 Gbps 132807 Kpps delay:   2074 ns yield: 98% RXpktsize:    299 TXpktsize:  8786 globalIAT: 1928356 ns IAT_num:  1021 flows/rxq: 0.1 pkts/rxq: 7.0 active_rxq/available: 29.6% flows/active_rxq: 0.1 pkts/active_rxq: 5.9 flows/available_rxq: 2.2% pkts/available_rxq: 174.0% segs/pkt: 1.0 pkts/batch: 63.9 pkts: 132600783
+P0:  32 | P1:  32 | P2:  32 | P3:  32
+SYN/SYNACK: 806/800
+[ TOTAL ]  479 Gbps 134779 Kpps delay:   1996 ns yield: 97% RXpktsize:    421 TXpktsize:  8750 globalIAT: 2122151 ns IAT_num:   938 flows/rxq: 0.2 pkts/rxq: 12.1 active_rxq/available: 33.1% flows/active_rxq: 0.1 pkts/active_rxq: 9.2 flows/available_rxq: 4.0% pkts/available_rxq: 303.5% segs/pkt: 1.0 pkts/batch: 63.8 pkts: 134398696
+P0:  32 | P1:  32 | P2:  32 | P3:  32
+SYN/SYNACK: 806/800
+[ TOTAL ]  552 Gbps 133429 Kpps delay:   2003 ns yield: 98% RXpktsize:    495 TXpktsize:  8773 globalIAT: 2208975 ns IAT_num:   716 flows/rxq: 0.2 pkts/rxq: 13.7 active_rxq/available: 34.2% flows/active_rxq: 0.1 pkts/active_rxq: 10.0 flows/available_rxq: 4.3% pkts/available_rxq: 343.2% segs/pkt: 1.0 pkts/batch: 63.8 pkts: 133015271
+P0:  32 | P1:  32 | P2:  32 | P3:  32
+SYN/SYNACK: 806/800
+[ TOTAL ]  183 Gbps 115757 Kpps delay:   2045 ns yield: 99% RXpktsize:    174 TXpktsize:  8864 globalIAT: 2534338 ns IAT_num:   566 flows/rxq: 0.0 pkts/rxq: 6.6 active_rxq/available: 7.0% flows/active_rxq: 0.0 pkts/active_rxq: 6.0 flows/available_rxq: 0.2% pkts/available_rxq: 41.5% segs/pkt: 1.0 pkts/batch: 58.7 pkts: 115689137
+P0: 128 | P1: 128 | P2: 128 | P3: 128
+SYN/SYNACK: 806/800
+[ TOTAL ]   85 Gbps 120884 Kpps delay:   1985 ns yield: 87% RXpktsize:     64 TXpktsize:  7219 globalIAT: 2418290 ns IAT_num:   500 flows/rxq: 0.0 pkts/rxq: 0.1 active_rxq/available: 6.3% flows/active_rxq: 0.0 pkts/active_rxq: 0.1 flows/available_rxq: 0.0% pkts/available_rxq: 0.6% segs/pkt: 1.0 pkts/batch: 64.0 pkts: 120879684
+P0: 128 | P1: 128 | P2: 128 | P3: 128
+SYN/SYNACK: 806/800
+[ TOTAL ]   85 Gbps 120493 Kpps delay:   1999 ns yield: 75% RXpktsize:     64 TXpktsize:  6017 globalIAT: 2334455 ns IAT_num:   480 flows/rxq: 0.0 pkts/rxq: 0.1 active_rxq/available: 6.3% flows/active_rxq: 0.0 pkts/active_rxq: 0.1 flows/available_rxq: 0.0% pkts/available_rxq: 0.5% segs/pkt: 1.0 pkts/batch: 64.0 pkts: 120490204
+P0: 128 | P1: 128 | P2: 128 | P3: 128
+SYN/SYNACK: 806/800
+[ TOTAL ]  330 Gbps 133758 Kpps delay:   2067 ns yield: 98% RXpktsize:    285 TXpktsize:  8846 globalIAT: 2346770 ns IAT_num:   442 flows/rxq: 0.1 pkts/rxq: 6.3 active_rxq/available: 29.3% flows/active_rxq: 0.0 pkts/active_rxq: 5.4 flows/available_rxq: 1.3% pkts/available_rxq: 158.6% segs/pkt: 1.0 pkts/batch: 63.9 pkts: 133630700
+P0:  32 | P1:  32 | P2:  32 | P3:  32
+SYN/SYNACK: 806/800
+[ TOTAL ]  520 Gbps 135098 Kpps delay:   1993 ns yield: 98% RXpktsize:    458 TXpktsize:  8816 globalIAT: 2373950 ns IAT_num:   378 flows/rxq: 0.1 pkts/rxq: 11.6 active_rxq/available: 32.9% flows/active_rxq: 0.1 pkts/active_rxq: 8.8 flows/available_rxq: 3.1% pkts/available_rxq: 288.9% segs/pkt: 1.0 pkts/batch: 63.9 pkts: 134803336
+P0:  32 | P1:  32 | P2:  32 | P3:  32
+SYN/SYNACK: 806/800
+[ TOTAL ]  251 Gbps 71718 Kpps delay:   2002 ns yield: 98% RXpktsize:    414 TXpktsize:  8812 globalIAT: 2248578 ns IAT_num:   382 flows/rxq: 0.0 pkts/rxq: 1.8 active_rxq/available: 5.0% flows/active_rxq: 0.1 pkts/active_rxq: 8.8 flows/available_rxq: 0.4% pkts/available_rxq: 44.0% segs/pkt: 1.0 pkts/batch: 9.7 pkts: 71562326
+P0:  32 | P1:  32 | P2:  32 | P3:  32
+SYN/SYNACK: 806/800
+[ TOTAL ]    0 Gbps     0 Kpps delay:  10465 ns yield:  0% RXpktsize:   1263 TXpktsize:  1500 globalIAT: 2132723 ns IAT_num:   278 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.8 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.9 pkts/batch: 0.0 pkts:    45
+P0:  32 | P1:  32 | P2:  32 | P3:  32
+SYN/SYNACK: 806/800
+[ TOTAL ]    0 Gbps     0 Kpps delay:  30183 ns yield:  0% RXpktsize:   1126 TXpktsize:  1500 globalIAT: 2634964 ns IAT_num:   236 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.9 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.7 pkts/batch: 0.0 pkts:    30
+P0:  32 | P1:  32 | P2:  32 | P3:  32
+SYN/SYNACK: 806/800
+[ TOTAL ]    0 Gbps     0 Kpps delay:  14327 ns yield:  0% RXpktsize:   1008 TXpktsize:  1500 globalIAT: 2539430 ns IAT_num:   227 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.8 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.7 pkts/batch: 0.0 pkts:    23
+P0:  32 | P1:  32 | P2:  32 | P3:  32
+SYN/SYNACK: 806/800
+[ TOTAL ]    0 Gbps     0 Kpps delay:  33009 ns yield:  0% RXpktsize:    787 TXpktsize:  1500 globalIAT: 3128478 ns IAT_num:   175 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.9 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.5 pkts/batch: 0.0 pkts:     8
+P0:  32 | P1:  32 | P2:  32 | P3:  32
+SYN/SYNACK: 806/800
+[ TOTAL ]    0 Gbps     0 Kpps delay:   6181 ns yield:  0% RXpktsize:    985 TXpktsize:  1500 globalIAT: 2904443 ns IAT_num:   168 flows/rxq: 0.0 pkts/rxq: 0.0 active_rxq/available: 0.0% flows/active_rxq: 0.6 pkts/active_rxq: 1.0 flows/available_rxq: 0.0% pkts/available_rxq: 0.0% segs/pkt: 1.6 pkts/batch: 0.0 pkts:    11
+P0:  32 | P1:  32 | P2:  32 | P3:  32

@@ -797,6 +797,10 @@ int px_hairpin_start(uint16_t port_id)
 {
     struct px_hairpin_ctx *hp_ctx = &g_hp_ctx[port_id];
     int ret;
+    if (!hp_ctx->hp_policy)
+    {
+        return 0;
+    }
 
     if (hp_ctx->hairpin_initialized)
     {

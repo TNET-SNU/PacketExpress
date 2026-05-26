@@ -341,6 +341,12 @@ int mss_init_ctx(uint16_t port_id,
         return -1;
     }
 
+    /* set at least larger than RTE_MEMPOOL_CACHE_MAX_SIZE */
+    if (num_entry <= RTE_MEMPOOL_CACHE_MAX_SIZE)
+    {
+        num_entry = RTE_MEMPOOL_CACHE_MAX_SIZE * 2;
+    }
+
     /* Initialize the mempool for flow_mss_entry structs */
     snprintf(name, sizeof(name), "emss-mempool-%d-%d", port_id, queue_id);
     ctx->pool = rte_mempool_create(name,
@@ -466,10 +472,10 @@ get_reverse_queue(uint16_t port_id, uint32_t reverse_rss)
     inner_qid = reverse_rss % px_dev->max_rxq;
     outer_qid = inner_qid / px_dev->max_lxq_per_rxq;
 
-    printf("inner_qid=%u, outer_qid=%u. "
-           "px_dev->num_rxq=%u, px_dev->num_lxq_per_rxq=%u\n",
-           inner_qid, outer_qid,
-           px_dev->num_rxq, px_dev->num_lxq_per_rxq);
+    // printf("inner_qid=%u, outer_qid=%u. "
+    //        "px_dev->num_rxq=%u, px_dev->num_lxq_per_rxq=%u\n",
+    //        inner_qid, outer_qid,
+    //        px_dev->num_rxq, px_dev->num_lxq_per_rxq);
 
     return outer_qid;
 }
@@ -583,35 +589,33 @@ int mss_insert_entry(uint16_t port_id,
     }
 
     /* check collision first */
-    if (rte_hash_lookup_data(ctx->tbl, key, (void **)&entry) >= 0)
+    int ret = rte_hash_lookup_data(ctx->tbl, key, (void **)&entry);
+    if (ret >= 0)
     {
-        /* remove the entry from the hash table */
-        if (rte_hash_del_key(ctx->tbl, key) < 0)
+        ret = rte_hash_del_key(ctx->tbl, key);
+        if (ret < 0)
         {
-            fprintf(stderr, "Unable to delete existing flow from hash table\n");
+            fprintf(stderr, "rte_hash_del_key failed: ret=%d (%s)\n",
+                    ret, strerror(-ret));
             return -1;
         }
 
-        /* free the entry back to the mempool */
         rte_mempool_put(ctx->pool, entry);
-
-        /* delete from bloom filter */
         bloom_filter_delete(ctx->bf, &ctx->epoch, ctx->bf_size, key);
     }
-    else
+    else if (ret != -ENOENT)
     {
-        if (errno && errno != ENOENT)
-        {
-            fprintf(stderr, "rte_hash_lookup_data failed: %s (%d)\n",
-                    strerror(errno), errno);
-            return -1;
-        }
+        fprintf(stderr, "rte_hash_lookup_data failed: ret=%d (%s)\n",
+                ret, strerror(-ret));
+        return -1;
     }
 
     /* allocate a new entry from the mempool */
     if (rte_mempool_get(ctx->pool, (void **)&entry) < 0)
     {
-        fprintf(stderr, "Unable to allocate memory for MSS entry\n");
+        fprintf(stderr, "mss_insert_entry: rte_mempool_get "
+                        "Unable to allocate memory for MSS entry, %s (%d)\n",
+                strerror(errno), errno);
         return -1;
     }
     // memset(entry, 0, sizeof(struct flow_mss_entry));
@@ -623,7 +627,9 @@ int mss_insert_entry(uint16_t port_id,
     /* insert into the hash table */
     if (rte_hash_add_key_data(ctx->tbl, key, entry) < 0)
     {
-        fprintf(stderr, "Unable to add flow to hash table\n");
+        fprintf(stderr, "mss_insert_entry: rte_hash_add_key_data "
+                        "Unable to add flow to hash table, %s (%d)\n",
+                strerror(errno), errno);
         rte_mempool_put(ctx->pool, entry);
         return -1;
     }
