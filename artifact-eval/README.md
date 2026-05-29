@@ -13,12 +13,12 @@ Note that there are four common scripts for hardware error. Our environment is n
 
 
 # Estimated times
-1. 9a: 20 minutes
-2. 9b: 15 minutes
-3. 9c: 20 minutes
-4. 10a: 15 minutes
+1. 9a: 30 minutes
+2. 9b: 25 minutes
+3. 9c: 30 minutes
+4. 10a: 20 minutes
 5. 10b: 5 minutes
-6. 10c: 20 minutes
-7. 11: 40 minutes
+6. 10c: 30 minutes
+7. 11: 45 minutes
 8. 12: 20 minutes
-9. 13: 20 minutes
+9. 13: 30 minutes

@@ -1468,6 +1468,7 @@ parse_dtb(struct rte_mbuf *pkt,
 
     next_hop_mtu_ptr = get_icmp_next_hop_mtu(pkt);
     *next_hop_mtu = rte_be_to_cpu_16(*next_hop_mtu_ptr);
+    /* if there is no next hot MTU field, fallback to default eMTU */
     if (*next_hop_mtu == 0)
     {
         *next_hop_mtu = FALLBACK_eMTU;
@@ -1619,7 +1620,7 @@ px_parse_packet(struct px_ctx *pctx,
 {
     struct px_dev *px_dev = &g_px_dev[pctx->port_id];
     struct rte_ipv4_hdr *ipv4_hdr;
-    struct four_tuple *key;
+    struct four_tuple *key = NULL;
     uint32_t real_pkt_len;
     uint16_t next_hop_mtu;
     int ret;
@@ -1889,20 +1890,23 @@ Skip_log_rx_hw_timestamp:
         if (is_dtb(pkt))
         {
             parse_dtb(pkt, &next_hop_mtu, &key);
-            fprintf(stderr, "[DTB] Next-Hop MTU: %u\n", next_hop_mtu);
-
-            /* update the MSS entry */
-            if (mss_update_reverse(pkt->port,
-                                   key,
-                                   next_hop_mtu,
-                                   pctx->now_ns) < 0)
+            if (key)
             {
-                rte_exit(EXIT_FAILURE,
-                         "mss_update_reverse: MSS table is not initialized\n");
-            }
+                fprintf(stderr, "[DTB] Next-Hop MTU: %u\n", next_hop_mtu);
 
-            /* update next hop MTU field */
-            update_dtb(pkt, pctx->imtu_size);
+                /* update the MSS entry */
+                if (mss_update_reverse(pkt->port,
+                                       key,
+                                       next_hop_mtu,
+                                       pctx->now_ns) < 0)
+                {
+                    rte_exit(EXIT_FAILURE,
+                             "mss_update_reverse: MSS table is not initialized\n");
+                }
+
+                /* update next hop MTU field */
+                update_dtb(pkt, pctx->imtu_size);
+            }
         }
 
         return -1;
@@ -2039,10 +2043,15 @@ void px_setup_tso_burst(uint16_t port_id,
     for (i = 0; i < nb_pkts; i++)
     {
         pkt = pkts[i];
+        setup_ipv4_tx_cksum(pkt);
 
         /* process only TCP */
         if (!is_tcp(pkt))
         {
+            if (is_udp(pkt))
+            {
+                setup_udp_tx_cksum(pkt);
+            }
             continue;
         }
         pkt->l4_len = (*get_tcp_doff(pkt) >> 4) << 2;
@@ -2067,10 +2076,22 @@ void px_setup_tso_burst(uint16_t port_id,
         {
             unset_tso(pkt);
         }
-        // printf("pkt_len: %d, l2_len: %d, l3_len: %d, l4_len: %d, tso_segsz: %d, "
-        //        "data_len: %d, segsz: %d, nb_segs: %d\n",
-        //        pkt->pkt_len, pkt->l2_len, pkt->l3_len, pkt->l4_len, pkt->tso_segsz,
-        //        get_data_len(pkt), segsz, pkt->nb_segs);
+        setup_tcp_tx_cksum(pkt);
+        // fprintf(stderr,
+        //         "[mbuf] nb_segs: %u, pkt_len: %u, "
+        //         "data_len: %u, l2_len: %u, l3_len: %u, l4_len: %u, "
+        //         "ol_flags: %lu, ip-csum: %d, tcp-csum: %d, is-tso: %d, tso_segsz: %u\n",
+        //         pkt->nb_segs,
+        //         pkt->pkt_len,
+        //         pkt->data_len,
+        //         pkt->l2_len,
+        //         pkt->l3_len,
+        //         pkt->l4_len,
+        //         pkt->ol_flags,
+        //         pkt->ol_flags & PKT_TX_IP_CKSUM,
+        //         pkt->ol_flags & PKT_TX_TCP_CKSUM,
+        //         pkt->ol_flags & PKT_TX_TCP_SEG,
+        //         pkt->tso_segsz);
     }
 }
 /*----------------------------------------------------------------------------*/
@@ -2080,7 +2101,7 @@ link_and_flush(struct px_ctx *pctx,
                uint16_t nb_pkts)
 {
     struct rte_mempool *pool = g_clone_pool[pctx->socket_id];
-    struct rte_mbuf *start_pkt, *prev_pkt, *cur_pkt, *edge;
+    struct rte_mbuf *start_pkt = NULL, *prev_pkt = NULL, *cur_pkt, *edge;
     struct px_flow *cur_flow;
     struct px_item *cur_item;
     struct flow_iat_entry *iat_entry;
@@ -2821,7 +2842,7 @@ link_and_flush(struct px_ctx *pctx,
             if (pctx->do_link)
             {
                 /* if link is on */
-                if (start_pkt)
+                if (start_pkt && prev_pkt)
                 {
                     /* link this item after the prev item */
                     link_packet(start_pkt, prev_pkt, cur_pkt);
@@ -4103,8 +4124,11 @@ px_eth_rx_burst(uint16_t port_id,
         px_stat_print(STAT_MONITOR_CORE_ID);
     }
 
-    /* update IAT table and CMS */
-    iat_periodic_update(port_id, queue_id);
+    /* if delayed merging is on, update IAT table */
+    if (px_dev->cutoff_ns > 0)
+    {
+        iat_periodic_update(port_id, queue_id);
+    }
 
     /* check gear has been shifted */
     if (px_latent_gear_check_notify(port_id))
@@ -4181,6 +4205,7 @@ px_eth_tx_burst0(uint16_t port_id,
     // {
     //     px_flow_create_burst(port_id, queue_id, tx_pkts, nb_pkts);
     // }
+    RTE_SET_USED(px_dev);
 
     /* stage 1: enqueue packets from app to PX TX ring */
     if (pctx->do_link)
@@ -4260,6 +4285,7 @@ px_eth_tx_burst(uint16_t port_id,
     // {
     //     px_flow_create_burst(port_id, queue_id, tx_pkts, nb_pkts);
     // }
+    RTE_SET_USED(px_dev);
 
     /* stage 1: TX packets from app */
     if (pctx->do_link)
@@ -4306,17 +4332,22 @@ px_eth_tx_burst(uint16_t port_id,
                 port_id, queue_id,
                 offset, nb_pkts_after_uso);
 #if !USE_USO
-        fprintf(stderr, "nb_segs: %u, pkt_len: %u, "
-                        "data_len: %u, l2_len: %u, l3_len: %u, l4_len: %u, "
-                        "ol_flags: %lu, tso_segsz: %u\n",
-                (*(temp_batch + offset))->nb_segs,
-                (*(temp_batch + offset))->pkt_len,
-                (*(temp_batch + offset))->data_len,
-                (*(temp_batch + offset))->l2_len,
-                (*(temp_batch + offset))->l3_len,
-                (*(temp_batch + offset))->l4_len,
-                (*(temp_batch + offset))->ol_flags,
-                (*(temp_batch + offset))->tso_segsz);
+        struct rte_mbuf *tmp = temp_batch[offset];
+        fprintf(stderr,
+                "[mbuf] nb_segs: %u, pkt_len: %u, "
+                "data_len: %u, l2_len: %u, l3_len: %u, l4_len: %u, "
+                "ol_flags: %lu, ip-csum: %d, tcp-csum: %d, is-tso: %d, tso_segsz: %u\n",
+                tmp->nb_segs,
+                tmp->pkt_len,
+                tmp->data_len,
+                tmp->l2_len,
+                tmp->l3_len,
+                tmp->l4_len,
+                tmp->ol_flags,
+                tmp->ol_flags & PKT_TX_IP_CKSUM,
+                tmp->ol_flags & PKT_TX_TCP_CKSUM,
+                tmp->ol_flags & PKT_TX_TCP_SEG,
+                tmp->tso_segsz);
         rte_exit(EXIT_FAILURE,
                  "TX burst failed (1): not all packets sent\n");
 #endif
@@ -4356,17 +4387,22 @@ px_eth_tx_burst(uint16_t port_id,
                     port_id, queue_id,
                     offset, read_px_tx_ring);
 #if !USE_USO
-            fprintf(stderr, "nb_segs: %u, pkt_len: %u, "
-                            "data_len: %u, l2_len: %u, l3_len: %u, l4_len: %u, "
-                            "ol_flags: %lu, tso_segsz: %u\n",
-                    (*(temp_batch + offset))->nb_segs,
-                    (*(temp_batch + offset))->pkt_len,
-                    (*(temp_batch + offset))->data_len,
-                    (*(temp_batch + offset))->l2_len,
-                    (*(temp_batch + offset))->l3_len,
-                    (*(temp_batch + offset))->l4_len,
-                    (*(temp_batch + offset))->ol_flags,
-                    (*(temp_batch + offset))->tso_segsz);
+            struct rte_mbuf *tmp = temp_batch[offset];
+            fprintf(stderr,
+                    "[mbuf] nb_segs: %u, pkt_len: %u, "
+                    "data_len: %u, l2_len: %u, l3_len: %u, l4_len: %u, "
+                    "ol_flags: %lu, ip-csum: %d, tcp-csum: %d, is-tso: %d, tso_segsz: %u\n",
+                    tmp->nb_segs,
+                    tmp->pkt_len,
+                    tmp->data_len,
+                    tmp->l2_len,
+                    tmp->l3_len,
+                    tmp->l4_len,
+                    tmp->ol_flags,
+                    tmp->ol_flags & PKT_TX_IP_CKSUM,
+                    tmp->ol_flags & PKT_TX_TCP_CKSUM,
+                    tmp->ol_flags & PKT_TX_TCP_SEG,
+                    tmp->tso_segsz);
             rte_exit(EXIT_FAILURE,
                      "TX burst failed (2): not all packets sent\n");
 #endif

@@ -1386,7 +1386,7 @@ unset_ipv6(struct rte_mbuf *pkt)
 }
 /*----------------------------------------------------------------------------*/
 static inline void
-setup_ip_version(struct rte_mbuf *pkt)
+setup_ip(struct rte_mbuf *pkt)
 {
     if (is_ipv4(pkt))
     {
@@ -1414,7 +1414,7 @@ unset_ip_version(struct rte_mbuf *pkt)
 static inline void
 setup_ipv4_tx_cksum(struct rte_mbuf *pkt)
 {
-    setup_ip_version(pkt);
+    setup_ip(pkt);
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
     pkt->ol_flags |= PKT_TX_IP_CKSUM;
 #else
@@ -1425,7 +1425,7 @@ setup_ipv4_tx_cksum(struct rte_mbuf *pkt)
 static inline void
 setup_ipv6_tx_cksum(struct rte_mbuf *pkt)
 {
-    setup_ip_version(pkt);
+    setup_ip(pkt);
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
     pkt->ol_flags |= PKT_TX_IP_CKSUM;
 #else
@@ -1436,29 +1436,61 @@ setup_ipv6_tx_cksum(struct rte_mbuf *pkt)
 static inline void
 setup_tcp_tx_cksum(struct rte_mbuf *pkt)
 {
-    setup_ip_version(pkt);
+    setup_ip(pkt);
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
     pkt->ol_flags |= PKT_TX_TCP_CKSUM;
 #else
     pkt->ol_flags |= RTE_MBUF_F_TX_TCP_CKSUM;
 #endif
+    /**
+     * Some NICs require the TCP cksum field to hold the IPv4
+     * pseudo-header checksum BEFORE TX; the NIC then adds the L4 payload
+     * checksum to it. After RX-side modifications (e.g. update_mss) the
+     * field still holds the original full checksum from the sender, so the
+     * NIC's add-on produces a garbage final value and the receiver drops
+     * the packet. Pre-compute the pseudo-header checksum here.
+     */
+    // if (is_ipv4(pkt))
+    // {
+    //     struct rte_ipv4_hdr *_iph = rte_pktmbuf_mtod_offset(
+    //         pkt, struct rte_ipv4_hdr *, pkt->l2_len);
+    //     struct rte_tcp_hdr *_tcph = rte_pktmbuf_mtod_offset(
+    //         pkt, struct rte_tcp_hdr *, pkt->l2_len + pkt->l3_len);
+    //     _tcph->cksum = rte_ipv4_phdr_cksum(_iph, pkt->ol_flags);
+    // }
 }
 /*----------------------------------------------------------------------------*/
 static inline void
 setup_udp_tx_cksum(struct rte_mbuf *pkt)
 {
-    setup_ip_version(pkt);
+    setup_ip(pkt);
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
     pkt->ol_flags |= PKT_TX_UDP_CKSUM;
 #else
     pkt->ol_flags |= RTE_MBUF_F_TX_UDP_CKSUM;
 #endif
+    /**
+     * Some NICs require the TCP cksum field to hold the IPv4
+     * pseudo-header checksum BEFORE TX; the NIC then adds the L4 payload
+     * checksum to it. After RX-side modifications (e.g. update_mss) the
+     * field still holds the original full checksum from the sender, so the
+     * NIC's add-on produces a garbage final value and the receiver drops
+     * the packet. Pre-compute the pseudo-header checksum here.
+     */
+    // if (is_ipv4(pkt))
+    // {
+    //     struct rte_ipv4_hdr *_iph = rte_pktmbuf_mtod_offset(
+    //         pkt, struct rte_ipv4_hdr *, pkt->l2_len);
+    //     struct rte_udp_hdr *_udph = rte_pktmbuf_mtod_offset(
+    //         pkt, struct rte_udp_hdr *, pkt->l2_len + pkt->l3_len);
+    //     _udph->dgram_cksum = rte_ipv4_phdr_cksum(_iph, pkt->ol_flags);
+    // }
 }
 /*----------------------------------------------------------------------------*/
 static inline void
 setup_sctp_tx_cksum(struct rte_mbuf *pkt)
 {
-    setup_ip_version(pkt);
+    setup_ip(pkt);
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
     pkt->ol_flags |= PKT_TX_SCTP_CKSUM;
 #else
@@ -1472,7 +1504,7 @@ static inline void
 setup_tso(struct rte_mbuf *pkt,
           uint16_t tso_segsz)
 {
-    setup_ip_version(pkt);
+    setup_ip(pkt);
 #if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
     pkt->ol_flags |= PKT_TX_TCP_SEG;
 #else
@@ -1492,6 +1524,7 @@ unset_tso(struct rte_mbuf *pkt)
 #else
     pkt->ol_flags &= ~RTE_MBUF_F_TX_TCP_SEG;
 #endif
+    pkt->tso_segsz = 0;
 }
 /*----------------------------------------------------------------------------*/
 static inline int
@@ -1814,7 +1847,8 @@ reset_sw_timestamp(struct rte_mbuf *pkt)
 }
 /*----------------------------------------------------------------------------*/
 static inline uint32_t
-_bit_mix(uint32_t h) {
+_bit_mix(uint32_t h)
+{
     h ^= h >> 16;
     h *= 0x85ebca6b;
     h ^= h >> 13;
@@ -1824,7 +1858,8 @@ _bit_mix(uint32_t h) {
 }
 /*----------------------------------------------------------------------------*/
 static inline uint16_t
-xor_hash0(const void *data) {
+xor_hash0(const void *data)
+{
     const uint32_t *d = (const uint32_t *)data;
     /* Seed 0x12345678 */
     uint32_t h = d[0] ^ d[1] ^ d[2] ^ 0x12345678;
@@ -1832,7 +1867,8 @@ xor_hash0(const void *data) {
 }
 /*----------------------------------------------------------------------------*/
 static inline uint16_t
-xor_hash1(const void *data) {
+xor_hash1(const void *data)
+{
     const uint32_t *d = (const uint32_t *)data;
     /* Use a different seed and combination to ensure independence from hash0 */
     uint32_t h = (d[0] * 0xcc9e2d51) ^ (d[1] * 0x1b873593) ^ d[2];
@@ -1840,7 +1876,8 @@ xor_hash1(const void *data) {
 }
 /*----------------------------------------------------------------------------*/
 static inline uint16_t
-xor_hash2(const void *data) {
+xor_hash2(const void *data)
+{
     const uint32_t *d = (const uint32_t *)data;
     /* Mix rotate operations to generate a completely different bit pattern */
     uint32_t h = (d[0] << 13 | d[0] >> 19) ^ d[1] ^ (d[2] >> 7);

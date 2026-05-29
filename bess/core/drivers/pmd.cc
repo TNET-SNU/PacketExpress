@@ -383,7 +383,7 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
                              num_txq,
                              0,
                              0,
-                             NICMEM ? nb_rxd : 0,
+                             NICMEM ? queue_size[PACKET_DIR_INC] : 0,
                              USE_PX ? CUTOFF_NS : 0,
                              NUM_HAIRPIN_Q,
                              NUM_HAIRPIN_Q,

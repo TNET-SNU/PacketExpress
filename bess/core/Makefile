@@ -136,10 +136,10 @@ CXXFLAGS += -D SEMANTIC_TEST=0
 # Choose one of below
 
 # 1. DPDK GRO on
-CXXFLAGS += -D USE_GRO=1
+# CXXFLAGS += -D USE_GRO=1
 
 # 2. DPDK GRO off
-# CXXFLAGS += -D USE_GRO=0
+CXXFLAGS += -D USE_GRO=0
 
 ################################################################################
 
@@ -156,20 +156,20 @@ CXXFLAGS += -D USE_LRO=1
 # Choose one of below
 
 # 1. PX on
-# CXXFLAGS += -D USE_PX=1
+CXXFLAGS += -D USE_PX=1
 
 # 2. PX off
-CXXFLAGS += -D USE_PX=0
+# CXXFLAGS += -D USE_PX=0
 
 ################################################################################
 
 # Choose one of below
 
 # 1. Dynamic RXQ scaling on
-# CXXFLAGS += -D USE_DYNRXQ=1
+CXXFLAGS += -D USE_DYNRXQ=1
 
 # 2. Dynamic RXQ scaling off
-CXXFLAGS += -D USE_DYNRXQ=0
+# CXXFLAGS += -D USE_DYNRXQ=0
 
 ################################################################################
 
@@ -179,17 +179,17 @@ CXXFLAGS += -D USE_DYNRXQ=0
 CXXFLAGS += -D CUTOFF_NS=0
 
 # 2. delayed-merging on
-# CXXFLAGS += -D CUTOFF_NS=120000
+# CXXFLAGS += -D CUTOFF_NS=72000
 
 ################################################################################
 
 # Choose one of below
 
 # 1. NICMEM on (To use nicmem, make sure to use DPDK version 20.11)
-# CXXFLAGS += -D NICMEM=1
+CXXFLAGS += -D NICMEM=1
 
 # 2. NICMEM off
-CXXFLAGS += -D NICMEM=0
+# CXXFLAGS += -D NICMEM=0
 
 ################################################################################
 

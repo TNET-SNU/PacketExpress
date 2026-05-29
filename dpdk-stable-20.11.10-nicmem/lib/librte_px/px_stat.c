@@ -291,14 +291,38 @@ void px_stat_print(uint16_t main_core_id)
     int ret;
     uint64_t now_ns = PX_GETTIME(CLOCK_CPUTSC_PRECISE);
 
-    static uint64_t prev_now_ns = 0;
-    if (!prev_now_ns)
+    static volatile uint64_t prev_now_ns = 0;
+    uint64_t expected = prev_now_ns;
+    if (!expected)
     {
-        prev_now_ns = now_ns;
+        /* first-ever caller initializes; race-losers also fall through to
+         * the throttle check below */
+        if (__atomic_compare_exchange_n(&prev_now_ns, &expected, now_ns,
+                                        0,
+                                        __ATOMIC_ACQ_REL,
+                                        __ATOMIC_RELAXED))
+        {
+            return;
+        }
     }
-    
+
     /* not enough time for IAT update has passed */
-    if (now_ns - prev_now_ns < g_stat_interval)
+    if (now_ns - expected < g_stat_interval)
+    {
+        return;
+    }
+
+    /* Claim this interval atomically: only one caller proceeds per
+     * window. Without this, every port's qid==STAT_MONITOR_CORE_ID worker
+     * races through the throttle check simultaneously, multiple callers
+     * enter the aggregation loop, the first one sets reset=1 on every
+     * (port,queue), the per-queue workers zero their stats, and the
+     * trailing callers then aggregate near-empty stats — making the
+     * printed [TOTAL] look as if only one queue contributed. */
+    if (!__atomic_compare_exchange_n(&prev_now_ns, &expected, now_ns,
+                                     0,
+                                     __ATOMIC_ACQ_REL,
+                                     __ATOMIC_RELAXED))
     {
         return;
     }
@@ -827,13 +851,8 @@ void px_stat_print(uint16_t main_core_id)
         }
     }
 
-    /* minimize drift */
-    prev_now_ns += g_stat_interval;
-    /* remove drift */
-    if (now_ns - prev_now_ns >= g_stat_interval)
-    {
-        prev_now_ns = now_ns;
-    }
+    /* prev_now_ns was already advanced to now_ns by the CAS at the top
+     * of this function; no further update needed. */
 }
 /*----------------------------------------------------------------------------*/
 int px_stat_configure(unsigned int stat_interval,
@@ -847,11 +866,12 @@ int px_stat_configure(unsigned int stat_interval,
 {
     struct sigaction sa_gear_up, sa_gear_down;
 
-    if (g_port_enabled[port_id])
-    {
-        /* already started */
-        return 0;
-    }
+    /* To allow modification, commented below out */
+    // if (g_port_enabled[port_id])
+    // {
+    //     /* already started */
+    //     return 0;
+    // }
 
     /* mark this port as enabled */
     g_port_enabled[port_id] = 1;

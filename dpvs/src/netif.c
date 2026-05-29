@@ -2156,7 +2156,7 @@ static inline void netif_tx_burst(lcoreid_t cid, portid_t pid, queueid_t qindex)
         }
     }
 #if USE_PX
-    ntx = rte_eth_tx_burst(pid, txq->id, txq->mbufs, txq->len);
+    ntx = px_eth_tx_burst(pid, txq->id, txq->mbufs, txq->len);
     lcore_stats[cid].opackets += ntx;
 #else
 #if (USE_LRO || USE_GRO)
@@ -3144,6 +3144,14 @@ static int __netif_update_rss_reta(struct netif_port *port)
         reta_conf[reta_id].mask = UINT64_MAX;
         reta_conf[reta_id].reta[reta_pos] = (uint16_t)(rssq[i % nrssq]);
     }
+    printf("rssq: %hu, %hu, %hu, %hu, %hu, %hu, %hu, %hu, \n"
+                 "%hu, %hu, %hu, %hu, %hu, %hu, %hu, %hu, \n"
+                 "%hu, %hu, %hu, %hu, %hu, %hu, %hu, %hu, \n"
+                 "%hu, %hu, %hu, %hu, %hu, %hu, %hu, %hu\n", 
+                 rssq[0], rssq[1], rssq[2], rssq[3], rssq[4], rssq[5], rssq[6], rssq[7],
+                 rssq[8], rssq[9], rssq[10], rssq[11], rssq[12], rssq[13], rssq[14], rssq[15], 
+                 rssq[16], rssq[17], rssq[18], rssq[19], rssq[20], rssq[21], rssq[22], rssq[23], 
+                 rssq[24], rssq[25], rssq[26], rssq[27], rssq[28], rssq[29], rssq[30], rssq[31]);
 #if USE_PX
     if (px_eth_dev_rss_reta_update(port->id, reta_conf, port->dev_info.reta_size))
 #else

@@ -505,19 +505,19 @@ int mss_search_entry(uint16_t port_id,
         return 0;
     };
 
-    if (rte_hash_lookup_data(ctx->tbl, key, (void **)&entry) < 0)
+    int ret = rte_hash_lookup_data(ctx->tbl, key, (void **)&entry);
+    if (ret == -ENOENT)
     {
-        if (errno == ENOENT)
-        {
-            /* not found */
-            *mss = px_dev->emtu_size -
-                   sizeof(struct rte_ipv4_hdr) -
-                   sizeof(struct rte_tcp_hdr);
-            return 0;
-        }
-
-        fprintf(stderr, "rte_hash_lookup_data failed: %s (%d)\n",
-                strerror(errno), errno);
+        /* not found */
+        *mss = px_dev->emtu_size -
+               sizeof(struct rte_ipv4_hdr) -
+               sizeof(struct rte_tcp_hdr);
+        return 0;
+    }
+    if (ret < 0)
+    {
+        fprintf(stderr, "rte_hash_lookup_data failed in search: ret=%d (%s)\n",
+                ret, strerror(-ret));
         return -1;
     }
 
@@ -611,11 +611,12 @@ int mss_insert_entry(uint16_t port_id,
     }
 
     /* allocate a new entry from the mempool */
-    if (rte_mempool_get(ctx->pool, (void **)&entry) < 0)
+    int ret3 = rte_mempool_get(ctx->pool, (void **)&entry);
+    if (ret3 < 0)
     {
         fprintf(stderr, "mss_insert_entry: rte_mempool_get "
-                        "Unable to allocate memory for MSS entry, %s (%d)\n",
-                strerror(errno), errno);
+                        "Unable to allocate memory for MSS entry, ret=%d (%s)\n",
+                ret3, strerror(-ret3));
         return -1;
     }
     // memset(entry, 0, sizeof(struct flow_mss_entry));
@@ -625,11 +626,12 @@ int mss_insert_entry(uint16_t port_id,
     entry->last_update = now_ns;
 
     /* insert into the hash table */
-    if (rte_hash_add_key_data(ctx->tbl, key, entry) < 0)
+    int ret2 = rte_hash_add_key_data(ctx->tbl, key, entry);
+    if (ret2 < 0)
     {
         fprintf(stderr, "mss_insert_entry: rte_hash_add_key_data "
-                        "Unable to add flow to hash table, %s (%d)\n",
-                strerror(errno), errno);
+                        "Unable to add flow to hash table, ret=%d (%s)\n",
+                ret2, strerror(-ret2));
         rte_mempool_put(ctx->pool, entry);
         return -1;
     }
@@ -707,22 +709,25 @@ int mss_evict_entry(uint16_t port_id,
     };
 
     /* search from hash table */
-    if (rte_hash_lookup_data(ctx->tbl, key, (void **)&entry) < 0)
+    int ret1 = rte_hash_lookup_data(ctx->tbl, key, (void **)&entry);
+    if (ret1 == -ENOENT)
     {
-        if (errno == ENOENT)
-        {
-            /* already evicted */
-            return 0;
-        }
-
+        /* already evicted */
+        return 0;
+    }
+    if (ret1 < 0)
+    {
+        fprintf(stderr, "rte_hash_lookup_data failed in evict: ret=%d (%s)\n",
+                ret1, strerror(-ret1));
         return -1;
     }
 
     /* remove the entry from the hash table */
-    if (rte_hash_del_key(ctx->tbl, key) < 0)
+    int ret2 = rte_hash_del_key(ctx->tbl, key);
+    if (ret2 < 0)
     {
-        fprintf(stderr, "rte_hash_lookup_data failed: %s (%d)\n",
-                strerror(errno), errno);
+        fprintf(stderr, "rte_hash_del_key failed in evict: ret=%d (%s)\n",
+                ret2, strerror(-ret2));
         return -1;
     }
 

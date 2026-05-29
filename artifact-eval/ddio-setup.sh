@@ -1,11 +1,14 @@
 #!/bin/bash
-
-set -o pipefail
-set -e
+set -euo pipefail
 set -x
-# set -v
 
-sudo modprobe msr
-sudo rdmsr 0xc8b
-sudo wrmsr 0xc8b 0xfffff
-sudo rdmsr 0xc8b
+SCRIPT_PATH="$(readlink -f "$0")"
+
+if [[ $EUID -ne 0 ]]; then
+    exec sudo "$SCRIPT_PATH" "$@"
+fi
+
+modprobe msr
+rdmsr 0xc8b
+wrmsr 0xc8b 0xfffff
+rdmsr 0xc8b

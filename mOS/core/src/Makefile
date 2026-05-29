@@ -82,10 +82,10 @@ CFLAGS += -D JUMBO_FRAME=0
 # Choose one of below
 
 # 1. Semantic test on (split uplink flows and merge downlink flows)
-CFLAGS += -D SEMANTIC_TEST=1
+# CFLAGS += -D SEMANTIC_TEST=1
 
 # 2. Semantic test off (merge all flows)
-# CFLAGS += -D SEMANTIC_TEST=0
+CFLAGS += -D SEMANTIC_TEST=0
 
 ################################################################################
 
@@ -135,7 +135,7 @@ CFLAGS += -D USE_DYNRXQ=1
 CFLAGS += -D CUTOFF_NS=0
 
 # 2. delayed-merging on
-# CFLAGS += -D CUTOFF_NS=120000
+# CFLAGS += -D CUTOFF_NS=72000
 
 ################################################################################
 

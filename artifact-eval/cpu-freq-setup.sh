@@ -1,8 +1,11 @@
 #!/bin/bash
-
-set -o pipefail
-set -e
+set -euo pipefail
 set -x
-# set -v
 
-sudo cpupower frequency-set -g performance || true
+SCRIPT_PATH="$(readlink -f "$0")"
+
+if [[ $EUID -ne 0 ]]; then
+    exec sudo "$SCRIPT_PATH" "$@"
+fi
+
+cpupower frequency-set -g performance || true

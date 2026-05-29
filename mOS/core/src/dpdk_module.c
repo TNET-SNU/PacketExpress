@@ -34,16 +34,16 @@
 #include <rte_gro.h>
 /*----------------------------------------------------------------------------*/
 /* Essential macros */
-#if USE_LRO
-#define MBUF_DATA_SIZE		65024
-#elif JUMBO_FRAME
+#if NICMEM || USE_LRO
+#define MBUF_DATA_SIZE		(65536 - sizeof(struct rte_mbuf) - RTE_PKTMBUF_HEADROOM - 256)
+#elif JUMBO_FRAME || USE_GRO
 #define MBUF_DATA_SIZE		9024
 #else
 #define MBUF_DATA_SIZE		RTE_ETHER_MAX_LEN
 #endif
 
 #define MBUF_SIZE 			(MBUF_DATA_SIZE + sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM)
-#define NB_MBUF				262143
+#define NB_MBUF				((1024 * 1024) - 1)
 //#define RX_IDLE_ENABLE			1
 #define RX_IDLE_TIMEOUT			1	/* in micro-seconds */
 #define RX_IDLE_THRESH			64
@@ -53,8 +53,8 @@
 /*
  * Configurable number of RX/TX ring descriptors
  */
-#define RTE_TEST_RX_DESC_DEFAULT	/* 8192 */ /* 4096 */ /* 2048 */ 1024 /* 512 */ /* 256 */
-#define RTE_TEST_TX_DESC_DEFAULT	/* 8192 */ /* 4096 */ /* 2048 */ 1024 /* 512 */ /* 256 */
+#define RTE_TEST_RX_DESC_DEFAULT	/* 8192 */ 4096 /* 2048 */ /* 1024 */ /* 512 */ /* 256 */
+#define RTE_TEST_TX_DESC_DEFAULT	/* 8192 */ 4096 /* 2048 */ /* 1024 */ /* 512 */ /* 256 */
 
 static uint16_t nb_rxd = RTE_TEST_RX_DESC_DEFAULT;
 static uint16_t nb_txd = RTE_TEST_TX_DESC_DEFAULT;
@@ -256,8 +256,8 @@ dpdk_send_pkts(struct mtcp_thread_context *ctxt, int nif)
 		if (ret < dpc->wmbufs[nif].len)
 			rte_pktmbuf_free_bulk(dpc->wmbufs[nif].m_table + ret,
 								  dpc->wmbufs[nif].len - ret);
-		dpc->wmbufs[nif].len = 0;
 #endif
+		dpc->wmbufs[nif].len = 0;
 	}
 
 	return ret;
@@ -498,16 +498,42 @@ dpdk_load_module_upper_half(void)
 	sprintf(mem_channels, "%d", g_config.mos->nb_mem_channels);
 
 	/* initialize the rte env first, what a waste of implementation effort!  */
-	char *argv[] = {"", 
-	        "--iova-mode=va",
-			"-c", 
-			cpumaskbuf, 
-			"-n", 
-			mem_channels,
-			"--proc-type=primary",
-	};
-	const int argc = 7;
-	// const int argc = 9;
+	char socket_mem_val[64];
+	snprintf(socket_mem_val, sizeof(socket_mem_val), "65536,65536");
+	char *argv[] = {"",
+		"--iova-mode=va",
+		"-c",
+		cpumaskbuf,
+		"-n",
+		mem_channels,
+		"--socket-mem",
+		socket_mem_val,
+		"--proc-type=primary",
+		/**
+		 * Configure ports to use.
+		 * If nothing configured, all ports will be used
+		 */
+#if NUM_HAIRPIN_Q
+        strdup("-a"),
+        strdup("0000:16:00.0,hp_buf_log_sz=16,dv_flow_en=1,dv_esw_en=1"),
+        strdup("-a"),
+        strdup("0000:40:00.0,hp_buf_log_sz=16,dv_flow_en=1,dv_esw_en=1"),
+        strdup("-a"),
+        strdup("0000:6a:00.0,hp_buf_log_sz=16,dv_flow_en=1,dv_esw_en=1"),
+        strdup("-a"),
+        strdup("0000:94:00.0,hp_buf_log_sz=16,dv_flow_en=1,dv_esw_en=1"),
+#else
+        strdup("-a"),
+        strdup("0000:16:00.0"),
+        strdup("-a"),
+        strdup("0000:40:00.0"),
+        strdup("-a"),
+        strdup("0000:6a:00.0"),
+        strdup("-a"),
+        strdup("0000:94:00.0"),
+#endif
+    };
+    int argc = sizeof(argv) / sizeof(argv[0]);
 
 	/* 
 	 * re-set getopt extern variable optind.
@@ -547,10 +573,9 @@ dpdk_load_module_lower_half(void)
 		// for (rxlcore_id = 0; rxlcore_id < g_config.mos->num_cores; rxlcore_id++) {
 		for (int sid = 0; sid < num_sockets; sid++) {
 			char name[20];
-			/* create the mbuf pools for tx/rx of session data packets */
 			sprintf(name, "mempool-%d", sid);
 			if (!(pktmbuf_pool[sid] =
-				rte_mempool_create(name, NB_MBUF,
+				rte_mempool_create(name, NB_MBUF / num_sockets,
 #if NICMEM
 								   MBUF_SIZE - MBUF_DATA_SIZE + NICMEM_DMA_SIZE,
 #else

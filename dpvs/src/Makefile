@@ -57,20 +57,20 @@ CFLAGS += -Wall -Werror -Wstrict-prototypes -Wmissing-prototypes -mcmodel=medium
 # Choose one of below
 
 # 1. Using 1500B MTU to 9000B MTU translation
-CFLAGS += -D JUMBO_FRAME=0
+# CFLAGS += -D JUMBO_FRAME=0
 
 # 2. Using 9000B MTU by default
-# CFLAGS += -D JUMBO_FRAME=1
+CFLAGS += -D JUMBO_FRAME=1
 
 ################################################################################
 
 # Choose one of below
 
 # 1. Semantic test on (split uplink flows and merge downlink flows)
-CFLAGS += -D SEMANTIC_TEST=1
+# CFLAGS += -D SEMANTIC_TEST=1
 
 # 2. Semantic test off (merge all flows)
-# CFLAGS += -D SEMANTIC_TEST=0
+CFLAGS += -D SEMANTIC_TEST=0
 
 ################################################################################
 
@@ -120,17 +120,17 @@ CFLAGS += -D USE_DYNRXQ=1
 CFLAGS += -D CUTOFF_NS=0
 
 # 2. delayed-merging on
-# CFLAGS += -D CUTOFF_NS=120000
+# CFLAGS += -D CUTOFF_NS=72000
 
 ################################################################################
 
 # Choose one of below
 
 # 1. NICMEM on (To use nicmem, make sure to use DPDK version 20.11)
-CFLAGS += -D NICMEM=1
+# CFLAGS += -D NICMEM=1
 
 # 2. NICMEM off
-# CFLAGS += -D NICMEM=0
+CFLAGS += -D NICMEM=0
 
 ################################################################################
 

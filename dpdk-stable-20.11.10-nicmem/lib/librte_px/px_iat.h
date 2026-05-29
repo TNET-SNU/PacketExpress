@@ -18,6 +18,7 @@ extern "C"
  */
 #define USE_HW_RX_TIMESTAMP 0
 #define USE_CMS 0
+#define IAT_LOG 0
 #define CMS_SATURATE_VAL UINT16_MAX
 #define IAT_THREAD_PERIOD 60
 #define IAT_TIMEOUT 600

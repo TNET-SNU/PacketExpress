@@ -306,7 +306,7 @@ px_uso_burst(struct rte_mbuf **pkts,
              struct px_ring *tx_ring,
              struct rte_mempool *clone_pool)
 {
-    struct rte_mbuf *pkt, *hdr_clone, *body_clone, *next;
+    struct rte_mbuf *pkt, *hdr_clone = NULL, *body_clone = NULL, *next;
     uint16_t idx = 0;
     uint16_t seglen, segnum, last_seglen, offset = 0;
     uint16_t *iplen, *udplen;

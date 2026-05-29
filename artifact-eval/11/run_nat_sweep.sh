@@ -2,33 +2,31 @@
 set -euo pipefail
 
 AE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RAW_DIR="${AE_DIR}/raw_nat_sweep_$(date +%Y%m%d_%H%M%S)"
-OUT="${AE_DIR}/nat_sweep_summary.tsv"
-PRETTY_OUT="${AE_DIR}/nat_sweep_summary.txt"
-
-RAPIDS0="${RAPIDS0:-rapids0.snu.ac.kr}"
-RAPIDS0_AE_DIR="${RAPIDS0_AE_DIR:-/home/junghan/artifact-eval}"
-
-CORE_COUNT="${CORE_COUNT:-8}"
-DPDK_INIT_SLEEP_SEC="${DPDK_INIT_SLEEP_SEC:-25}"
-WORKLOAD_WAIT_SEC="${WORKLOAD_WAIT_SEC:-5}"
-DPDK_COOLDOWN_SEC="${DPDK_COOLDOWN_SEC:-6}"
-
-IMTUS=(1500 3000 4500 6000 7500 9000)
-
-SSH_OPTS=(
-  -q
-  -o BatchMode=yes
-  -o ConnectTimeout=5
-  -o ServerAliveInterval=10
-  -o ServerAliveCountMax=3
-  -o LogLevel=ERROR
-)
-
-mkdir -p "$RAW_DIR"
 cd "$AE_DIR"
 
-printf 'iMTU\tnat_gbps\n' > "$OUT"
+NF="nat"
+IPERF_SCRIPT="run_ae_iperf.sh"
+START_CLEAN_SCRIPT="start_nat_clean.sh"
+
+CORE_COUNT="${CORE_COUNT:-8}"
+IMTUS=(1500 3000 4500 6000 7500 9000)
+
+DPDK_INIT_SLEEP_SEC="${DPDK_INIT_SLEEP_SEC:-30}"
+WORKLOAD_WAIT_SEC="${WORKLOAD_WAIT_SEC:-15}"
+DPDK_COOLDOWN_SEC="${DPDK_COOLDOWN_SEC:-15}"
+TESTBED_SETUP_SLEEP_SEC="${TESTBED_SETUP_SLEEP_SEC:-3}"
+
+RUN_TS="$(date +%Y%m%d_%H%M%S)"
+RAW_DIR="${AE_DIR}/raw_${NF}_sweep_${RUN_TS}"
+OUT="${AE_DIR}/${NF}_sweep_summary.tsv"
+PRETTY_OUT="${AE_DIR}/${NF}_sweep_summary.txt"
+
+PX_ONE_ARM="${AE_DIR}/px-one-arm.sh"
+CURRENT_PXGW_PID=""
+
+mkdir -p "$RAW_DIR"
+
+printf 'iMTU\t%s_gbps\t%s_syn\n' "$NF" "$NF" > "$OUT"
 
 require_executable() {
   local f="$1"
@@ -38,59 +36,28 @@ require_executable() {
   fi
 }
 
-kill_endpoint_iperf() {
-  ./kill_endpoint_iperf.sh >/dev/null 2>&1 || true
+kill_iperf() {
+  ./kill_ae_iperf.sh >/dev/null 2>&1 || true
 }
 
-kill_pxgw_all() {
-  ./kill_all_pxgw_hdr_only.sh >&2 || true
+kill_pxgw() {
+  # Force-kill via ps aux | grep — matches the actual cmdline reliably even
+  # when launched under sudo / nohup wrappers that fool pkill -f.
+  "${AE_DIR}/kill_pxgw_ps_aux.sh" >/dev/null 2>&1 || true
 }
 
-cleanup_local() {
-  kill_endpoint_iperf
-  kill_pxgw_all
-  reset >/dev/null 2>&1 || true
-  stty sane >/dev/null 2>&1 || true
+cleanup_between_runs() {
+  kill_iperf
+  kill_pxgw
+  CURRENT_PXGW_PID=""
+  sleep "$DPDK_COOLDOWN_SEC"
 }
 
-remote_run_nat() {
-  local log="${RAW_DIR}/rapids0_run_nat.log"
-
-  echo "[INFO] rapids0: running run_nat.sh" >&2
-
-  set +e
-  ssh "${SSH_OPTS[@]}" "$RAPIDS0" \
-    "cd ${RAPIDS0_AE_DIR} && ./run_nat.sh" \
-    2>&1 | tee "$log" >&2
-  local rc="${PIPESTATUS[0]}"
-  set -e
-
-  if [[ "$rc" -ne 0 ]]; then
-    echo "[ERROR] rapids0 run_nat.sh failed rc=${rc}" >&2
-    echo "[ERROR] Full log: $log" >&2
-    tail -120 "$log" >&2 || true
-    exit "$rc"
+setup_testbed_9000() {
+  if [[ -x "$PX_ONE_ARM" ]]; then
+    "$PX_ONE_ARM" 9000 >/dev/null 2>&1 || true
   fi
-
-  echo "[INFO] rapids0: run_nat.sh completed" >&2
-}
-
-remote_kill_nat_best_effort() {
-  local log="${RAW_DIR}/rapids0_kill_nat.log"
-
-  echo "[INFO] rapids0: running kill_nat.sh best-effort" >&2
-
-  set +e
-  ssh "${SSH_OPTS[@]}" "$RAPIDS0" \
-    "cd ${RAPIDS0_AE_DIR} && ./kill_nat.sh" \
-    > "$log" 2>&1
-  local rc="$?"
-  set -e
-
-  if [[ "$rc" -ne 0 ]]; then
-    echo "[WARN] rapids0 kill_nat.sh returned rc=${rc}; continuing" >&2
-    tail -40 "$log" >&2 || true
-  fi
+  sleep "$TESTBED_SETUP_SLEEP_SEC"
 }
 
 parse_pxgw_gbps() {
@@ -115,143 +82,107 @@ parse_pxgw_gbps() {
   printf '%s' "${gbps:-N/A}"
 }
 
-find_pxgw_pids() {
-  local imtu="$1"
-  local binary="${AE_DIR}/pxgw-hdr-only-${imtu}"
-
-  pgrep -af "${binary} -c ${CORE_COUNT}" 2>/dev/null | awk '{print $1}' || true
-}
-
-ensure_pxgw_gone() {
-  local left
-
-  left="$(pgrep -af 'pxgw-hdr-only' || true)"
-  if [[ -n "$left" ]]; then
-    echo "[WARN] stale pxgw-hdr-only exists:" >&2
-    printf '%s\n' "$left" >&2
-    kill_pxgw_all
-    sleep 5
-  fi
-
-  left="$(pgrep -af 'pxgw-hdr-only' || true)"
-  if [[ -n "$left" ]]; then
-    echo "[ERROR] stale pxgw-hdr-only still alive:" >&2
-    printf '%s\n' "$left" >&2
-    return 1
-  fi
-
-  return 0
-}
-
-endpoint_status_snapshot() {
-  echo "[INFO] endpoint iperf status snapshot" >&2
-
-  ssh "${SSH_OPTS[@]}" stream1.snu.ac.kr \
-    'echo "--- stream1 ---"; pgrep -a iperf || true' >&2 || true
-
-  ssh "${SSH_OPTS[@]}" stream2.snu.ac.kr \
-    'echo "--- stream2 ---"; pgrep -a iperf || true' >&2 || true
-
-  ssh "${SSH_OPTS[@]}" stream3.snu.ac.kr \
-    'echo "--- stream3 ---"; pgrep -a iperf || true' >&2 || true
-
-  ssh "${SSH_OPTS[@]}" stream4.snu.ac.kr \
-    'echo "--- stream4 ---"; pgrep -a iperf || true' >&2 || true
-}
-
-pxgw_total_tail() {
+parse_pxgw_syn() {
   local log="$1"
+  local last_syn_line
 
-  echo "[INFO] PXGW TOTAL tail:" >&2
-  grep -a '^\[ TOTAL \]' "$log" | tail -12 >&2 || true
+  last_syn_line="$(
+    LC_ALL=C grep -a -E '^SYN/SYNACK:' "$log" | tail -n 1 || true
+  )"
+
+  if [[ -z "$last_syn_line" ]]; then
+    printf 'N/A'
+    return 0
+  fi
+
+  printf '%s' "$last_syn_line" |
+    LC_ALL=C sed -nE 's@^SYN/SYNACK:[[:space:]]*([0-9]+/[0-9]+).*@\1@p'
 }
 
 run_one_imtu() {
   local imtu="$1"
   local binary="${AE_DIR}/pxgw-hdr-only-${imtu}"
-  local pxgw_log="${RAW_DIR}/nat_${imtu}_pxgw.log"
-  local endpoint_out="${RAW_DIR}/nat_${imtu}_endpoint.out"
-  local endpoint_err="${RAW_DIR}/nat_${imtu}_endpoint.err"
-  local gbps
+  local pxgw_log="${RAW_DIR}/${NF}_${imtu}_pxgw.log"
+  local setup_log="${RAW_DIR}/${NF}_${imtu}_setup.log"
+  local gbps syn
 
-  require_executable "$binary"
-
-  echo "[INFO] NAT iMTU=${imtu}: cleanup before run" >&2
-  kill_endpoint_iperf
-  kill_pxgw_all
-  sleep "$DPDK_COOLDOWN_SEC"
-
-  if ! ensure_pxgw_gone; then
-    printf 'N/A'
+  if [[ ! -x "$binary" ]]; then
+    echo "[ERROR] missing or non-executable ${binary}" >&2
+    printf 'N/A\tN/A'
     return 0
   fi
 
-  echo "[INFO] NAT iMTU=${imtu}: starting ${binary}" >&2
+  echo "[INFO] ${NF} iMTU=${imtu}: cleanup before run" >&2
+  cleanup_between_runs
 
-  sudo -n setsid stdbuf -oL -eL "$binary" -c "$CORE_COUNT" \
+  echo "[INFO] ${NF} iMTU=${imtu}: setup testbed (px-one-arm.sh 9000)" >&2
+  setup_testbed_9000 > "$setup_log" 2>&1 || true
+
+  echo "[INFO] ${NF} iMTU=${imtu}: starting ${binary}" >&2
+  sudo -n stdbuf -oL -eL "$binary" -c "$CORE_COUNT" \
     > "$pxgw_log" 2>&1 < /dev/null &
+  CURRENT_PXGW_PID="$!"
 
   sleep "$DPDK_INIT_SLEEP_SEC"
 
-  if [[ -z "$(find_pxgw_pids "$imtu")" ]]; then
-    echo "[ERROR] pxgw-hdr-only-${imtu} is not running after init" >&2
-    tail -120 "$pxgw_log" >&2 || true
-    printf 'N/A'
-    return 0
-  fi
+  echo "[INFO] ${NF} iMTU=${imtu}: launching ${IPERF_SCRIPT}" >&2
+  kill_iperf
+  "./${IPERF_SCRIPT}" >/dev/null 2>&1 || true
 
-  echo "[INFO] NAT iMTU=${imtu}: launching endpoint iperf" >&2
-
-  kill_endpoint_iperf
-  sleep 2
-
-  set +e
-  ./run_endpoint_upf_nat_iperf.sh > "$endpoint_out" 2> "$endpoint_err"
-  local ep_rc="$?"
-  set -e
-
-  sleep 3
-  endpoint_status_snapshot
-
-  echo "[INFO] NAT iMTU=${imtu}: waiting ${WORKLOAD_WAIT_SEC}s before parsing" >&2
   sleep "$WORKLOAD_WAIT_SEC"
 
   gbps="$(parse_pxgw_gbps "$pxgw_log")"
+  syn="$(parse_pxgw_syn "$pxgw_log")"
+  echo "[INFO] ${NF} iMTU=${imtu}: gbps=${gbps} syn/synack=${syn}" >&2
 
-  echo "[INFO] NAT iMTU=${imtu}: gbps=${gbps}" >&2
-  pxgw_total_tail "$pxgw_log"
+  # Snapshot endpoint state.
+  local snap="${RAW_DIR}/${NF}_${imtu}_endpoint_snapshot.txt"
+  {
+    echo "=== ${NF} iMTU=${imtu} snapshot @ $(date) ==="
+    for h in stream1 stream2 stream3 stream4 stream10 stream6 stream7 stream8; do
+      echo "--- ${h} ---"
+      ssh -q -o BatchMode=yes -o ConnectTimeout=3 -o LogLevel=ERROR \
+        "${h}.snu.ac.kr" \
+        'pgrep -af iperf | head -5; ss -tan 2>/dev/null | awk "\$5 ~ /:5001\$/ || \$4 ~ /:5001\$/ {print \$1}" | sort | uniq -c' \
+        2>&1 || echo "[ssh failed]"
+    done
+  } > "$snap" 2>&1 || true
 
-  kill_endpoint_iperf
-  kill_pxgw_all
-  sleep "$DPDK_COOLDOWN_SEC"
+  cleanup_between_runs
 
-  printf '%s' "$gbps"
+  printf '%s\t%s' "$gbps" "$syn"
 }
 
 cleanup() {
   cd "$AE_DIR" 2>/dev/null || true
-  cleanup_local || true
-  remote_kill_nat_best_effort || true
+  kill_iperf
+  kill_pxgw
+  CURRENT_PXGW_PID=""
 }
+on_signal() {
+  trap - INT TERM
+  echo "[INTERRUPTED] ${NF} sweep" >&2
+  exit 130
+}
+trap on_signal INT TERM
+trap cleanup   EXIT
 
-trap cleanup EXIT INT TERM
+require_executable "${AE_DIR}/${IPERF_SCRIPT}"
+require_executable "${AE_DIR}/kill_ae_iperf.sh"
+require_executable "${AE_DIR}/${START_CLEAN_SCRIPT}"
 
-require_executable "${AE_DIR}/kill_endpoint_iperf.sh"
-require_executable "${AE_DIR}/run_endpoint_upf_nat_iperf.sh"
-require_executable "${AE_DIR}/kill_all_pxgw_hdr_only.sh"
+sudo -v >/dev/null 2>&1 || true
 
-sudo -v >/dev/null
+cleanup_between_runs
 
-cleanup_local
-
-remote_kill_nat_best_effort
-remote_run_nat
+echo "[INFO] Starting remote NF via ${START_CLEAN_SCRIPT}" >&2
+"./${START_CLEAN_SCRIPT}" > "${RAW_DIR}/${NF}_start_clean.log" 2>&1
 
 for imtu in "${IMTUS[@]}"; do
-  echo "[INFO] Running NAT iMTU=${imtu}" >&2
+  echo "[INFO] Running ${NF} iMTU=${imtu}" >&2
 
-  gbps="$(run_one_imtu "$imtu")"
-  printf '%s\t%s\n' "$imtu" "$gbps" >> "$OUT"
+  result="$(run_one_imtu "$imtu")"
+  printf '%s\t%s\n' "$imtu" "$result" >> "$OUT"
 
   if command -v column >/dev/null 2>&1; then
     column -t -s $'\t' "$OUT" > "$PRETTY_OUT"
@@ -259,12 +190,11 @@ for imtu in "${IMTUS[@]}"; do
     cp "$OUT" "$PRETTY_OUT"
   fi
 
-  echo P1+r6B32=1B4F51\P1+r6B33=1B4F52\P1+r6B34=1B4F53\P1+r6B35=1B5B31357E\P1+r6B36=1B5B31377E\P1+r6B37=1B5B31387E\P1+r6B38=1B5B31397E\P1+r6B39=1B5B32307E\P1+r6B3B=1B5B32317E\P1+r4631=1B5B32337E\"[INFO] Current NAT partial result:" >&2
+  echo "[INFO] Current ${NF} partial result:" >&2
   cat "$PRETTY_OUT" >&2
 done
 
-cleanup_local
-remote_kill_nat_best_effort
+cleanup_between_runs
 trap - EXIT INT TERM
 
 if command -v column >/dev/null 2>&1; then

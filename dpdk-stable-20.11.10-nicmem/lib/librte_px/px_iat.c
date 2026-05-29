@@ -485,7 +485,7 @@ Try_lookup:
         return 0;
     }
 
-    if (ret == -EAGAIN || errno == EAGAIN)
+    if (ret == -EAGAIN)
     {
         retry_count++;
         if (retry_count <= 3)
@@ -497,7 +497,7 @@ Try_lookup:
         return -1;
     }
 
-    if (ret == -ENOENT || errno == ENOENT)
+    if (ret == -ENOENT)
     {
         /* Allocate a new entry from the mempool */
         if (rte_mempool_get(ctx->pool, (void **)&entry) < 0)
@@ -524,7 +524,7 @@ Try_lookup:
     Try_insert:
         if ((ret = rte_hash_add_key_data(ctx->tbl, key, entry)) < 0)
         {
-            if (ret == -EAGAIN || errno == EAGAIN)
+            if (ret == -EAGAIN)
             {
                 retry_count++;
                 if (retry_count <= 3)
@@ -544,8 +544,8 @@ Try_lookup:
         return 0;
     }
     fprintf(stderr, "iat_update_entry_iat: rte_hash_lookup_data failed: "
-                    "%s (%d)\n",
-            strerror(errno), errno);
+                    "ret=%d (%s)\n",
+            ret, strerror(-ret));
     return -1;
 }
 #endif
@@ -1053,8 +1053,12 @@ int iat_evict_entry(uint16_t port_id,
 
     if (!ctx->initialized)
     {
-        fprintf(stderr, "IAT context not initialized\n");
-        return -1;
+        /* IAT subsystem is opt-in (controlled by px_init's iat_table_size
+         * arg, which is 0 when CUTOFF_NS=0 e.g. in baseline mOS builds).
+         * For those configurations there is no entry to evict; treat this
+         * as a no-op instead of a fatal error so callers that always
+         * invoke iat_evict_entry on FIN/RST don't kill the process. */
+        return 0;
     }
 
     retry_count = 0;
@@ -1066,12 +1070,12 @@ Try_lookup:
     Try_evict:
         if ((ret = rte_hash_del_key(ctx->tbl, key)) < 0)
         {
-            if (errno == ENOENT || ret == -ENOENT)
+            if (ret == -ENOENT)
             {
                 /* Entry not found, nothing to free */
                 return 0;
             }
-            if (ret == -EAGAIN || errno == EAGAIN)
+            if (ret == -EAGAIN)
             {
                 retry_count++;
                 if (retry_count <= 3)
@@ -1080,7 +1084,7 @@ Try_lookup:
                 }
                 fprintf(stderr, "iat_evict_entry: rte_hash_del_key "
                                 "keeps returning EAGAIN, give up to evict\n");
-                return -1;
+                return 0;
             }
             fprintf(stderr, "Unable to delete existing flow from hash table\n");
             return -1;
@@ -1093,12 +1097,12 @@ Try_lookup:
     }
     else
     {
-        if (errno == ENOENT || ret == -ENOENT)
+        if (ret == -ENOENT)
         {
             /* Entry not found, nothing to evict */
             return 0;
         }
-        if (errno == EAGAIN || ret == -EAGAIN)
+        if (ret == -EAGAIN)
         {
             retry_count++;
             if (retry_count <= 3)
@@ -1107,7 +1111,7 @@ Try_lookup:
             }
             fprintf(stderr, "iat_evict_entry: rte_hash_lookup_data "
                             "keeps returning EAGAIN, give up to evict\n");
-            return -1;
+            return 0;
         }
         fprintf(stderr, "Error during rte_hash_lookup_data: %d\n", ret);
         return -1;
@@ -1145,7 +1149,7 @@ void iat_flush_timeout(uint16_t port_id,
         Try_evict:
             if ((ret = rte_hash_del_key(ctx->tbl, next_key)) < 0)
             {
-                if (ret == -EAGAIN || errno == EAGAIN)
+                if (ret == -EAGAIN)
                 {
                     retry_count++;
                     if (retry_count <= 3)
@@ -1156,7 +1160,7 @@ void iat_flush_timeout(uint16_t port_id,
                                     "keeps returning EAGAIN\n");
                     continue;
                 }
-                if (ret == -ENOENT || errno == ENOENT)
+                if (ret == -ENOENT)
                 {
                     /* Entry not found, nothing to free */
                     continue;
@@ -1202,23 +1206,22 @@ iat_get_timeout(struct flow_iat_entry *entry,
      * if payload len is not multiple of eMSS
      * it is the end of cwnd or end of content
      */
-    // if ((proto_id == IPPROTO_TCP) &&
-    //     (data_len % orig_segsz))
-    // {
-    //     return 0;
-    // }
+    if (data_len % orig_segsz)
+    {
+        return 0;
+    }
 
-    // if (entry->global_avg_iat > IAT_THRESHOLD_1G * 1.5)
-    // {
-    //     /* too large timeout window, give up delaying */
-    //     return 0;
-    // }
+    if (entry->global_avg_iat > IAT_THRESHOLD_1G)
+    {
+        /* too large timeout window, give up delaying */
+        return 0;
+    }
 
-    // if (iat_get_yield(entry) > PER_FLOW_YIELD_THRESHOLD)
-    // {
-    //     /* already high yield flow, no need to delay */
-    //     return 0;
-    // }
+    if (iat_get_yield(entry) > PER_FLOW_YIELD_THRESHOLD)
+    {
+        /* already high yield flow, no need to delay */
+        return 0;
+    }
 
     /* try update first */
     entry->last_update = now_ns;
@@ -1274,6 +1277,7 @@ iat_get_timeout(struct flow_iat_entry *entry,
     }
 
     timeout_ns = avg_iat * timeout_factor[missing_segs_nb];
+    RTE_SET_USED(cutoff_ns);
 
     return timeout_ns;
 #endif
