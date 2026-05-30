@@ -115,6 +115,12 @@ struct px_latent_ctx
     uint16_t requested_reta_size;
     struct rte_eth_rss_reta_entry64 reta_entry[RETA_CONF_SIZE];
     uint16_t reta_size;
+
+    /* RSS config captured at configure time, reused by px_latent_flow_create()
+     * when expanding a QUEUE/RSS action onto a RXQ's latent queue subset. */
+    uint64_t flow_rss_hf;
+    uint8_t *flow_rss_key;
+    uint8_t flow_rss_key_len;
 };
 /*----------------------------------------------------------------------------*/
 static inline void
@@ -594,8 +600,6 @@ px_latent_flow_create(uint16_t port_id,
 int px_eth_dev_rss_reta_update(uint16_t port_id,
                                struct rte_eth_rss_reta_entry64 *reta_conf,
                                uint16_t reta_size);
-/*----------------------------------------------------------------------------*/
-int reta_runtime_update(uint16_t port_id);
 /*----------------------------------------------------------------------------*/
 int px_eth_dump_reta(uint16_t port_id);
 /*----------------------------------------------------------------------------*/

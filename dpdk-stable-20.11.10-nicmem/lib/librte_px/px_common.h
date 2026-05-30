@@ -464,11 +464,8 @@ struct px_dev
     /* whether nicmem context initialized */
     uint8_t initialized_nicmem : 1;
 
-    /* whether dynamic RXQ scaling is initialized */
-    uint8_t initialized_dyn_rxq : 1;
-
-    /* whether hairpin context is configured */
-    uint8_t configured_hairpin : 1;
+    /* dynamic RXQ scaling mode: 0 = off, 1 = dynamic (gears), 2 = static (full) */
+    uint8_t initialized_dyn_rxq : 2;
 
     /* whether hairpin is initialized */
     uint8_t initialized_hairpin : 1;

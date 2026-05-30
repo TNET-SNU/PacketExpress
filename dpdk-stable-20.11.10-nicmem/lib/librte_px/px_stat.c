@@ -801,7 +801,7 @@ void px_stat_print(uint16_t main_core_id)
 #endif
 
     /* handling gear using current stats */
-    if (px_dev->initialized_dyn_rxq)
+    if (px_dev->initialized_dyn_rxq == 1)
     {
         cur.tput = gbps_total;
         cur.yield = yield_total;

@@ -29,14 +29,8 @@ echo "[INFO] ${BESSD_NAME} setup started at $(date)" >&2
 cd "$UPF_SCRIPT_DIR"
 sudo -n ./reset_interfaces.sh > "$RESET_LOG" 2>&1 || true
 
-# 2. Setup interfaces.
-sudo -n "./${SETUP_SCRIPT}" > "$SETUP_LOG" 2>&1
-setup_rc=$?
-if [[ "$setup_rc" -ne 0 ]]; then
-  echo "[ERROR] ${SETUP_SCRIPT} failed rc=${setup_rc}" >&2
-  tail -80 "$SETUP_LOG" >&2 || true
-  exit "$setup_rc"
-fi
+# 2. Setup interfaces (best-effort; do not bail on non-zero rc).
+sudo -n "./${SETUP_SCRIPT}" > "$SETUP_LOG" 2>&1 || true
 
 # 3. Kill stale ${BESSD_NAME}.
 sudo -n pkill -KILL -x "${BESSD_NAME}" >/dev/null 2>&1 || true

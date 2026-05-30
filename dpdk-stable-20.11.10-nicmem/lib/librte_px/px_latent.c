@@ -4,6 +4,69 @@ struct px_latent_ctx g_latent_ctx[RTE_MAX_ETHPORTS] = {0};
 static uint16_t g_num_ports = 0;
 static uint16_t g_num_cores = 0;
 /*----------------------------------------------------------------------------*/
+/**
+ * Build gear->rss_queues[]: maps an RSS hash bucket (index) to a latent RXQ
+ * (LXQ). Two modes, selected by whether the application supplied a RETA:
+ *
+ *  (1) No app RETA (requested_reta_size == 0): the NIC's default RSS spreads
+ *      bucket k onto app RXQs in *contiguous blocks*, i.e. bucket k belongs to
+ *      app RXQ (k / ratio). This is the original behavior used by PXGW / UPF /
+ *      NAT.
+ *
+ *  (2) App RETA present (e.g. DPVS, which uses an *interleaved* RETA where
+ *      bucket k belongs to app RXQ k % num_rxq): read the owning app RXQ q from
+ *      the requested RETA and expand it onto q's LXQ subset [q*ratio,
+ *      q*ratio+ratio) consistently.
+ *
+ * Both modes share one formula; they only differ in how the owning RXQ q and
+ * the in-subset position are derived:
+ *
+ *      rss_queues[k] = q * ratio + offset_in_subset
+ *
+ * where ratio == max_lxq_per_rxq == max_rxq / num_rxq (subset size), and for
+ * mode (2) offset_in_subset == (occ[q]++ / step) with
+ * step == reta_size / gear->num_lxq (512->1, 128->4, 32->16, 8->64).
+ */
+static void
+px_latent_build_gear_queues(struct px_latent_ctx *ctx,
+                            struct px_latent_gear *gear)
+{
+    uint16_t ratio = ctx->max_rxq / ctx->num_rxq; /* subset size per RXQ */
+    uint16_t i, j, k;
+
+    if (ctx->requested_reta_size == 0)
+    {
+        /* (1) original contiguous-block mapping */
+        uint16_t num_lxq_per_rxq = gear->num_lxq / ctx->num_rxq;
+        for (i = 0; i < ctx->num_rxq; i++)
+        {
+            for (j = 0; j < ratio; j++)
+            {
+                gear->rss_queues[i * ratio + j] =
+                    i * ratio + j % num_lxq_per_rxq;
+            }
+        }
+        return;
+    }
+
+    /* (2) RETA-aware mapping.
+     * step = how many same-RXQ buckets collapse onto one LXQ. */
+    uint16_t step = ctx->reta_size / gear->num_lxq;
+    uint16_t occ[RTE_MAX_QUEUES_PER_PORT] = {0};
+
+    if (!step)
+        step = 1;
+    for (k = 0; k < ctx->reta_size; k++)
+    {
+        uint16_t q = ctx->requested_reta_entry[k / RTE_RETA_GROUP_SIZE]
+                         .reta[k % RTE_RETA_GROUP_SIZE];
+        uint16_t off = occ[q]++ / step;
+        if (off >= ratio) /* safety: keep inside subset on unbalanced RETA */
+            off = ratio - 1;
+        gear->rss_queues[k] = q * ratio + off;
+    }
+}
+/*----------------------------------------------------------------------------*/
 void px_latent_configure(uint16_t port_id,
                          uint16_t num_rxq,
                          uint16_t max_rxq,
@@ -14,8 +77,8 @@ void px_latent_configure(uint16_t port_id,
 {
     struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
     struct px_latent_gear *gear;
-    uint16_t max_lxq_per_rxq, num_lxq_per_rxq;
-    uint16_t gear_idx, i, j;
+    uint16_t num_lxq_per_rxq;
+    uint16_t gear_idx;
 
     /* make configure idempotent */
     if (latent_ctx->flow_initialized)
@@ -34,7 +97,9 @@ void px_latent_configure(uint16_t port_id,
     latent_ctx->num_gears = 4;
     latent_ctx->reta_size = reta_size;
     latent_ctx->cutoff_ns = cutoff_ns;
-    max_lxq_per_rxq = max_rxq / num_rxq;
+    latent_ctx->flow_rss_hf = eth_conf->rx_adv_conf.rss_conf.rss_hf;
+    latent_ctx->flow_rss_key = eth_conf->rx_adv_conf.rss_conf.rss_key;
+    latent_ctx->flow_rss_key_len = eth_conf->rx_adv_conf.rss_conf.rss_key_len;
 
     /* prepare available gears */
     for (gear_idx = 0; gear_idx < latent_ctx->num_gears; gear_idx++)
@@ -68,15 +133,10 @@ void px_latent_configure(uint16_t port_id,
         }
         gear->valid = 1;
 
-        /* initialize DMA RSS queues to use 1 latent RXQ */
-        for (i = 0; i < latent_ctx->num_rxq; i++)
-        {
-            for (j = 0; j < max_lxq_per_rxq; j++)
-            {
-                gear->rss_queues[i * max_lxq_per_rxq + j] =
-                    i * max_lxq_per_rxq + j % num_lxq_per_rxq;
-            }
-        }
+        /* build RSS queues (bucket -> LXQ). Mode is chosen inside the helper:
+         * contiguous-block when no app RETA, RETA-aware once an app RETA has
+         * been supplied via px_eth_dev_rss_reta_update(). */
+        px_latent_build_gear_queues(latent_ctx, gear);
 
         // /* below is for debugging */
         // px_dump_rss_queue(gear->rss_queues, max_rxq);
@@ -1582,8 +1642,74 @@ void px_reta_update(uint16_t port_id, uint16_t rss_len)
 }
 /*----------------------------------------------------------------------------*/
 /**
- * ToDo: Make px_action and px_queue dynamic
+ * Expand QUEUE/RSS actions onto each app RXQ's latent queue (LXQ) subset.
+ *
+ * With latent RXQ scaling, app RXQ N owns the contiguous LXQ subset
+ * [N*ratio, N*ratio+ratio), ratio = max_rxq / num_rxq. A QUEUE action to RXQ N
+ * is rewritten to an RSS action spreading over all of N's LXQs; an RSS action
+ * over {N, M, ...} is rewritten to RSS over the union of their subsets. This
+ * keeps a steering rule's traffic inside the owning worker's LXQs.
+ *
+ * Only used in static mode, where every LXQ in a subset is polled (so no
+ * packet is steered to an unpolled queue). out[]/rss[]/qbuf[] are caller
+ * scratch (one rss/qbuf slot per rewritten action).
  */
+static void
+px_latent_expand_flow_actions(struct px_latent_ctx *ctx,
+                              const struct rte_flow_action in[],
+                              struct rte_flow_action out[],
+                              struct rte_flow_action_rss rss[],
+                              uint16_t qbuf[][RTE_MAX_QUEUES_PER_PORT])
+{
+    uint16_t ratio = ctx->max_rxq / ctx->num_rxq;
+    int i, j = 0;
+
+    for (i = 0; i < PX_FLOW_MAX_ACTIONS; i++)
+    {
+        out[i] = in[i];
+        if (in[i].type == RTE_FLOW_ACTION_TYPE_END)
+            break;
+        if (j >= PX_FLOW_MAX_ACTIONS)
+            continue; /* out of scratch slots: copy the rest as-is */
+
+        if (in[i].type == RTE_FLOW_ACTION_TYPE_QUEUE)
+        {
+            uint16_t q =
+                ((const struct rte_flow_action_queue *)in[i].conf)->index;
+            uint16_t n = 0, k;
+            for (k = 0; k < ratio && n < RTE_MAX_QUEUES_PER_PORT; k++)
+                qbuf[j][n++] = q * ratio + k;
+            rss[j] = (struct rte_flow_action_rss){
+                .func = RTE_ETH_HASH_FUNCTION_DEFAULT,
+                .level = 0,
+                .types = ctx->flow_rss_hf,
+                .key_len = ctx->flow_rss_key_len,
+                .key = ctx->flow_rss_key,
+                .queue_num = n,
+                .queue = qbuf[j]};
+            out[i].type = RTE_FLOW_ACTION_TYPE_RSS;
+            out[i].conf = &rss[j];
+            j++;
+        }
+        else if (in[i].type == RTE_FLOW_ACTION_TYPE_RSS)
+        {
+            const struct rte_flow_action_rss *src = in[i].conf;
+            uint16_t n = 0, m, k;
+            for (m = 0; m < src->queue_num; m++)
+            {
+                uint16_t base = src->queue[m] * ratio;
+                for (k = 0; k < ratio && n < RTE_MAX_QUEUES_PER_PORT; k++)
+                    qbuf[j][n++] = base + k;
+            }
+            rss[j] = *src;
+            rss[j].queue_num = n;
+            rss[j].queue = qbuf[j];
+            out[i].conf = &rss[j];
+            j++;
+        }
+    }
+}
+/*----------------------------------------------------------------------------*/
 int px_latent_flow_validate(uint16_t port_id,
                             const struct rte_flow_attr *attr,
                             const struct rte_flow_item pattern[],
@@ -1592,69 +1718,19 @@ int px_latent_flow_validate(uint16_t port_id,
 {
     struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
     struct rte_flow_action px_action[PX_FLOW_MAX_ACTIONS];
-    struct rte_flow_action_queue px_queue[PX_FLOW_MAX_ACTIONS];
-    // struct rte_flow_action_rss px_rss[PX_FLOW_MAX_ACTIONS];
-    uint16_t queue_idx;
-    int i = 0, j = 0;
-    static int inner_idx = 0;
+    struct rte_flow_action_rss px_rss[PX_FLOW_MAX_ACTIONS];
+    uint16_t px_qbuf[PX_FLOW_MAX_ACTIONS][RTE_MAX_QUEUES_PER_PORT];
 
-    if (attr->ingress == 0)
-    {
+    /* Pass through when ingress is off or there is exactly one LXQ per RXQ
+     * (ratio <= 1, i.e. dynamic RXQ scaling off): no expansion needed. */
+    if (attr->ingress == 0 || latent_ctx->max_rxq <= latent_ctx->num_rxq)
         return rte_flow_validate(port_id, attr, pattern, actions, error);
-    }
 
-    /* find queue actions and adjust them considering latent RXQs */
-    while (i < PX_FLOW_MAX_ACTIONS)
-    {
-        px_action[i] = actions[i];
-        if (px_action[i].type == RTE_FLOW_ACTION_TYPE_END)
-        {
-            break;
-        }
-        if (px_action[i].type == RTE_FLOW_ACTION_TYPE_VOID)
-        {
-            continue;
-        }
-        if (px_action[i].type == RTE_FLOW_ACTION_TYPE_QUEUE)
-        {
-            queue_idx =
-                ((const struct rte_flow_action_queue *)px_action[i].conf)->index;
-            px_queue[j].index = queue_idx * latent_ctx->num_lxq +
-                                (inner_idx++ % latent_ctx->num_lxq);
-
-            fprintf(stdout,
-                    "adjusted qid: %u --> %u\n",
-                    queue_idx,
-                    px_queue[j].index);
-
-            px_action[i].conf = &px_queue[j];
-            if (++j >= PX_FLOW_MAX_ACTIONS)
-            {
-                fprintf(stdout,
-                        "px_latent_flow_create: too many queue actions\n");
-                break;
-            }
-        }
-        // if (px_action[i].type == RTE_FLOW_ACTION_TYPE_RSS)
-        // {
-        //     struct rte_flow_action_rss *rss = &px_rss[j++];
-        //     rss->hash = ((const struct rte_flow_action_rss *)px_action[i].conf)->hash;
-        //     rss->level = ((const struct rte_flow_action_rss *)px_action[i].conf)->level;
-        //     px_action[i].conf = rss;
-        // }
-        if (++i >= PX_FLOW_MAX_ACTIONS)
-        {
-            fprintf(stdout, "px_latent_flow_create: too many actions\n");
-            break;
-        }
-    }
-
+    px_latent_expand_flow_actions(latent_ctx, actions, px_action,
+                                  px_rss, px_qbuf);
     return rte_flow_validate(port_id, attr, pattern, px_action, error);
 }
 /*----------------------------------------------------------------------------*/
-/**
- * ToDo: Make px_action and px_queue dynamic
- */
 struct rte_flow *
 px_latent_flow_create(uint16_t port_id,
                       const struct rte_flow_attr *attr,
@@ -1664,56 +1740,16 @@ px_latent_flow_create(uint16_t port_id,
 {
     struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
     struct rte_flow_action px_action[PX_FLOW_MAX_ACTIONS];
-    struct rte_flow_action_queue px_queue[PX_FLOW_MAX_ACTIONS];
-    // struct rte_flow_action_rss px_rss[PX_FLOW_MAX_ACTIONS];
-    uint16_t queue_idx;
-    int i = 0, j = 0;
-    static int inner_idx = 0;
+    struct rte_flow_action_rss px_rss[PX_FLOW_MAX_ACTIONS];
+    uint16_t px_qbuf[PX_FLOW_MAX_ACTIONS][RTE_MAX_QUEUES_PER_PORT];
 
-    if (attr->ingress == 0)
-    {
+    /* Pass through when ingress is off or there is exactly one LXQ per RXQ
+     * (ratio <= 1, i.e. dynamic RXQ scaling off): no expansion needed. */
+    if (attr->ingress == 0 || latent_ctx->max_rxq <= latent_ctx->num_rxq)
         return rte_flow_create(port_id, attr, pattern, actions, error);
-    }
 
-    /* find queue actions and adjust them considering latent RXQs */
-    while (i < PX_FLOW_MAX_ACTIONS)
-    {
-        px_action[i] = actions[i];
-        if (px_action[i].type == RTE_FLOW_ACTION_TYPE_END)
-        {
-            break;
-        }
-        if (px_action[i].type == RTE_FLOW_ACTION_TYPE_VOID)
-        {
-            continue;
-        }
-        if (px_action[i].type == RTE_FLOW_ACTION_TYPE_QUEUE)
-        {
-            queue_idx =
-                ((const struct rte_flow_action_queue *)px_action[i].conf)->index;
-            px_queue[j].index = queue_idx * latent_ctx->num_lxq +
-                                (inner_idx++ % latent_ctx->num_lxq);
-
-            fprintf(stdout,
-                    "adjusted qid: %u --> %u\n",
-                    queue_idx,
-                    px_queue[j].index);
-
-            px_action[i].conf = &px_queue[j];
-            if (++j >= PX_FLOW_MAX_ACTIONS)
-            {
-                fprintf(stdout,
-                        "px_latent_flow_create: too many queue actions\n");
-                break;
-            }
-        }
-        if (++i >= PX_FLOW_MAX_ACTIONS)
-        {
-            fprintf(stdout, "px_latent_flow_create: too many actions\n");
-            break;
-        }
-    }
-
+    px_latent_expand_flow_actions(latent_ctx, actions, px_action,
+                                  px_rss, px_qbuf);
     return rte_flow_create(port_id, attr, pattern, px_action, error);
 }
 /*----------------------------------------------------------------------------*/
@@ -1723,8 +1759,9 @@ int px_eth_dev_rss_reta_update(uint16_t port_id,
 {
     struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
     struct rte_eth_rss_reta_entry64 *reta_entry;
-    int ret, i, j, group_num, inner_len;
-    uint16_t num_lxq_per_rxq;
+    uint16_t occ[RTE_MAX_QUEUES_PER_PORT] = {0};
+    uint16_t ratio, gear_idx, k;
+    int ret, group_num;
 
     /* check initialized */
     if (!latent_ctx->flow_initialized)
@@ -1739,30 +1776,73 @@ int px_eth_dev_rss_reta_update(uint16_t port_id,
         return -1;
     }
 
-    /* backup requested reta */
-    memcpy(latent_ctx->requested_reta_entry, reta_conf, reta_size);
-    latent_ctx->requested_reta_size = reta_size;
+    /* No latent expansion (ratio <= 1, i.e. dynamic RXQ scaling off): the app
+     * RETA already targets the real RX queues, so program it unchanged. */
+    if (latent_ctx->max_rxq <= latent_ctx->num_rxq)
+        return rte_eth_dev_rss_reta_update(port_id, reta_conf, reta_size);
 
-    num_lxq_per_rxq = latent_ctx->num_lxq / latent_ctx->num_rxq;
+    /* backup the app-requested RETA (bucket -> app RXQ id) */
     group_num = CEIL_DIV(reta_size, RTE_RETA_GROUP_SIZE);
-    inner_len = RTE_RETA_GROUP_SIZE;
-    reta_entry = latent_ctx->reta_entry;
-    for (i = 0; i < group_num; i++)
+    memcpy(latent_ctx->requested_reta_entry, reta_conf,
+           group_num * sizeof(struct rte_eth_rss_reta_entry64));
+    latent_ctx->requested_reta_size = reta_size;
+    latent_ctx->reta_size = reta_size;
+
+    /* now that we have an app RETA, rebuild every valid gear's flow-rule
+     * rss_queues using the RETA-aware mapping (px_latent_build_gear_queues
+     * picks the RETA branch because requested_reta_size != 0).
+     *
+     * px_latent_gear_init() may have already installed the gear flow rules
+     * (built from the default, no-RETA queues) if it ran before this reta
+     * update. In that case replace each installed rule so it reflects the
+     * RETA-aware rss_queues we just rebuilt. If the rules have not been
+     * installed yet (gear->flow == NULL), px_latent_gear_init() will pick up
+     * the rebuilt queues on its own. We rely on synchronous rte_flow APIs
+     * here, so no worker-thread notification is needed. */
+    for (gear_idx = 0; gear_idx < latent_ctx->num_gears; gear_idx++)
     {
-        reta_entry[i] = reta_conf[i];
-        if ((latent_ctx->requested_reta_size % RTE_RETA_GROUP_SIZE) &&
-            (i == group_num - 1))
+        struct px_latent_gear *gear = &latent_ctx->gears[gear_idx];
+        struct rte_flow_error error;
+
+        if (!gear->valid)
+            continue;
+
+        px_latent_build_gear_queues(latent_ctx, gear);
+
+        if (!gear->flow)
+            continue; /* not installed yet, gear_init() will use new queues */
+
+        if (rte_flow_destroy(port_id, gear->flow, &error) < 0)
         {
-            inner_len = latent_ctx->requested_reta_size % RTE_RETA_GROUP_SIZE;
+            fprintf(stderr,
+                    "[port %d] rte_flow_destroy failed for gear %d: %s\n",
+                    port_id, gear->index, error.message);
         }
-        for (j = 0; j < inner_len; j++)
+        gear->flow = rte_flow_create(port_id, &gear->attr,
+                                     gear->patterns, gear->actions,
+                                     &error);
+        if (!gear->flow)
         {
-            reta_entry[i].reta[j] +=
-                ((i * RTE_RETA_GROUP_SIZE + j) /
-                 num_lxq_per_rxq *
-                 num_lxq_per_rxq) %
-                (latent_ctx->max_rxq);
+            fprintf(stderr,
+                    "[port %d] rte_flow_create failed for gear %d: %s\n",
+                    port_id, gear->index, error.message);
+            return -1;
         }
+    }
+
+    /* program the device RETA for the top (native, no-flow-rule) gear that
+     * uses all max_rxq LXQs: full expansion, one unique LXQ per bucket
+     * (equivalent to step == 1). */
+    ratio = latent_ctx->max_rxq / latent_ctx->num_rxq;
+    reta_entry = latent_ctx->reta_entry;
+    for (k = 0; k < group_num; k++)
+        reta_entry[k].mask = UINT64_MAX;
+    for (k = 0; k < reta_size; k++)
+    {
+        uint16_t q = reta_conf[k / RTE_RETA_GROUP_SIZE]
+                         .reta[k % RTE_RETA_GROUP_SIZE];
+        reta_entry[k / RTE_RETA_GROUP_SIZE].reta[k % RTE_RETA_GROUP_SIZE] =
+            q * ratio + occ[q]++;
     }
 
     fprintf(stderr, "before)\n");
@@ -1783,52 +1863,6 @@ int px_eth_dev_rss_reta_update(uint16_t port_id,
         })
 
     return ret;
-}
-/*----------------------------------------------------------------------------*/
-int reta_runtime_update(uint16_t port_id)
-{
-    struct px_latent_ctx *latent_ctx = &g_latent_ctx[port_id];
-    struct rte_eth_rss_reta_entry64 *reta_entry;
-    int i, j, group_num, inner_len;
-    uint16_t num_lxq_per_rxq;
-
-    /* check initialized */
-    if (!latent_ctx->flow_initialized)
-    {
-        fprintf(stderr, "ReTa context is not initialized\n");
-        return -1;
-    }
-
-    num_lxq_per_rxq = latent_ctx->num_lxq / latent_ctx->num_rxq;
-    group_num = CEIL_DIV(latent_ctx->requested_reta_size, RTE_RETA_GROUP_SIZE);
-    inner_len = RTE_RETA_GROUP_SIZE;
-    reta_entry = latent_ctx->reta_entry;
-    for (i = 0; i < group_num; i++)
-    {
-        reta_entry[i] = latent_ctx->requested_reta_entry[i];
-        if ((latent_ctx->requested_reta_size % RTE_RETA_GROUP_SIZE) &&
-            (i == group_num - 1))
-        {
-            inner_len = latent_ctx->requested_reta_size % RTE_RETA_GROUP_SIZE;
-        }
-        for (j = 0; j < inner_len; j++)
-        {
-            reta_entry[i].reta[j] +=
-                ((i * RTE_RETA_GROUP_SIZE + j) /
-                 num_lxq_per_rxq *
-                 num_lxq_per_rxq) %
-                (latent_ctx->max_rxq);
-        }
-    }
-
-    fprintf(stderr, "before)\n");
-    px_dump_reta(latent_ctx->requested_reta_entry, latent_ctx->requested_reta_size);
-    fprintf(stderr, "after)\n");
-    px_dump_reta(latent_ctx->reta_entry, latent_ctx->requested_reta_size);
-
-    return rte_eth_dev_rss_reta_update(port_id,
-                                       latent_ctx->reta_entry,
-                                       latent_ctx->requested_reta_size);
 }
 /*----------------------------------------------------------------------------*/
 int px_eth_dump_reta(uint16_t port_id)

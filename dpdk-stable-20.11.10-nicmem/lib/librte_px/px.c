@@ -3392,8 +3392,10 @@ int px_init(uint16_t port_id,
         return -1;
     }
 
-    /* after async API initialization, initialize dynamic RX queues */
-    if (!px_dev->initialized_dyn_rxq)
+    /* after async API initialization, initialize dynamic RX queues.
+     * mode 0 (off) and mode 2 (static) both pin num_lxq to max_rxq and skip
+     * the gear machinery; only mode 1 (dynamic) sets up shiftable gears. */
+    if (px_dev->initialized_dyn_rxq != 1)
     {
         px_dev->num_lxq = px_dev->max_rxq;
     }
@@ -3718,13 +3720,16 @@ int px_eth_dev_configure(uint16_t port_id,
             num_rxq, max_rxq, max_lxq_per_rxq);
 
     /* initialize ReTa entry */
-    px_latent_configure(port_id,
-                        num_rxq,
-                        max_rxq,
-                        num_txq,
-                        px_dev->reta_size,
-                        px_dev->cutoff_ns,
-                        eth_conf);
+    if (dyn_rxq)
+    {
+        px_latent_configure(port_id,
+                            num_rxq,
+                            max_rxq,
+                            num_txq,
+                            px_dev->reta_size,
+                            px_dev->cutoff_ns,
+                            eth_conf);
+    }
 
     /* configure port */
     ret = rte_eth_dev_configure(port_id,
@@ -4331,7 +4336,7 @@ px_eth_tx_burst(uint16_t port_id,
                 "rte_eth_tx_burst (1): %d/%d sent\n",
                 port_id, queue_id,
                 offset, nb_pkts_after_uso);
-#if !USE_USO
+        // #if !USE_USO
         struct rte_mbuf *tmp = temp_batch[offset];
         fprintf(stderr,
                 "[mbuf] nb_segs: %u, pkt_len: %u, "
@@ -4344,13 +4349,19 @@ px_eth_tx_burst(uint16_t port_id,
                 tmp->l3_len,
                 tmp->l4_len,
                 tmp->ol_flags,
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
                 tmp->ol_flags & PKT_TX_IP_CKSUM,
                 tmp->ol_flags & PKT_TX_TCP_CKSUM,
                 tmp->ol_flags & PKT_TX_TCP_SEG,
+#else
+                tmp->ol_flags & RTE_MBUF_F_TX_IP_CKSUM,
+                tmp->ol_flags & RTE_MBUF_F_TX_TCP_CKSUM,
+                tmp->ol_flags & RTE_MBUF_F_TX_TCP_SEG,
+#endif
                 tmp->tso_segsz);
         rte_exit(EXIT_FAILURE,
                  "TX burst failed (1): not all packets sent\n");
-#endif
+        // #endif
     }
     for (i = offset; i < nb_pkts_after_uso; i++)
     {
@@ -4386,7 +4397,7 @@ px_eth_tx_burst(uint16_t port_id,
                     "rte_eth_tx_burst (2): %d/%d sent\n",
                     port_id, queue_id,
                     offset, read_px_tx_ring);
-#if !USE_USO
+            // #if !USE_USO
             struct rte_mbuf *tmp = temp_batch[offset];
             fprintf(stderr,
                     "[mbuf] nb_segs: %u, pkt_len: %u, "
@@ -4399,13 +4410,19 @@ px_eth_tx_burst(uint16_t port_id,
                     tmp->l3_len,
                     tmp->l4_len,
                     tmp->ol_flags,
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
                     tmp->ol_flags & PKT_TX_IP_CKSUM,
                     tmp->ol_flags & PKT_TX_TCP_CKSUM,
                     tmp->ol_flags & PKT_TX_TCP_SEG,
+#else
+                    tmp->ol_flags & RTE_MBUF_F_TX_IP_CKSUM,
+                    tmp->ol_flags & RTE_MBUF_F_TX_TCP_CKSUM,
+                    tmp->ol_flags & RTE_MBUF_F_TX_TCP_SEG,
+#endif
                     tmp->tso_segsz);
             rte_exit(EXIT_FAILURE,
                      "TX burst failed (2): not all packets sent\n");
-#endif
+            // #endif
         }
         for (i = offset; i < read_px_tx_ring; i++)
         {

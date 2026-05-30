@@ -57,10 +57,10 @@ CFLAGS += -Wall -Werror -Wstrict-prototypes -Wmissing-prototypes -mcmodel=medium
 # Choose one of below
 
 # 1. Using 1500B MTU to 9000B MTU translation
-# CFLAGS += -D JUMBO_FRAME=0
+CFLAGS += -D JUMBO_FRAME=0
 
 # 2. Using 9000B MTU by default
-CFLAGS += -D JUMBO_FRAME=1
+# CFLAGS += -D JUMBO_FRAME=1
 
 ################################################################################
 
@@ -107,10 +107,13 @@ CFLAGS += -D USE_PX=1
 # Choose one of below
 
 # 1. Dynamic RXQ scaling on
-CFLAGS += -D USE_DYNRXQ=1
+# CFLAGS += -D USE_DYNRXQ=1
 
 # 2. Dynamic RXQ scaling off
 # CFLAGS += -D USE_DYNRXQ=0
+
+# 3. Static RXQ scaling on
+CFLAGS += -D USE_DYNRXQ=2
 
 ################################################################################
 
@@ -127,10 +130,10 @@ CFLAGS += -D CUTOFF_NS=0
 # Choose one of below
 
 # 1. NICMEM on (To use nicmem, make sure to use DPDK version 20.11)
-# CFLAGS += -D NICMEM=1
+CFLAGS += -D NICMEM=1
 
 # 2. NICMEM off
-CFLAGS += -D NICMEM=0
+# CFLAGS += -D NICMEM=0
 
 ################################################################################
 
