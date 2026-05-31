@@ -32,8 +32,14 @@ ssh "${SSH_OPTS[@]}" "$RECV_HOST" "
   echo '--- after cpu online ---'
   lscpu -e=CPU,ONLINE | head -20
   lscpu -e=CPU,ONLINE | tail -20
-  modprobe -r mlx5_ib mlx5_vdpa mlx5_fwctl mlx5_core
-  modprobe mlx5_core
+  echo '--- reload mlx5 driver (resets per-core IRQ affinity; RX all lands on'
+  echo '    core 0 until this runs). modprobe needs root: use sudo -n and the'
+  echo '    /sbin/modprobe path that sudoers allows NOPASSWD.'
+  for m in mlx5_ib mlx5_vdpa mlx5_fwctl mlx5_core; do
+    sudo -n /sbin/modprobe -r \$m 2>/dev/null
+  done
+  sudo -n /sbin/modprobe mlx5_core
+  echo modprobe_reload_rc=\$?
 
   echo '--- before link ---'
   ip link show dev ${RECV_IFACE}

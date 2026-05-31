@@ -127,7 +127,14 @@ for case_name in "${CASES[@]}"; do
     "$gbps_pxgw" >> "$OUT"
 done
 
+# Restore stream3 (CPUs online + mlx5 reload) and reset link/MTU/GRO/LRO on both.
 ./restore_12_streams.sh >/dev/null 2>&1 || true
+
+# restore only re-runs px-one-arm on stream3; re-setup the one-arm topology on
+# BOTH endpoints (stream3 + stream4) so the testbed is left ready for reuse.
+if [[ -x "${AE_DIR}/px-one-arm.sh" ]]; then
+  "${AE_DIR}/px-one-arm.sh" 9000 >/dev/null 2>&1 || true
+fi
 
 if command -v column >/dev/null 2>&1; then
   column -t -s $'\t' "$OUT" > "$PRETTY_OUT"
