@@ -186,10 +186,10 @@ CXXFLAGS += -D CUTOFF_NS=0
 # Choose one of below
 
 # 1. NICMEM on (To use nicmem, make sure to use DPDK version 20.11)
-CXXFLAGS += -D NICMEM=1
+# CXXFLAGS += -D NICMEM=1
 
 # 2. NICMEM off
-# CXXFLAGS += -D NICMEM=0
+CXXFLAGS += -D NICMEM=0
 
 ################################################################################
 

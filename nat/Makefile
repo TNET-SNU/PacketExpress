@@ -20,9 +20,13 @@ endif
 ######################################################################
 MTCP_FLD    = ../mOS
 MTCP_INC    = -I$(MTCP_FLD)/core/src/include
-MTCP_TARGET = $(MTCP_FLD)/core/lib/libmtcp.a
-LIBS        += -lmtcp -lssl -lcrypto -lnuma -lpthread -lrt
-LIB_DIR     += -L$(MTCP_FLD)/core/lib
+# MTCP_TARGET = ./libmtcp0.a
+# MTCP_TARGET = ./libmtcp1.a
+# MTCP_TARGET = ./libmtcp2.a
+# MTCP_TARGET = ./libmtcp3.a
+MTCP_TARGET = ./libmtcp4.a
+LIBS        += -lssl -lcrypto -lnuma -lpthread -lrt
+LIB_DIR     +=
 CMN_DIR     = ./common
 CMN_INC     = -I$(CMN_DIR)
 UTIL_INC    = -I$(MTCP_FLD)/util/include
@@ -32,8 +36,8 @@ PKGCONF = pkg-config
 DPDK_CFLAGS = $(shell $(PKGCONF) --cflags libdpdk)
 DPDK_LDFLAGS += $(shell $(PKGCONF) --libs libdpdk)
 INC += ${DPDK_CFLAGS}
-LIBS += -pthread -lrt ${MTCP_FLD}/core/lib/libmtcp.a -lnuma -lmtcp -lpthread -libverbs -lm -lrt -ldl ${DPDK_LDFLAGS}
-LIBS += -m64 -g -pthread -lrt -march=native -Wl,-export-dynamic -Wl,-lnuma -Wl,-lmtcp -Wl,-lpthread -Wl,-lrt -Wl,-ldl
+LIBS += -pthread -lrt -lnuma -lpthread -libverbs -lm -lrt -ldl ${DPDK_LDFLAGS}
+LIBS += -m64 -g -pthread -lrt -march=native -Wl,-export-dynamic -Wl,-lnuma -Wl,-lpthread -Wl,-lrt -Wl,-ldl
 
 ######################################################################
 
@@ -44,7 +48,7 @@ $(MTCP_TARGET):
 
 $(TARGET): $(MTCP_TARGET) $(TARGET).c $(CMN_DIR)/*.c
 	$(MSG) "   CC $<"
-	$(HIDE) $(GCC) $(GCC_OPT) -o $@ $^ $(DPDK_CFLAGS) $(DPDK_LDFLAGS) $(MTCP_INC) $(CMN_INC) $(UTIL_INC) $(LIB_DIR) $(LIBS) 
+	$(HIDE) $(GCC) $(GCC_OPT) -o $@ $(TARGET).c $(CMN_DIR)/*.c $(DPDK_CFLAGS) $(MTCP_INC) $(CMN_INC) $(UTIL_INC) $(LIB_DIR) -Wl,--start-group $(MTCP_TARGET) -Wl,--end-group $(LIBS)
 
 clean:
 	rm -rf *~ *.o $(TARGET) logs/*

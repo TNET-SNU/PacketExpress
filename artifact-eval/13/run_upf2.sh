@@ -6,7 +6,7 @@ set -uo pipefail
 # script's output and parsers (sweep) can read Gbps lines directly.
 
 BESSD_NAME="bessd2"
-BESSD_DIR="/home/junghan/PacketExpress/artifact-eval/13"
+BESSD_DIR="/home/junghan/PacketExpress/bess/core"
 UPF_SCRIPT_DIR="/home/junghan/PacketExpress/upf-epc/scripts"
 
 # Override with SETUP_SCRIPT=... if your topology needs a different one.
@@ -24,6 +24,12 @@ RUN_UPF_LOG="${LOG_DIR}/${BESSD_NAME}_run_upf_one_arm.log"
 
 # Notes go to stderr so stdout stays clean for bessd output downstream.
 echo "[INFO] ${BESSD_NAME} setup started at $(date)" >&2
+
+# 0. Prime sudo. This box (rapids1) requires a sudo password, but every step
+#    below uses `sudo -n` (non-interactive, never prompts). `sudo -v` prompts
+#    once and caches the credential so the `sudo -n` calls succeed. No-op when
+#    already root or when passwordless sudo is configured (e.g. rapids0).
+sudo -v
 
 # 1. Reset interfaces (best-effort).
 cd "$UPF_SCRIPT_DIR"
@@ -49,4 +55,6 @@ disown
 #    become this script's output verbatim — suitable for Gbps parsing.
 cd "$BESSD_DIR"
 echo "[INFO] launching ${BESSD_NAME} -f in foreground" >&2
-exec sudo -n "./${BESSD_NAME}" -f
+# stdbuf -oL -eL keeps the "[ TOTAL ] ... Gbps" lines line-buffered when stdout
+# is redirected to a file/pipe (block buffering would hide them from parsers).
+exec sudo -n stdbuf -oL -eL "./${BESSD_NAME}" -f

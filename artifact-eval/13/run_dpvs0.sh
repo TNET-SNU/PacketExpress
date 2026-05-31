@@ -7,7 +7,9 @@ set -uo pipefail
 # lines directly.
 
 DPVS_NAME="dpvs0"
-DPVS_DIR="/home/junghan/PacketExpress/artifact-eval/13"
+# dpvs binaries live in dpvs/src/; run from the dpvs root so conf/8.conf
+# resolves and the binary is launched as ./src/dpvsN.
+DPVS_DIR="/home/junghan/PacketExpress/dpvs"
 SETUP_DIR="/home/junghan/PacketExpress/dpvs/bin"
 
 # dpvs is launched with: dpvsN -c conf/8.conf -- -a <pci> ...
@@ -24,10 +26,6 @@ SETUP_LOG="${LOG_DIR}/${DPVS_NAME}_setup.log"
 
 # Notes go to stderr so stdout stays clean for dpvs output downstream.
 echo "[INFO] ${DPVS_NAME} setup started at $(date)" >&2
-
-# 0. Prime sudo (this box needs a password; primes the cache so the later
-#    `sudo -n` calls below succeed). No-op when already root.
-sudo -v
 
 # 1. Kill stale ${DPVS_NAME}.
 sudo -n pkill -KILL -x "${DPVS_NAME}" >/dev/null 2>&1 || true
@@ -47,6 +45,4 @@ disown
 #    become this script's output verbatim — suitable for Gbps parsing.
 cd "$DPVS_DIR"
 echo "[INFO] launching ${DPVS_NAME} -c ${CONF} in foreground" >&2
-# stdbuf -oL -eL keeps the [ TOTAL ] Gbps lines line-buffered when stdout is
-# redirected to a file/pipe (block buffering would hide them from parsers).
-exec sudo -n stdbuf -oL -eL "./${DPVS_NAME}" -c "${CONF}" -- "${PCI_ARGS[@]}"
+exec sudo -n "./src/${DPVS_NAME}" -c "${CONF}" -- "${PCI_ARGS[@]}"

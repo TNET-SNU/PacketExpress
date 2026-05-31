@@ -3,7 +3,7 @@ set -uo pipefail
 
 # Sweep dpvs0..dpvs4, modeled on 9a/all-in-one.sh: an outer loop that calls the
 # per-variant smoke script (run_dpvs_15s_smoke.sh) and parses its one-line
-# "variant=<n> gbps=<g> yield=<y>%" output, with cleanup between runs.
+# "variant=<n> gbps=<g>" output, with cleanup between runs.
 
 AE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$AE_DIR"
@@ -19,9 +19,13 @@ OUT="${AE_DIR}/dpvs_sweep_summary.tsv"
 PRETTY_OUT="${AE_DIR}/dpvs_sweep_summary.txt"
 
 mkdir -p "$RAW_DIR"
-printf 'variant\tgbps\tyield\n' > "$OUT"
+printf 'variant\tgbps\n' > "$OUT"
 
 cleanup_between_dpdk_runs() {
+  # IMPORTANT: declare the loop variable local. run_one() holds `local n` (the
+  # variant), and bash's dynamic scoping means a bare `for n` here would clobber
+  # the caller's n, so every iteration would launch variant 4 (the last value).
+  local n
   ./kill_ae_iperf.sh >/dev/null 2>&1 || true
 
   for n in 0 1 2 3 4; do
@@ -35,15 +39,15 @@ cleanup_between_dpdk_runs() {
   sleep "$DPDK_COOLDOWN_SEC"
 }
 
-# variant -> "gbps\tyield" (parsed from the smoke script's one-line output)
+# variant -> "gbps" (parsed from the smoke script's one-line output)
 run_one() {
   local n="$1"
   local raw_file="${RAW_DIR}/dpvs${n}.txt"
   local err_file="${RAW_DIR}/dpvs${n}.err"
-  local line gbps yield_pct
+  local line gbps
 
-  if [[ ! -x "${AE_DIR}/run_dpvs_15s_smoke.sh" || ! -x "${AE_DIR}/dpvs${n}" ]]; then
-    printf 'N/A\tN/A'
+  if [[ ! -x "${AE_DIR}/run_dpvs_15s_smoke.sh" || ! -x "/home/junghan/PacketExpress/dpvs/src/dpvs${n}" ]]; then
+    printf 'N/A'
     return 0
   fi
 
@@ -55,9 +59,8 @@ run_one() {
 
   line="$(tail -n 1 "$raw_file" 2>/dev/null || true)"
   gbps="$(printf '%s\n' "$line" | sed -nE 's/.*gbps=([^[:space:]]+).*/\1/p')"
-  yield_pct="$(printf '%s\n' "$line" | sed -nE 's/.*yield=([^[:space:]]+).*/\1/p' | sed 's/%$//')"
 
-  printf '%s\t%s' "${gbps:-N/A}" "${yield_pct:-N/A}"
+  printf '%s' "${gbps:-N/A}"
 }
 
 on_signal() {
