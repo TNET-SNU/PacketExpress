@@ -848,17 +848,17 @@ int main(int argc, char **argv)
     optind = 0;
 
     /* choose ARP table */
-    // g_arp_entries = g_arp_entries_normal;
-    // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_normal) /
-    //                      sizeof(struct px_arp_entry);
+    g_arp_entries = g_arp_entries_normal;
+    g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_normal) /
+                         sizeof(struct px_arp_entry);
 
     // g_arp_entries = g_arp_entries_two_hops;
     // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_two_hops) /
     //                      sizeof(struct px_arp_entry);
 
-    g_arp_entries = g_arp_entries_two_hops_dpvs;
-    g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_two_hops_dpvs) /
-                         sizeof(struct px_arp_entry);
+    // g_arp_entries = g_arp_entries_two_hops_dpvs;
+    // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_two_hops_dpvs) /
+    //                      sizeof(struct px_arp_entry);
 
     // g_arp_entries = g_arp_entries_two_hops_for_skew_test;
     // g_arp_entries_size = (uint16_t)sizeof(g_arp_entries_two_hops_for_skew_test) /
@@ -901,16 +901,6 @@ int main(int argc, char **argv)
      */
 
 #if NUM_HAIRPIN_Q
-#if RTE_FLOW_ASYNC_API
-        strdup("-a"),
-        strdup("0000:16:00.0,hp_buf_log_sz=16,dv_flow_en=2,dv_esw_en=1,dv_xmeta_en=4"),
-        strdup("-a"),
-        strdup("0000:40:00.0,hp_buf_log_sz=16,dv_flow_en=2,dv_esw_en=1,dv_xmeta_en=4"),
-        strdup("-a"),
-        strdup("0000:6a:00.0,hp_buf_log_sz=16,dv_flow_en=2,dv_esw_en=1,dv_xmeta_en=4"),
-        strdup("-a"),
-        strdup("0000:94:00.0,hp_buf_log_sz=16,dv_flow_en=2,dv_esw_en=1,dv_xmeta_en=4"),
-#else
         strdup("-a"),
         strdup("0000:16:00.0,hp_buf_log_sz=16,dv_flow_en=1,dv_esw_en=1"),
         strdup("-a"),
@@ -919,7 +909,6 @@ int main(int argc, char **argv)
         strdup("0000:6a:00.0,hp_buf_log_sz=16,dv_flow_en=1,dv_esw_en=1"),
         strdup("-a"),
         strdup("0000:94:00.0,hp_buf_log_sz=16,dv_flow_en=1,dv_esw_en=1"),
-#endif
 #else
         strdup("-a"),
         strdup("0000:16:00.0"),

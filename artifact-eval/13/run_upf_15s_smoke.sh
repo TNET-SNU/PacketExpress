@@ -51,7 +51,7 @@ trap cleanup EXIT INT TERM
 
 # Prime sudo once (run_upfN.sh uses `sudo -n` internally; this box needs a
 # password). No-op when already root / passwordless sudo.
-sudo -v >/dev/null
+sudo -n -v >/dev/null 2>&1 || true
 
 # 1. Launch run_upf<variant>.sh. It exec's `bessd<variant> -f` in the
 #    foreground, so bessd's "[ TOTAL ] ... Gbps" output lands in BESSD_LOG.

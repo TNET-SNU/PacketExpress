@@ -47,7 +47,7 @@ trap cleanup EXIT INT TERM
 
 # Prime sudo once (this box needs a password; primes the cache so the `sudo -n`
 # calls below succeed). No-op when already root.
-sudo -v >/dev/null
+sudo -n -v >/dev/null 2>&1 || true
 
 # 1. Launch nat<variant> from NAT_DIR, line-buffered (stdbuf) so its
 #    "[ TOTAL ] ... Gbps" lines reach the log promptly.

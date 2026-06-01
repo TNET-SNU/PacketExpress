@@ -29,7 +29,7 @@ echo "[INFO] ${BESSD_NAME} setup started at $(date)" >&2
 #    below uses `sudo -n` (non-interactive, never prompts). `sudo -v` prompts
 #    once and caches the credential so the `sudo -n` calls succeed. No-op when
 #    already root or when passwordless sudo is configured (e.g. rapids0).
-sudo -v
+sudo -n -v >/dev/null 2>&1 || true
 
 # 1. Reset interfaces (best-effort).
 cd "$UPF_SCRIPT_DIR"

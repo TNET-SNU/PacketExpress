@@ -29,7 +29,7 @@ echo "[INFO] ${DPVS_NAME} setup started at $(date)" >&2
 
 # 0. Prime sudo (this box needs a password; primes the cache so the later
 #    `sudo -n` calls below succeed). No-op when already root.
-sudo -v
+sudo -n -v >/dev/null 2>&1 || true
 
 # 1. Kill stale ${DPVS_NAME}.
 sudo -n pkill -KILL -x "${DPVS_NAME}" >/dev/null 2>&1 || true

@@ -3,6 +3,7 @@
 This figure shows the throughputs of PXGW, PXGW-hdr-only, and a baseline based on DPDK GRO. Simply running all-in-one.sh would work.
 
 ```Bash
+cd ~/PacketExpress/artifact-eval/9a
 ./all-in-one.sh
 ```
 
@@ -22,4 +23,18 @@ summary_txt=/home/junghan/PacketExpress/artifact-eval/9a/pxgw_15s_summary.txt
 raw_dir=/home/junghan/PacketExpress/artifact-eval/9a/raw_15s_results_20260527_041536
 ```
 
-If some values are N/A or 0, go to upper directory and reset the machine using bmc-reset.sh script. After 10 minutes, run other scripts; cpu-freq-setup.sh, ddio-setup.sh, hugepages-setup.sh.
+
+## How it works
+
+PXGW runs on **rapids1**. Bidirectional (`iperf -d`) TCP traffic flows between four
+endpoint pairs — stream1↔stream2, stream3↔stream4, stream10↔stream6,
+stream7↔stream8 — at 100 streams per direction, i.e. 200 flows per pair and
+**800 flows in total**.
+
+**Monitoring**
+
+- Per-endpoint traffic: SSH to each stream host as `junghan` and run `nload ens2np0`.
+- rapids1 CPU usage: `htop`. rapids1 drives the NIC with DPDK, so its own traffic does **not** show up in `nload`.
+- Header-only mode / memory-bandwidth savings: on rapids1, `sudo ~/pcm/build/bin/pcm-memory/`. For the header-only PXGW you should see the **memory bandwidth stay far below the link bandwidth** — it forwards packet headers without touching the payload, so it barely consumes memory bandwidth.
+
+If some values are N/A or 0, refer to the [top-level README](../README.md).

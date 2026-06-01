@@ -153,7 +153,7 @@ run_udp_case() {
 
 trap cleanup_all EXIT INT TERM
 
-sudo -v >/dev/null
+sudo -n -v >/dev/null 2>&1 || true
 
 if [[ ! -x "$PXGW_BIN" ]]; then
   echo "ERROR: missing or non-executable $PXGW_BIN" >&2

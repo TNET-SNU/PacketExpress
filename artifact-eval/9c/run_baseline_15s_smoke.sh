@@ -27,13 +27,13 @@ cleanup() {
     sleep 2
     sudo -n kill -TERM "$PXGW_PID" >/dev/null 2>&1 || true
     sleep 1
-    sudo -n kill -KIP1+r4632=1B5B32347E\P0+r2531\LL "$PXGW_PID" >/dev/null 2>&1 || true
+    sudo -n kill -KILL "$PXGW_PID" >/dev/null 2>&1 || true
   fi
 }
 
 trap cleanup EXIT INT TERM
 
-sudo -v >/dev/null
+sudo -n -v >/dev/null 2>&1 || true
 
 sudo -n stdbuf -oL -eL ./baseline -c "$CORE_COUNT" > "$PXGW_LOG" 2>&1 &
 PXGW_PID=$!

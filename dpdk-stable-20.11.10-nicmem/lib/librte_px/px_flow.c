@@ -287,7 +287,7 @@ offload_all_flows(uint16_t port_id)
 
         /* create main traffic rule */
 #if VALIDATE_FLOW_RULE
-        if (px_latent_flow_validate(port_id,
+        if (rte_flow_validate(port_id,
                                     &attr,
                                     patterns,
                                     actions,
@@ -302,7 +302,7 @@ offload_all_flows(uint16_t port_id)
         }
 #endif
         hp_ctx->common_offload_rule[i] =
-            px_latent_flow_create(port_id,
+            rte_flow_create(port_id,
                                   &attr,
                                   patterns,
                                   actions,
@@ -392,7 +392,7 @@ offload_small_pkts(uint16_t port_id)
 
         /* create main traffic rule */
 #if VALIDATE_FLOW_RULE
-        if (px_latent_flow_validate(port_id,
+        if (rte_flow_validate(port_id,
                                     &attr,
                                     patterns,
                                     actions,
@@ -407,7 +407,7 @@ offload_small_pkts(uint16_t port_id)
         }
 #endif
         hp_ctx->common_offload_rule[i] =
-            px_latent_flow_create(port_id,
+            rte_flow_create(port_id,
                                   &attr,
                                   patterns,
                                   actions,
@@ -695,7 +695,7 @@ px_flow_create_offload_auto(uint16_t port_id,
 
     /* create main flow rule */
 #if VALIDATE_FLOW_RULE
-    if (px_latent_flow_validate(port_id,
+    if (rte_flow_validate(port_id,
                                 &attr,
                                 patterns,
                                 actions,
@@ -712,7 +712,7 @@ px_flow_create_offload_auto(uint16_t port_id,
 
     MEASURE(
         "px_latent_flow_create",
-        flow = px_latent_flow_create(port_id,
+        flow = rte_flow_create(port_id,
                                      &attr,
                                      patterns,
                                      actions,
@@ -840,7 +840,7 @@ px_flow_create_onload_auto(uint16_t port_id,
 
     /* create main flow rule */
 #if VALIDATE_FLOW_RULE
-    if (px_latent_flow_validate(port_id,
+    if (rte_flow_validate(port_id,
                                 &attr,
                                 patterns,
                                 actions,
@@ -857,7 +857,7 @@ px_flow_create_onload_auto(uint16_t port_id,
 
     MEASURE(
         "px_latent_flow_create",
-        flow = px_latent_flow_create(port_id,
+        flow = rte_flow_create(port_id,
                                      &attr,
                                      patterns,
                                      actions,

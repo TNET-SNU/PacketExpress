@@ -284,6 +284,9 @@ run_one_variant_once() {
     > "$log" 2>&1 < /dev/null &
 
   dpdk_pid="$!"
+  # Drop the background app from the job table so its SIGKILL during cleanup
+  # does not print a "Killed ..." job-control message to the terminal.
+  disown "$dpdk_pid" 2>/dev/null || disown 2>/dev/null || true
 
   sleep "$DPDK_INIT_SLEEP_SEC"
 
@@ -318,7 +321,7 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
-sudo -v >/dev/null 2>&1 || true
+sudo -n -v >/dev/null 2>&1 || true
 
 for mpps in "${RATES_MPPS[@]}"; do
   wo_result="$(run_one_variant_once "$mpps" "pxgw_hdr_only" "pxgw-hdr-only")"

@@ -36,14 +36,14 @@ cleanup_between_dpdk_runs() {
   cd "$AE_DIR" 2>/dev/null && ./kill_ae_iperf.sh >/dev/null 2>&1 || true
 
   sudo -n pkill -TERM -x pxgw >/dev/null 2>&1 || true
-  sudo -n pkill -TERM -f './pxgw' >/dev/null 2>&1 || true
-  sudo -n pkill -TERM -f 'pxgw' >/dev/null 2>&1 || true
+  sudo -n pkill -TERM -f './[p]xgw' >/dev/null 2>&1 || true
+  sudo -n pkill -TERM -f '[p]xgw' >/dev/null 2>&1 || true
 
   sleep 3
 
   sudo -n pkill -KILL -x pxgw >/dev/null 2>&1 || true
-  sudo -n pkill -KILL -f './pxgw' >/dev/null 2>&1 || true
-  sudo -n pkill -KILL -f 'pxgw' >/dev/null 2>&1 || true
+  sudo -n pkill -KILL -f './[p]xgw' >/dev/null 2>&1 || true
+  sudo -n pkill -KILL -f '[p]xgw' >/dev/null 2>&1 || true
 
   sleep "$DPDK_COOLDOWN_SEC"
 
@@ -56,7 +56,7 @@ setup_testbed_9000() {
     return 1
   fi
 
- P0+r2531\P0+r2638\P1+r6B62=7F\P0+r6B49\P1+r6B44=1B5B337E\P1+r6B68=1B4F48\P1+r4037=1B4F46\P1+r6B50=1B5B357E\P1+r6B4E=1B5B367E\ "$PX_ONE_ARM" 9000 >/dev/null 2>&1
+  "$PX_ONE_ARM" 9000 >/dev/null 2>&1
   sleep "$TESTBED_SETUP_SLEEP_SEC"
 }
 
@@ -109,21 +109,21 @@ cleanup() {
   cd "$AE_DIR" 2>/dev/null && ./kill_ae_iperf.sh >/dev/null 2>&1 || true
 
   sudo -n pkill -TERM -x pxgw >/dev/null 2>&1 || true
-  sudo -n pkill -TERM -f './pxgw' >/dev/null 2>&1 || true
-  sudo -n pkill -TERM -f 'pxgw' >/dev/null 2>&1 || true
+  sudo -n pkill -TERM -f './[p]xgw' >/dev/null 2>&1 || true
+  sudo -n pkill -TERM -f '[p]xgw' >/dev/null 2>&1 || true
 
   sleep 2
 
   sudo -n pkill -KILL -x pxgw >/dev/null 2>&1 || true
-  sudo -n pkill -KILL -f './pxgw' >/dev/null 2>&1 || true
-  sudo -n pkill -KILL -f 'pxgw' >/dev/null 2>&1 || true
+  sudo -n pkill -KILL -f './[p]xgw' >/dev/null 2>&1 || true
+  sudo -n pkill -KILL -f '[p]xgw' >/dev/null 2>&1 || true
 
   stty sane >/dev/null 2>&1 || true
 }
 
 trap cleanup EXIT INT TERM
 
-sudo -v >/dev/null 2>&1 || true
+sudo -n -v >/dev/null 2>&1 || true
 
 for parallel in "${PARALLELS[@]}"; do
   total_connections=$(( parallel * 8 ))

@@ -23,14 +23,14 @@ cleanup_between_dpdk_runs() {
   ./kill_ae_iperf.sh >/dev/null 2>&1 || true
 
   sudo -n pkill -TERM -x pxgw >/dev/null 2>&1 || true
-  sudo -n pkill -TERM -f './pxgw' >/dev/null 2>&1 || true
-  sudo -n pkill -TERM -f 'pxgwP0+r4B33\P0+r4B34\P0+r4B35\P0+r6B42\' >/dev/null 2>&1 || true
+  sudo -n pkill -TERM -f './[p]xgw' >/dev/null 2>&1 || true
+  sudo -n pkill -TERM -f '[p]xgw' >/dev/null 2>&1 || true
 
   sleep 3
 
   sudo -n pkill -KILL -x pxgw >/dev/null 2>&1 || true
-  sudo -n pkill -KILL -f './pxgw' >/dev/null 2>&1 || true
-  sudo -n pkill -KILL -f 'pxgw' >/dev/null 2>&1 || true
+  sudo -n pkill -KILL -f './[p]xgw' >/dev/null 2>&1 || true
+  sudo -n pkill -KILL -f '[p]xgw' >/dev/null 2>&1 || true
 
   sleep "$DPDK_COOLDOWN_SEC"
 }
@@ -89,7 +89,7 @@ run_one() {
   printf '%s\t%s' "${gbps:-N/A}" "${yield_pct:-N/A}"
 }
 
-sudo -v >/dev/null 2>&1 || true
+sudo -n -v >/dev/null 2>&1 || true
 
 for core in "${CORES[@]}"; do
   hdr_result="$(run_one "run_pxgw_hdr_only_15s_smoke.sh" "hdr_only" "$core")"

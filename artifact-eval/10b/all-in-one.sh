@@ -120,14 +120,14 @@ start_unlimited_800_flows() {
 
 cleanup_dpdk() {
   sudo -n pkill -TERM -x pxgw-hdr-only >/dev/null 2>&1 || true
-  sudo -n pkill -TERM -f './pxgw-hdr-only' >/dev/null 2>&1 || true
-  sudo -n pkill -TERM -f 'pxgw-hdr-only' >/dev/null 2>&1 || true
+  sudo -n pkill -TERM -f './[p]xgw-hdr-only' >/dev/null 2>&1 || true
+  sudo -n pkill -TERM -f '[p]xgw-hdr-only' >/dev/null 2>&1 || true
 
   sleep 2
 
   sudo -n pkill -KILL -x pxgw-hdr-only >/dev/null 2>&1 || true
-  sudo -n pkill -KILL -f './pxgw-hdr-only' >/dev/null 2>&1 || true
-  sudo -n pkill -KILL -f 'pxgw-hdr-only' >/dev/null 2>&1 || true
+  sudo -n pkill -KILL -f './[p]xgw-hdr-only' >/dev/null 2>&1 || true
+  sudo -n pkill -KILL -f '[p]xgw-hdr-only' >/dev/null 2>&1 || true
 
   sleep "$DPDK_COOLDOWN_SEC"
 }
@@ -188,7 +188,7 @@ sample_latest_dpdk_line() {
 
 trap cleanup EXIT INT TERM
 
-sudo -v >/dev/null 2>&1 || true
+sudo -n -v >/dev/null 2>&1 || true
 
 if [[ ! -x "$HDR_ONLY_BIN" ]]; then
   printf 'ERROR: missing or non-executable %s\n' "$HDR_ONLY_BIN" >&2
@@ -203,6 +203,9 @@ sudo -n setsid stdbuf -oL -eL "$HDR_ONLY_BIN" -c "$CORE_COUNT" \
   > "$DPDK_LOG" 2>&1 < /dev/null &
 
 DPDK_PID="$!"
+# Drop the background app from the job table so its SIGKILL during cleanup
+# does not print a "Killed ..." job-control message to the terminal.
+disown "$DPDK_PID" 2>/dev/null || disown 2>/dev/null || true
 
 sleep "$DPDK_INIT_SLEEP_SEC"
 

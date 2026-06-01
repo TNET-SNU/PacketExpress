@@ -50,7 +50,7 @@ trap cleanup EXIT INT TERM
 
 # Prime sudo (this box needs a password; primes the cache so the `sudo -n`
 # calls below succeed). No-op when already root.
-sudo -v >/dev/null
+sudo -n -v >/dev/null 2>&1 || true
 
 # 1. Launch dpvs<variant> from the dpvs root (./src/dpvsN), line-buffered
 #    (stdbuf) so its "[ TOTAL ] ... Gbps" lines reach the log promptly.

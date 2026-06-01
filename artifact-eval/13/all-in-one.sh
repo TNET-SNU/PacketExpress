@@ -50,7 +50,7 @@ trap cleanup_final EXIT
 
 # Prime sudo once (the sweeps use `sudo -n` internally; this box needs a
 # password). No-op when already root / passwordless sudo.
-sudo -v >/dev/null 2>&1 || true
+sudo -n -v >/dev/null 2>&1 || true
 
 # 0. Remove SR-IOV VFs once, up front (best-effort). Leftover VFs get grabbed by
 #    DPDK and break app init; clearing them leaves only the PFs (eth0..eth3).

@@ -175,7 +175,7 @@ require_executable "${AE_DIR}/${IPERF_SCRIPT}"
 require_executable "${AE_DIR}/kill_ae_iperf.sh"
 require_executable "${AE_DIR}/${START_CLEAN_SCRIPT}"
 
-sudo -v >/dev/null 2>&1 || true
+sudo -n -v >/dev/null 2>&1 || true
 
 cleanup_between_runs
 

@@ -256,7 +256,7 @@ require_executable "${AE_DIR}/kill_endpoint_iperf.sh"
 require_executable "${AE_DIR}/run_endpoint_upf_nat_iperf.sh"
 require_executable "${AE_DIR}/kill_all_pxgw_hdr_only.sh"
 
-sudo -v >/dev/null
+sudo -n -v >/dev/null 2>&1 || true
 
 cleanup_local
 

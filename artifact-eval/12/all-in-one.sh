@@ -33,9 +33,9 @@ cleanup_local_dpdk() {
   sudo -n pkill -TERM -x gw-9000 >/dev/null 2>&1 || true
   sudo -n pkill -TERM -x pxgw >/dev/null 2>&1 || true
 
-  sudo -n pkill -TERM -f "${AE_DIR}/gw-1500 -c" >/dev/null 2>&1 || true
-  sudo -n pkill -TERM -f "${AE_DIR}/gw-9000 -c" >/dev/null 2>&1 || true
-  sudo -n pkill -TERM -f "${AE_DIR}/pxgw -c" >/dev/null 2>&1 || true
+  sudo -n pkill -TERM -f "${AE_DIR}/[g]w-1500 -c" >/dev/null 2>&1 || true
+  sudo -n pkill -TERM -f "${AE_DIR}/[g]w-9000 -c" >/dev/null 2>&1 || true
+  sudo -n pkill -TERM -f "${AE_DIR}/[p]xgw -c" >/dev/null 2>&1 || true
 
   sleep 2
 
@@ -43,9 +43,9 @@ cleanup_local_dpdk() {
   sudo -n pkill -KILL -x gw-9000 >/dev/null 2>&1 || true
   sudo -n pkill -KILL -x pxgw >/dev/null 2>&1 || true
 
-  sudo -n pkill -KILL -f "${AE_DIR}/gw-1500 -c" >/dev/null 2>&1 || true
-  sudo -n pkill -KILL -f "${AE_DIR}/gw-9000 -c" >/dev/null 2>&1 || true
-  sudo -n pkill -KILL -f "${AE_DIR}/pxgw -c" >/dev/null 2>&1 || true
+  sudo -n pkill -KILL -f "${AE_DIR}/[g]w-1500 -c" >/dev/null 2>&1 || true
+  sudo -n pkill -KILL -f "${AE_DIR}/[g]w-9000 -c" >/dev/null 2>&1 || true
+  sudo -n pkill -KILL -f "${AE_DIR}/[p]xgw -c" >/dev/null 2>&1 || true
 }
 
 cleanup() {
@@ -78,7 +78,7 @@ get_gbps() {
 
 trap cleanup EXIT INT TERM
 
-sudo -v >/dev/null
+sudo -n -v >/dev/null 2>&1 || true
 
 for item in "${RUNS[@]}"; do
   label="${item%%:*}"

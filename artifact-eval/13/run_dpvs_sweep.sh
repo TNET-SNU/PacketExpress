@@ -72,7 +72,7 @@ on_signal() {
 trap on_signal INT TERM
 
 # Prime sudo once (prompts for a password if needed; no-op when already root).
-sudo -v >/dev/null 2>&1 || true
+sudo -n -v >/dev/null 2>&1 || true
 
 for n in "${VARIANTS[@]}"; do
   echo "[INFO] === variant ${n} ===" >&2

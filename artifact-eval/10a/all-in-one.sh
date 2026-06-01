@@ -11,7 +11,7 @@ CORE_COUNT=8
 RUN_SEC="${RUN_SEC:-15}"
 DPDK_INIT_SLEEP_SEC="${DPDK_INIT_SLEEP_SEC:-30}"
 DPDK_COOLDOWN_SEC="${DPDK_COOLDOWN_SEC:-15}"
-TESTBED_SETUP_SLEEP_SEC="${TESTBED_SETUP_SLEEP_SEC:-3}"
+TESTBED_SETUP_SLEEP_SEC="${TESTBED_SETUP_SLEEP_SEC:-15}"
 
 PX_ONE_ARM="${AE_DIR}/px-one-arm.sh"
 
@@ -35,7 +35,6 @@ cleanup_between_dpdk_runs() {
 
   for v in "${VARIANTS[@]}"; do
     sudo -n pkill -TERM -x "$v" >/dev/null 2>&1 || true
-    sudo -n pkill -TERM -f "./$v" >/dev/null 2>&1 || true
   done
 
   sudo -n pkill -TERM -f 'baseline[0-6]' >/dev/null 2>&1 || true
@@ -44,7 +43,6 @@ cleanup_between_dpdk_runs() {
 
   for v in "${VARIANTS[@]}"; do
     sudo -n pkill -KILL -x "$v" >/dev/null 2>&1 || true
-    sudo -n pkill -KILL -f "./$v" >/dev/null 2>&1 || true
   done
 
   sudo -n pkill -KILL -f 'baseline[0-6]' >/dev/null 2>&1 || true
@@ -92,6 +90,9 @@ run_one_variant() {
     > "$dpdk_log" 2>&1 < /dev/null &
 
   dpdk_pid="$!"
+  # Drop the background app from the shell's job table so its eventual SIGKILL
+  # does not print a "Killed ..." job-control message to the terminal.
+  disown "$dpdk_pid" 2>/dev/null || disown 2>/dev/null || true
 
   sleep "$DPDK_INIT_SLEEP_SEC"
 
@@ -136,7 +137,6 @@ cleanup() {
 
   for v in "${VARIANTS[@]}"; do
     sudo -n pkill -TERM -x "$v" >/dev/null 2>&1 || true
-    sudo -n pkill -TERM -f "./$v" >/dev/null 2>&1 || true
   done
 
   sudo -n pkill -TERM -f 'baseline[0-6]' >/dev/null 2>&1 || true
@@ -145,7 +145,6 @@ cleanup() {
 
   for v in "${VARIANTS[@]}"; do
     sudo -n pkill -KILL -x "$v" >/dev/null 2>&1 || true
-    sudo -n pkill -KILL -f "./$v" >/dev/null 2>&1 || true
   done
 
   sudo -n pkill -KILL -f 'baseline[0-6]' >/dev/null 2>&1 || true
@@ -155,7 +154,7 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
-sudo -v >/dev/null 2>&1 || true
+sudo -n -v >/dev/null 2>&1 || true
 
 for variant in "${VARIANTS[@]}"; do
   run_one_variant "$variant"

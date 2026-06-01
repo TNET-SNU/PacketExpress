@@ -23,6 +23,15 @@ cleanup_final() {
   ./kill_remote_nfs.sh    > "${RAW_DIR}/final_kill_remote_nfs.log" 2>&1 || true
 }
 
+# Kill the nvmf_tgt app on rapids0; it competes for NIC/hugepage resources with
+# the NFs. PIDs are found via `ps -aux | grep nvmf` (excluding the grep itself);
+# nvmf_tgt runs as root, so kill via sudo (rapids0 allows /bin/kill NOPASSWD).
+kill_nvmf_rapids0() {
+  ssh -o BatchMode=yes -o ConnectTimeout=5 rapids0.snu.ac.kr \
+    "ps -aux | grep nvmf | grep -v grep | awk '{print \$2}' | xargs -r sudo -n /bin/kill -9" \
+    >/dev/null 2>&1 || true
+}
+
 on_signal() {
   trap - INT TERM
   echo "[INTERRUPTED] exiting (EXIT trap will run final cleanup)" >&2
@@ -32,7 +41,11 @@ on_signal() {
 trap on_signal     INT TERM
 trap cleanup_final EXIT
 
-sudo -v >/dev/null 2>&1 || true
+sudo -n -v >/dev/null 2>&1 || true
+
+# Stop nvmf_tgt on rapids0 before the NF sweeps so it does not steal resources.
+echo "[INFO] killing nvmf_tgt on rapids0"
+kill_nvmf_rapids0
 
 for i in "${!NFS[@]}"; do
   nf="${NFS[$i]}"

@@ -81,7 +81,7 @@ parse_result() {
 
 trap cleanup_all EXIT INT TERM
 
-sudo -v >/dev/null 2>&1 || true
+sudo -n -v >/dev/null 2>&1 || true
 
 if [[ ! -x "${AE_DIR}/${BINARY}" ]]; then
   echo "ERROR: missing or non-executable ${AE_DIR}/${BINARY}" >&2
