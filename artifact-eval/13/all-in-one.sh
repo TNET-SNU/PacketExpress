@@ -61,6 +61,14 @@ else
   echo "[WARN] ${REMOVE_VFS} not found/executable; skipping VF teardown" >&2
 fi
 
+# 0b. Set up the one-arm testbed on the stream endpoints (px-one-arm, MTU 9000).
+if [[ -x "${AE_DIR}/px-one-arm.sh" ]]; then
+  echo "[INFO] setting up stream endpoints via px-one-arm.sh"
+  "${AE_DIR}/px-one-arm.sh" >/dev/null 2>&1 || true
+else
+  echo "[WARN] ${AE_DIR}/px-one-arm.sh not found/executable; skipping endpoint setup" >&2
+fi
+
 # 1. Run each NF's sweep in turn.
 for i in "${!NFS[@]}"; do
   nf="${NFS[$i]}"
