@@ -66,4 +66,4 @@ cd ~/PacketExpress/artifact-eval
 6. 10c: 16 minutes
 7. 11: 35 minutes
 8. 12: 6 minutes
-9. 13: 30 minutes
+9. 13: 33 minutes
