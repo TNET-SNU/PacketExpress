@@ -1116,7 +1116,9 @@ is_delay_needed(struct px_ctx *pctx,
     RTE_SET_USED(stash_cnt);
     uint32_t timeout_ns;
     /* get stochastic timeout */
-    timeout_ns = iat_get_timeout(entry,
+    timeout_ns = iat_get_timeout(pctx->port_id,
+                                 pctx->queue_id,
+                                 entry,
                                  data_len,
                                  orig_segsz,
                                  target_segsz,

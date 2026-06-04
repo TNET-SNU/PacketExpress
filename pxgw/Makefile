@@ -52,10 +52,10 @@ CFLAGS += -D HW_CSUM=1
 # Choose one of below
 
 # 1. Semantic test on (split uplink flows and merge downlink flows)
-CFLAGS += -D SEMANTIC_TEST=1
+# CFLAGS += -D SEMANTIC_TEST=1
 
 # 2. Semantic test off (merge all flows)
-# CFLAGS += -D SEMANTIC_TEST=0
+CFLAGS += -D SEMANTIC_TEST=0
 
 ################################################################################
 
@@ -142,10 +142,10 @@ CFLAGS += -D USE_LINK=0
 # Choose one of below
 
 # 1. Hairpin off
-CFLAGS += -D NUM_HAIRPIN_Q=0 -D HAIRPIN_POLICY=0
+# CFLAGS += -D NUM_HAIRPIN_Q=0 -D HAIRPIN_POLICY=0
 
 # 2. Hairpin on (1 queue, opt-out mode)
-# CFLAGS += -D NUM_HAIRPIN_Q=1 -D HAIRPIN_POLICY=1
+CFLAGS += -D NUM_HAIRPIN_Q=1 -D HAIRPIN_POLICY=1
 
 # 3. Hairpin on (1 queue, opt-in mode)
 # CFLAGS += -D NUM_HAIRPIN_Q=1 -D HAIRPIN_POLICY=2

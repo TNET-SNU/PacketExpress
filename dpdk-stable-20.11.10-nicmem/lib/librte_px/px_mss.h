@@ -37,7 +37,7 @@ struct px_mss_ctx
 struct flow_mss_entry
 {
     uint32_t mss;
-    uint64_t last_update;
+    uint32_t last_update;
 };
 /*----------------------------------------------------------------------------*/
 static inline void

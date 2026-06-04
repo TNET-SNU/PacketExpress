@@ -104,7 +104,14 @@ run_one_variant() {
   ./kill_ae_iperf.sh >/dev/null 2>&1 || true
 
   last_total_line="$(
-    LC_ALL=C grep -a -E '^\[ TOTAL \]' "$dpdk_log" | tail -n 1 || true
+    LC_ALL=C grep -a -E '^\[ TOTAL \]' "$dpdk_log" |
+      LC_ALL=C awk '
+        { for (i=1;i<=NF;i++) if ($i=="Gbps") { v=$(i-1)+0; if (v>0) { g[n]=v; L[n]=$0; n++ } } }
+        END {
+          if (n==0) exit
+          for (a=0;a<n;a++) for (b=a+1;b<n;b++) if (g[b]<g[a]) { t=g[a];g[a]=g[b];g[b]=t; q=L[a];L[a]=L[b];L[b]=q }
+          print L[int(n/2)]
+        }' || true
   )"
 
   if [[ -n "$last_total_line" ]]; then

@@ -523,7 +523,7 @@ int mss_search_entry(uint16_t port_id,
 
     /* Update time and return the MSS */
     *mss = entry->mss;
-    entry->last_update = now_ns;
+    entry->last_update = now_ns >> 32;
 
     return 0;
 }
@@ -623,7 +623,7 @@ int mss_insert_entry(uint16_t port_id,
 
     /* fill entry */
     entry->mss = mss;
-    entry->last_update = now_ns;
+    entry->last_update = now_ns >> 32;
 
     /* insert into the hash table */
     int ret2 = rte_hash_add_key_data(ctx->tbl, key, entry);
@@ -844,7 +844,7 @@ void mss_flush_timeout(uint16_t port_id,
     {
         entry = (struct flow_mss_entry *)next_data;
 
-        if ((now_ns - entry->last_update) >
+        if ((now_ns - ((uint64_t)entry->last_update << 32)) >
             (uint64_t)MSS_TIMEOUT * NS_PER_S)
         {
             /* Remove the entry from the hash table */

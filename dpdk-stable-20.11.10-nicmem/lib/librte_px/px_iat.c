@@ -430,7 +430,7 @@ Try_lookup:
     /* try update first */
     if ((ret = rte_hash_lookup_data(ctx->tbl, key, (void **)&entry)) >= 0)
     {
-        entry->last_update = now_ns;
+        entry->last_update = now_ns >> 32;
 
         /* update IAT stats */
         if (!entry->last_timestamp)
@@ -472,12 +472,12 @@ Try_lookup:
 
     Skip_ewma_update:
         /* update throughput */
-        entry->bytes += pkt->pkt_len + ETHER_OVR;
+        entry->_64B_cnt += (pkt->pkt_len + ETHER_OVR) / BYTES_CNT_UNIT;
         if (is_tso(pkt))
         {
             /* consider duplicated headers after TSO */
-            entry->bytes += (CEIL_DIV(data_len, pkt->tso_segsz) - 1) *
-                            (get_hdr_len(pkt) + ETHER_OVR);
+            entry->_64B_cnt += (CEIL_DIV(data_len, pkt->tso_segsz) - 1) *
+                               (get_hdr_len(pkt) + ETHER_OVR) / BYTES_CNT_UNIT;
         }
 
         /* update the last timestamp */
@@ -510,13 +510,13 @@ Try_lookup:
         /* Fill the entry */
         entry->last_timestamp = ts;
         entry->avg_data_len = data_len;
-        entry->last_update = now_ns;
-        entry->bytes = pkt->pkt_len + ETHER_OVR;
+        entry->last_update = now_ns >> 32;
+        entry->_64B_cnt = (pkt->pkt_len + ETHER_OVR) / BYTES_CNT_UNIT;
         if (is_tso(pkt))
         {
             /* consider duplicated headers after TSO */
-            entry->bytes += (CEIL_DIV(data_len, pkt->tso_segsz) - 1) *
-                            (get_hdr_len(pkt) + ETHER_OVR);
+            entry->_64B_cnt += (CEIL_DIV(data_len, pkt->tso_segsz) - 1) *
+                               (get_hdr_len(pkt) + ETHER_OVR) / BYTES_CNT_UNIT;
         }
 
         /* Insert into the hash table */
@@ -626,12 +626,12 @@ void iat_periodic_update(uint16_t port_id,
         if (entry->avg_burst_iat < ctx->cutoff_ns * 1000)
         {
 #endif
-            if (entry->bytes * 8 > E6) // skip small flow (e.g., ACK-only < 1Mbps)
+            if (entry->_64B_cnt * 8 * BYTES_CNT_UNIT > E6) // skip small flow (e.g., ACK-only < 1Mbps)
             {
-                entry->global_avg_iat = entry->bytes
+                entry->global_avg_iat = entry->_64B_cnt
                                             ? (uint32_t)((float)ctx->emtu_size *
                                                          NS_PER_S /
-                                                         entry->bytes)
+                                                         (entry->_64B_cnt * BYTES_CNT_UNIT))
                                             : 0;
                 /* aggregate stats */
                 temp_global_iat += entry->global_avg_iat;
@@ -655,8 +655,8 @@ void iat_periodic_update(uint16_t port_id,
                         entry->avg_burst_iat,
                         entry->avg_data_len,
 #endif
-                        iat_get_yield(entry),
-                        entry->bytes * 8 / E6);
+                        iat_get_yield(entry, ctx->imtu_size),
+                        (uint64_t)entry->_64B_cnt * 8 * BYTES_CNT_UNIT / E6);
                 if (entry->avg_data_len >= UINT16_MAX)
                 {
                     px_dump_tuple(next_key);
@@ -668,14 +668,9 @@ void iat_periodic_update(uint16_t port_id,
 #endif
 
         /* reset temporary fields for throughput */
-        entry->bytes = 0;
+        entry->_64B_cnt = 0;
 
         /* reset temporary fields for yield */
-        entry->_1_seg_cnt = 0;
-        entry->_2_seg_cnt = 0;
-        entry->_3_seg_cnt = 0;
-        entry->_4_seg_cnt = 0;
-        entry->_5_seg_cnt = 0;
         entry->iMTU_cnt = 0;
     }
 
@@ -951,10 +946,10 @@ int iat_update_entry(uint16_t port_id,
     }
 
     /* start IAT update */
-    entry->last_update = now_ns;
+    entry->last_update = now_ns >> 32;
 
     /* update throughput */
-    entry->bytes += add_val;
+    entry->_64B_cnt += add_val / BYTES_CNT_UNIT;
 
     /* calculate conversion yield */
     if (is_tcp(pkt))
@@ -974,26 +969,6 @@ int iat_update_entry(uint16_t port_id,
         {
             entry->iMTU_cnt++;
         }
-        else if (leftover > 4 * orig_segsz)
-        {
-            entry->_5_seg_cnt++;
-        }
-        else if (leftover > 3 * orig_segsz)
-        {
-            entry->_4_seg_cnt++;
-        }
-        else if (leftover > 2 * orig_segsz)
-        {
-            entry->_3_seg_cnt++;
-        }
-        else if (leftover > orig_segsz)
-        {
-            entry->_2_seg_cnt++;
-        }
-        else if (leftover > 128)
-        {
-            entry->_1_seg_cnt++;
-        }
     }
     else if (is_udp(pkt))
     {
@@ -1012,26 +987,6 @@ int iat_update_entry(uint16_t port_id,
         if (data_len > 5 * orig_segsz)
         {
             entry->iMTU_cnt++;
-        }
-        else if (data_len > 4 * orig_segsz)
-        {
-            entry->_5_seg_cnt++;
-        }
-        else if (data_len > 3 * orig_segsz)
-        {
-            entry->_4_seg_cnt++;
-        }
-        else if (data_len > 2 * orig_segsz)
-        {
-            entry->_3_seg_cnt++;
-        }
-        else if (data_len > orig_segsz)
-        {
-            entry->_2_seg_cnt++;
-        }
-        else if (data_len > 128)
-        {
-            entry->_1_seg_cnt++;
         }
     }
     else
@@ -1141,7 +1096,7 @@ void iat_flush_timeout(uint16_t port_id,
     {
         entry = (struct flow_iat_entry *)next_data;
 
-        if ((now_ns - entry->last_update) >
+        if ((now_ns - ((uint64_t)entry->last_update << 32)) >
             (uint64_t)IAT_TIMEOUT * NS_PER_S)
         {
             /* Remove the entry from the hash table */
@@ -1177,7 +1132,9 @@ void iat_flush_timeout(uint16_t port_id,
 }
 /*----------------------------------------------------------------------------*/
 uint32_t
-iat_get_timeout(struct flow_iat_entry *entry,
+iat_get_timeout(uint16_t port_id,
+                uint16_t queue_id,
+                struct flow_iat_entry *entry,
                 uint16_t data_len,
                 uint16_t orig_segsz,
                 uint16_t target_segsz,
@@ -1188,6 +1145,7 @@ iat_get_timeout(struct flow_iat_entry *entry,
 #if FIXED_TIMEOUT
     return FIXED_TIMEOUT;
 #else
+    struct px_iat_ctx *ctx = &g_iat_ctx[port_id][queue_id];
     const float *timeout_factor;
     uint32_t avg_iat = 0;
     uint32_t missing_segs_nb;
@@ -1217,14 +1175,14 @@ iat_get_timeout(struct flow_iat_entry *entry,
         return 0;
     }
 
-    if (iat_get_yield(entry) > PER_FLOW_YIELD_THRESHOLD)
+    if (iat_get_yield(entry, ctx->imtu_size) > PER_FLOW_YIELD_THRESHOLD)
     {
         /* already high yield flow, no need to delay */
         return 0;
     }
 
     /* try update first */
-    entry->last_update = now_ns;
+    entry->last_update = now_ns >> 32;
 
 #if USE_HW_RX_TIMESTAMP
     avg_iat = MIN(entry->avg_burst_iat, entry->global_avg_iat);

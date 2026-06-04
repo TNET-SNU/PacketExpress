@@ -28,6 +28,7 @@ extern "C"
 #define CMS_TPUT_THRESHOLD 100000000ULL // 0.8 Gbps in bytes per second
 #define IAT_UPDATE_INTERVAL 1000000000ULL /* 1s in ns */
 #define CMS_UPDATE_INTERVAL 100000000ULL /* 100ms in ns */
+#define BYTES_CNT_UNIT 64
 /*----------------------------------------------------------------------------*/
 /* Structure to encapsulate mempool and hash table */
 struct px_iat_ctx
@@ -67,18 +68,13 @@ struct flow_iat_entry
     uint32_t avg_burst_iat; /* avg. burst IAT (EWMA) */
     uint32_t avg_data_len;  /* avg. packet size (EWMA) */
 #endif
-    uint64_t bytes; // --> can be 4B if we use 64B unit
+    uint32_t _64B_cnt;
 
     /* calculate conversion yield in real time */
-    uint64_t _1_seg_cnt; //
-    uint64_t _2_seg_cnt; //
-    uint64_t _3_seg_cnt; //
-    uint64_t _4_seg_cnt; //
-    uint64_t _5_seg_cnt; //
-    uint64_t iMTU_cnt; // these 6 fields can be a single 4B iMTU_bytes with 64B unit
+    uint32_t iMTU_cnt;
 
     /* SW timestamp of this entry */
-    uint64_t last_update; // can be 28 bit (resolution: 22.9 seconds)
+    uint32_t last_update; // can be 28 bit (resolution: 22.9 seconds)
 };
 #if USE_HW_RX_TIMESTAMP
 /*----------------------------------------------------------------------------*/
@@ -164,21 +160,11 @@ get_rx_hw_timestamp(struct rte_mbuf *mbuf)
 #endif
 /*----------------------------------------------------------------------------*/
 static inline uint32_t
-iat_get_yield(struct flow_iat_entry *entry)
+iat_get_yield(struct flow_iat_entry *entry, uint32_t imtu_size)
 {
-    return (entry->_1_seg_cnt ||
-            entry->_2_seg_cnt ||
-            entry->_3_seg_cnt ||
-            entry->_4_seg_cnt ||
-            entry->_5_seg_cnt ||
-            entry->iMTU_cnt)
-               ? (uint32_t)((float)entry->iMTU_cnt * 6 /
-                            (entry->_1_seg_cnt * 1 +
-                             entry->_2_seg_cnt * 2 +
-                             entry->_3_seg_cnt * 3 +
-                             entry->_4_seg_cnt * 4 +
-                             entry->_5_seg_cnt * 5 +
-                             entry->iMTU_cnt * 6) *
+    return (entry->_64B_cnt)
+               ? (uint32_t)((float)entry->iMTU_cnt * imtu_size /
+                            (entry->_64B_cnt * BYTES_CNT_UNIT) *
                             100)
                : 0;
 }
@@ -223,7 +209,9 @@ void iat_flush_timeout(uint16_t port_id,
                        uint16_t queue_id,
                        uint64_t now_ns);
 /*----------------------------------------------------------------------------*/
-uint32_t iat_get_timeout(struct flow_iat_entry *entry,
+uint32_t iat_get_timeout(uint16_t port_id,
+                         uint16_t queue_id,
+                         struct flow_iat_entry *entry,
                          uint16_t data_len,
                          uint16_t orig_segsz,
                          uint16_t target_segsz,
