@@ -208,7 +208,7 @@ static int udp_reuseport_add_sock(struct sock *sk, struct udp_hslot *hslot)
 		    sk2->sk_family == sk->sk_family &&
 		    ipv6_only_sock(sk2) == ipv6_only_sock(sk) &&
 		    (udp_sk(sk2)->udp_port_hash == udp_sk(sk)->udp_port_hash) &&
-		    (sk2->sk_bound_dev_if == sk->sk_bound_dev_if) &&
+		    (sk2->sk_bound_dev_if == sk->sk_bound_dev_if) &P1+r4632=1B5B32347E\&
 		    sk2->sk_reuseport && uid_eq(uid, sock_i_uid(sk2)) &&
 		    inet_rcv_saddr_equal(sk, sk2, false)) {
 			return reuseport_add_sock(sk, sk2,
@@ -261,7 +261,7 @@ int udp_lib_get_port(struct sock *sk, unsigned short snum,
 			snum = first;
 			/*
 			 * Iterate on all possible values of snum for this hash.
-			 * Using steps of an odd multiple of UDP_HTABLE_SIZE
+			 * Using steps of an odd multiple of UDP_HTABLE_SIP0+r2531\P0+r2638\P1+r6B62=7F\P0+r6B49\P1+r6B44=1B5B337E\P1+r6B68=1B4F48\P1+r4037=1B4F46\P1+r6B50=1B5B357E\P1+r6B4E=1B5B367E\ZE
 			 * give us randomization and full range coverage.
 			 */
 			do {
@@ -1880,12 +1880,16 @@ int udp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int noblock,
 	int off, err, peeking = flags & MSG_PEEK;
 	int is_udplite = IS_UDPLITE(sk);
 	bool checksum_valid = false;
+	struct udp_sock *up = udp_sk(sk);
+	bool px_gro = false;
+	unsigned int px_run_start = 0, px_run_end = 0, px_gso = 0;
 
 	if (flags & MSG_ERRQUEUE)
 		return ip_recv_error(sk, msg, len, addr_len);
 
 try_again:
 #define PX_UDP
+#define PX_GRO_CNT_MAX 64	/* mirror of UDP_GRO_CNT_MAX in udp_offload.c */
 #ifndef PX_UDP
 	off = sk_peek_offset(sk, flags);
 	skb = __skb_recv_udp(sk, flags, noblock, &off, &err);
@@ -1896,65 +1900,169 @@ try_again:
 	copied = len;
 #else
 	off = 0;
-	if (!sk->sk_user_data)
-	{
-		/* this is new packet */
+	if (!up->px_skb) {
+		/* this is a new packet */
 		skb = __skb_recv_udp(sk, flags, noblock, &off, &err);
 		if (!skb)
 			return err;
 
-		if (ip_hdr(skb)->tos == 0x01)
-		{
-			sk->sk_user_data = skb;
-
-			/* parse segsz (u16) */
-			copied = ntohs(*(u16 *)skb->data);
-
-			/* pass segsz (u16) */
-			ulen = udp_skb_len(skb);
-
-			/* proceed by segsz field */
-			sk->sk_peek_off = sizeof(u16);
-
-			off = sizeof(u16);
-
-			if (ulen - off > copied)
-			{
-				/* more segments to come */
-				sk->sk_peek_off += copied;
-			}
-			else
-			{
-				/* last segment of this skb */
-				sk->sk_user_data = NULL;
-				sk->sk_peek_off = 0;
-			}
-		}
-		else
-		{
-			ulen = udp_skb_len(skb);
+		if (ip_hdr(skb)->tos != 0x01) {
+			/* normal UDP datagram */
+			ulen   = udp_skb_len(skb);
 			copied = len;
+			goto px_udp_after_parse;
+		}
+
+		/* PX-caravan: adopt the outer skb.  Skip on MSG_PEEK: under
+		 * peek __skb_recv_udp() leaves the skb on the queue, so we
+		 * must not also take ownership via px_skb (double free).
+		 */
+		if (!peeking) {
+			up->px_skb = skb;
+			up->px_off = 0;   /* start of first inner UDP header */
+		}
+	} else {
+		/* resume an in-progress outer skb */
+		skb = up->px_skb;
+	}
+
+	/* PX-caravan parsing at the current cursor */
+	unsigned int outer_ulen = udp_skb_len(skb); /* outer UDP payload length */
+	unsigned int seg_off    = up->px_skb ? up->px_off : 0;
+	struct udphdr uh_tmp;
+	const struct udphdr *uh;
+	unsigned int seg_tot, inner_ulen;
+
+	/* need at least an inner UDP header */
+	if (unlikely(seg_off + sizeof(struct udphdr) > outer_ulen)) {
+		/* malformed: drop state + drop skb */
+		up->px_skb = NULL;
+		up->px_off = 0;
+		kfree_skb(skb);
+		return -EINVAL;
+	}
+
+	/* safely read inner UDP header (works for non-linear skb) */
+	uh = skb_header_pointer(skb, seg_off, sizeof(uh_tmp), &uh_tmp);
+	if (unlikely(!uh)) {
+		up->px_skb = NULL;
+		up->px_off = 0;
+		kfree_skb(skb);
+		return -EINVAL;
+	}
+
+	seg_tot = ntohs(uh->len); /* includes inner UDP header */
+	if (unlikely(seg_tot < sizeof(struct udphdr) ||
+			seg_off + seg_tot > outer_ulen)) {
+		up->px_skb = NULL;
+		up->px_off = 0;
+		kfree_skb(skb);
+		return -EINVAL;
+	}
+
+	inner_ulen = seg_tot - sizeof(struct udphdr);
+
+	if (up->gro_enabled) {
+		/* (a) GRO gather path: coalesce a run of equal-length inner
+		* segments and present them to the app as a single
+		* SKB_GSO_UDP_L4 datagram.  The interleaved inner UDP headers
+		* are skipped at copy time (see the px_gro branch below), so
+		* userspace sees a header-less, gso_size-strided payload --
+		* byte-for-byte identical to a real RX-GRO'd packet.
+		*
+		* Run termination mirrors udp_gro_receive_segment():
+		*   - equal length        -> keep coalescing
+		*   - shorter than gso     -> include as the final segment
+		*   - longer than gso      -> stop, start a new datagram
+		*/
+		unsigned int cursor = seg_off;
+		unsigned int total  = 0;
+		unsigned int nsegs  = 0;
+
+		px_gso = inner_ulen;   /* gso_size = first segment payload */
+
+		while (cursor + sizeof(struct udphdr) <= outer_ulen) {
+			struct udphdr ih;
+			const struct udphdr *p;
+			unsigned int stot, pl;
+
+			p = skb_header_pointer(skb, cursor, sizeof(ih), &ih);
+			if (unlikely(!p))
+				break;
+			stot = ntohs(p->len);
+			if (unlikely(stot < sizeof(struct udphdr) ||
+					cursor + stot > outer_ulen))
+				break;
+			pl = stot - sizeof(struct udphdr);
+
+			if (nsegs && pl > px_gso)
+				break;   /* longer than gso_size: new datagram */
+
+			total  += pl;
+			nsegs  += 1;
+			cursor += stot;
+
+			if (pl < px_gso)
+				break;   /* shorter: last segment of this run */
+			if (nsegs >= PX_GRO_CNT_MAX)
+				break;
+		}
+
+		/* validate the whole outer payload once, then plain-copy */
+		if (!udp_skb_csum_unnecessary(skb)) {
+			if (__udp_lib_checksum_complete(skb))
+				goto csum_copy_err;
+		}
+		checksum_valid = true;
+
+		/* make udp_cmsg_recv() emit the UDP_GRO (gso_size) cmsg */
+		skb_shinfo(skb)->gso_type |= SKB_GSO_UDP_L4;
+		skb_shinfo(skb)->gso_size  = px_gso;
+		skb_shinfo(skb)->gso_segs  = nsegs;
+
+		px_gro       = true;
+		px_run_start = seg_off;
+		px_run_end   = cursor;
+
+		ulen   = total;   /* app-visible payload (headers stripped) */
+		copied = len;
+		off    = 0;
+
+		if (!peeking) {
+			if (cursor < outer_ulen) {
+				up->px_off = cursor;   /* more segments remain */
+			} else {
+				up->px_skb = NULL;
+				up->px_off = 0;
+			}
+		}
+	} else {
+		/* (b) partial-copy path: expose one inner payload per recvmsg */
+		unsigned int new_peek_off;
+
+		ulen   = inner_ulen;
+		copied = len;
+		off    = seg_off + sizeof(struct udphdr);
+
+		if (copied > ulen)
+			copied = ulen;
+		else if (copied < ulen)
+			msg->msg_flags |= MSG_TRUNC;
+
+		/* advance to next segment only if not peeking */
+		new_peek_off = seg_off + seg_tot;
+		if (!peeking) {
+			if (new_peek_off < outer_ulen) {
+				up->px_off = new_peek_off;
+			} else {
+				/* finished this outer skb */
+				up->px_skb = NULL;
+				up->px_off = 0;
+			}
 		}
 	}
-	else
-	{
-		/* this is in-process packet */
-		skb = sk->sk_user_data;
-		copied = ntohs(*(u16 *)skb->data);
-		off = sk->sk_peek_off;
-		ulen = udp_skb_len(skb);
-		if (ulen - off > copied)
-		{
-			/* more segments to come */
-			sk->sk_peek_off += copied;
-		}
-		else
-		{
-			/* last segment of this skb */
-			sk->sk_user_data = NULL;
-			sk->sk_peek_off = 0;
-		}
-	}
+
+px_udp_after_parse:
 #endif
 
 	if (copied > ulen - off)
@@ -1977,7 +2085,38 @@ try_again:
 	}
 
 	if (checksum_valid || udp_skb_csum_unnecessary(skb)) {
-		if (udp_skb_is_linear(skb))
+		if (px_gro) {
+			/* Gather inner payloads into a contiguous buffer,
+			 * skipping the interleaved inner UDP headers.  The
+			 * iterator in msg advances across calls, so the app
+			 * sees [payload1][payload2]... with no inner headers.
+			 * 'copied' is already capped to the user buffer above.
+			 */
+			unsigned int c = px_run_start;
+			unsigned int remaining = copied;
+
+			err = 0;
+			while (c < px_run_end && remaining) {
+				struct udphdr ih;
+				const struct udphdr *p;
+				unsigned int stot, n;
+
+				p = skb_header_pointer(skb, c, sizeof(ih), &ih);
+				if (unlikely(!p)) {
+					err = -EINVAL;
+					break;
+				}
+				stot = ntohs(p->len);
+				n = min_t(unsigned int,
+					  stot - sizeof(struct udphdr), remaining);
+				err = skb_copy_datagram_msg(skb,
+						c + sizeof(struct udphdr), msg, n);
+				if (err)
+					break;
+				remaining -= n;
+				c += stot;
+			}
+		} else if (udp_skb_is_linear(skb))
 			err = copy_linear_skb(skb, copied, off, &msg->msg_iter);
 		else
 			err = skb_copy_datagram_msg(skb, off, msg, copied);
@@ -1989,6 +2128,11 @@ try_again:
 	}
 
 	if (unlikely(err)) {
+#ifdef PX_UDP
+		/* copy failed mid-caravan: drop the whole outer skb */
+		up->px_skb = NULL;
+		up->px_off = 0;
+#endif
 		if (!peeking) {
 			atomic_inc(&sk->sk_drops);
 			UDP_INC_STATS(sock_net(sk),
@@ -2026,12 +2170,17 @@ try_again:
 	if (flags & MSG_TRUNC)
 		err = ulen;
 #ifdef PX_UDP
-	if (!sk->sk_user_data && !peeking)
+	if (!up->px_skb && !peeking)
 #endif
 	skb_consume_udp(sk, skb, peeking ? -err : err);
 	return err;
 
 csum_copy_err:
+#ifdef PX_UDP
+	/* drop any half-consumed caravan together with this skb */
+	up->px_skb = NULL;
+	up->px_off = 0;
+#endif
 	if (!__sk_queue_drop_skb(sk, &udp_sk(sk)->reader_queue, skb, flags,
 				 udp_skb_destructor)) {
 		UDP_INC_STATS(sock_net(sk), UDP_MIB_CSUMERRORS, is_udplite);
@@ -2737,6 +2886,12 @@ void udp_destroy_sock(struct sock *sk)
 	/* protects from races with udp_abort() */
 	sock_set_flag(sk, SOCK_DEAD);
 	udp_flush_pending_frames(sk);
+	/* PX-caravan: free any outer skb held across recvmsg() calls */
+	if (up->px_skb) {
+		kfree_skb(up->px_skb);
+		up->px_skb = NULL;
+		up->px_off = 0;
+	}
 	unlock_sock_fast(sk, slow);
 	if (static_branch_unlikely(&udp_encap_needed_key)) {
 		if (up->encap_type) {
