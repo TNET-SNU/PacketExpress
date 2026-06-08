@@ -208,7 +208,7 @@ static int udp_reuseport_add_sock(struct sock *sk, struct udp_hslot *hslot)
 		    sk2->sk_family == sk->sk_family &&
 		    ipv6_only_sock(sk2) == ipv6_only_sock(sk) &&
 		    (udp_sk(sk2)->udp_port_hash == udp_sk(sk)->udp_port_hash) &&
-		    (sk2->sk_bound_dev_if == sk->sk_bound_dev_if) &P1+r4632=1B5B32347E\&
+		    (sk2->sk_bound_dev_if == sk->sk_bound_dev_if) &&
 		    sk2->sk_reuseport && uid_eq(uid, sock_i_uid(sk2)) &&
 		    inet_rcv_saddr_equal(sk, sk2, false)) {
 			return reuseport_add_sock(sk, sk2,
@@ -261,7 +261,7 @@ int udp_lib_get_port(struct sock *sk, unsigned short snum,
 			snum = first;
 			/*
 			 * Iterate on all possible values of snum for this hash.
-			 * Using steps of an odd multiple of UDP_HTABLE_SIP0+r2531\P0+r2638\P1+r6B62=7F\P0+r6B49\P1+r6B44=1B5B337E\P1+r6B68=1B4F48\P1+r4037=1B4F46\P1+r6B50=1B5B357E\P1+r6B4E=1B5B367E\ZE
+			 * Using steps of an odd multiple of UDP_HTABLE_SIZE
 			 * give us randomization and full range coverage.
 			 */
 			do {
