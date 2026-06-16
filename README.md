@@ -1,4 +1,9 @@
 # PacketExpress
+
+<p align="center">
+  <img width="800" src="https://github.com/user-attachments/assets/d72ece06-53a6-4fac-9e09-b423ec365ee5">
+</p>
+
 This repository provides the implementation of PacketExpress library and its applications (e.g., Gateway, NAT, L4LB, or UPF). PacketExpress (PX) provides APIs for efficient packet I/O using several techniques based on LRO and GRO.
 Most of the main logic is implemented as a DPDK library. Take a look.
 
