@@ -102,7 +102,7 @@ start_udp_client() {
   local case_name="$1"
 
   ssh "${SSH_OPTS[@]}" "$SEND_HOST" \
-    "nohup bash -lc 'iperf -u -c ${TARGET_IP} -t100 -i1 -b1.1G -l1472 -P9 | grep SUM' \
+    "nohup bash -lc 'iperf -u -c ${TARGET_IP} -t100 -i1 -b1.1G -l1472 -P10 | grep SUM' \
      > /tmp/ae12_${case_name}_client.log 2>&1 < /dev/null &" \
     >/dev/null 2>&1
 }
