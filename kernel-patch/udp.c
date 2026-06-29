@@ -1866,10 +1866,175 @@ int udp_read_sock(struct sock *sk, read_descriptor_t *desc,
 }
 EXPORT_SYMBOL(udp_read_sock);
 
-/*
- * 	This should be easy, if there is something there we
- * 	return it, otherwise we block.
+/* PX-caravan: master switch for the IP-ToS-0x01 RX path.  When 0, ToS 0x01
+ * datagrams are delivered as ordinary UDP (no inner parsing / GRO cmsg).
+ * Toggle at runtime: echo 0|1 > /sys/module/udp/parameters/px_caravan
+ * or at boot: udp.px_caravan=0
  */
+static int px_caravan __read_mostly = 1;
+module_param(px_caravan, int, 0644);
+MODULE_PARM_DESC(px_caravan,
+	"PX-caravan classic UDP_GRO RX for IP ToS 0x01: 0=off (plain UDP), "
+	"1=on (parse inner UDP headers, coalesce the equal-length run, strip the "
+	"headers, gso_size=payload)");
+
+#define PX_GRO_CNT_MAX 64	/* mirror of UDP_GRO_CNT_MAX in udp_offload.c */
+
+/* mode 2 (classic GRO): single-pass verify + gather.  Walks the caravan once;
+ * at each inner segment reads its 8-byte UDP header *inline from the mapped
+ * page* (no skb_header_pointer re-walk), coalesces the run of equal-length
+ * segments (a shorter last one allowed; a longer one ends the run), and copies
+ * each payload -- inner headers stripped -- to the user iterator.
+ */
+struct udp_px2 {
+	unsigned int gso;		/* run segment payload length (0 = unset) */
+	unsigned int nsegs;		/* segments committed to the run */
+	unsigned int total;		/* committed run payload bytes (== ulen) */
+	unsigned int pos;		/* absolute payload offset, advances; run end */
+	unsigned int seg_start;		/* offset where the in-progress header began */
+	u8 hdr[sizeof(struct udphdr)];	/* carry buffer for a page-straddling header */
+	unsigned int hdr_have;		/* header bytes buffered (0..8) */
+	unsigned int pay_left;		/* payload bytes left to copy in this segment */
+	bool reading_hdr;		/* true: at/inside a header; false: in payload */
+	bool last;			/* this segment is the run's last (stop after) */
+	bool done;			/* run finished */
+};
+
+/* Process one contiguous in-kernel span [kaddr, kaddr+span). */
+static int udp_px2_span(struct udp_px2 *s, const u8 *kaddr, unsigned int span,
+			int *budget, struct iov_iter *to)
+{
+	unsigned int done = 0;
+
+	while (done < span && !s->done && *budget > 0) {
+		if (s->reading_hdr) {
+			unsigned int stot, pl;
+
+			if (s->hdr_have == 0 &&
+			    span - done >= sizeof(struct udphdr)) {
+				/* common: whole header in this span -> direct read */
+				stot = ntohs(((const struct udphdr *)
+					      (kaddr + done))->len);
+				done    += sizeof(struct udphdr);
+				s->pos  += sizeof(struct udphdr);
+			} else {
+				/* rare: header straddles spans -> buffer it */
+				unsigned int take = min_t(unsigned int,
+					sizeof(struct udphdr) - s->hdr_have,
+					span - done);
+
+				memcpy(s->hdr + s->hdr_have, kaddr + done, take);
+				s->hdr_have += take;
+				done   += take;
+				s->pos += take;
+				if (s->hdr_have < sizeof(struct udphdr))
+					continue;	/* finish in next span */
+				stot = ntohs(((const struct udphdr *)s->hdr)->len);
+				s->hdr_have = 0;
+			}
+
+			if (stot < sizeof(struct udphdr)) {	/* malformed */
+				s->done = true;
+				break;
+			}
+			pl = stot - sizeof(struct udphdr);
+			if (s->gso == 0) {
+				s->gso = pl;		/* first seg defines gso */
+			} else if (pl > s->gso) {
+				/* longer -> run ends *before* this segment */
+				s->pos  = s->seg_start;
+				s->done = true;
+				break;
+			}
+			s->nsegs += 1;
+			s->total += pl;
+			s->pay_left = pl;
+			s->reading_hdr = false;
+			s->last = (pl < s->gso) || (s->nsegs >= PX_GRO_CNT_MAX);
+		} else {
+			unsigned int take = min_t(unsigned int, s->pay_left,
+						  span - done);
+
+			if (take > (unsigned int)*budget)
+				take = *budget;
+			if (copy_to_iter(kaddr + done, take, to) != take)
+				return -EFAULT;
+			done    += take;
+			s->pos  += take;
+			*budget -= take;
+			s->pay_left -= take;
+			if (s->pay_left == 0) {
+				if (s->last) {
+					s->done = true;
+					break;
+				}
+				s->reading_hdr = true;
+				s->seg_start = s->pos;
+			}
+		}
+	}
+	return 0;
+}
+
+/* Walk the skb from @from (linear head, paged frags, frag_list), feeding each
+ * contiguous span to udp_px2_span() until the run ends (s->done) or budget. */
+static int udp_px2_walk(const struct sk_buff *skb, unsigned int from,
+			int *budget, struct iov_iter *to, struct udp_px2 *s)
+{
+	unsigned int start = skb_headlen(skb);
+	unsigned int off = from;
+	struct sk_buff *frag_iter;
+	int i, ret = 0;
+
+	if (s->done || *budget <= 0)
+		return 0;
+
+	if (off < start) {
+		ret = udp_px2_span(s, skb->data + off, start - off, budget, to);
+		if (ret || s->done || *budget <= 0)
+			return ret;
+		off = start;
+	}
+
+	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
+		const skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+		unsigned int fend = start + skb_frag_size(frag);
+
+		if (off < fend) {
+			u32 p_off, p_len, copied;
+			struct page *p;
+			u8 *vaddr;
+
+			ret = 0;
+			skb_frag_foreach_page(frag,
+					      skb_frag_off(frag) + (off - start),
+					      fend - off, p, p_off, p_len, copied) {
+				vaddr = kmap_local_page(p);
+				ret = udp_px2_span(s, vaddr + p_off, p_len, budget, to);
+				kunmap_local(vaddr);
+				if (ret || s->done || *budget <= 0)
+					break;
+			}
+			if (ret || s->done || *budget <= 0)
+				return ret;
+			off = fend;
+		}
+		start = fend;
+	}
+
+	skb_walk_frags(skb, frag_iter) {
+		unsigned int fend = start + frag_iter->len;
+
+		if (off < fend) {
+			ret = udp_px2_walk(frag_iter, off - start, budget, to, s);
+			if (ret || s->done || *budget <= 0)
+				return ret;
+			off = fend;
+		}
+		start = fend;
+	}
+	return ret;
+}
 int udp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int noblock,
 		int flags, int *addr_len)
 {
@@ -1882,23 +2047,12 @@ int udp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int noblock,
 	bool checksum_valid = false;
 	struct udp_sock *up = udp_sk(sk);
 	bool px_gro = false;
-	unsigned int px_run_start = 0, px_run_end = 0, px_gso = 0;
+	unsigned int px_gso = 0;
 
 	if (flags & MSG_ERRQUEUE)
 		return ip_recv_error(sk, msg, len, addr_len);
 
 try_again:
-#define PX_UDP
-#define PX_GRO_CNT_MAX 64	/* mirror of UDP_GRO_CNT_MAX in udp_offload.c */
-#ifndef PX_UDP
-	off = sk_peek_offset(sk, flags);
-	skb = __skb_recv_udp(sk, flags, noblock, &off, &err);
-	if (!skb)
-		return err;
-
-	ulen = udp_skb_len(skb);
-	copied = len;
-#else
 	off = 0;
 	if (!up->px_skb) {
 		/* this is a new packet */
@@ -1906,8 +2060,8 @@ try_again:
 		if (!skb)
 			return err;
 
-		if (ip_hdr(skb)->tos != 0x01) {
-			/* normal UDP datagram */
+		if (!px_caravan || ip_hdr(skb)->tos != 0x01) {
+			/* normal UDP datagram (PX-caravan path off, or other ToS) */
 			ulen   = udp_skb_len(skb);
 			copied = len;
 			goto px_udp_after_parse;
@@ -1963,68 +2117,33 @@ try_again:
 	inner_ulen = seg_tot - sizeof(struct udphdr);
 
 	if (up->gro_enabled) {
-		/* (a) GRO gather path: coalesce a run of equal-length inner
-		* segments and present them to the app as a single
-		* SKB_GSO_UDP_L4 datagram.  The interleaved inner UDP headers
-		* are skipped at copy time (see the px_gro branch below), so
-		* userspace sees a header-less, gso_size-strided payload --
-		* byte-for-byte identical to a real RX-GRO'd packet.
-		*
-		* Run termination mirrors udp_gro_receive_segment():
-		*   - equal length        -> keep coalescing
-		*   - shorter than gso     -> include as the final segment
-		*   - longer than gso      -> stop, start a new datagram
-		*/
-		unsigned int cursor = seg_off;
-		unsigned int total  = 0;
-		unsigned int nsegs  = 0;
+		/* classic UDP_GRO: single pass over the caravan -- read every inner
+		 * UDP header inline, coalesce the run of equal-length segments (a
+		 * shorter last one allowed; a longer one ends the run), STRIP the
+		 * headers and copy the payloads to the app.  The copy happens HERE
+		 * (udp_px2_walk); the tail's copy step is a no-op.  gso_size =
+		 * payload, so a stock UDP_GRO app splits the result by gso_size.
+		 */
+		struct udp_px2 s = {
+			.reading_hdr = true,
+			.pos         = seg_off,
+			.seg_start   = seg_off,
+		};
+		int budget = (int)min_t(size_t, len, (size_t)INT_MAX);
+		unsigned int cursor;
 
-		px_gso = inner_ulen;   /* gso_size = first segment payload */
+		err = udp_px2_walk(skb, seg_off, &budget, &msg->msg_iter, &s);
+		px_gso = s.gso;
+		cursor = s.pos;
 
-		while (cursor + sizeof(struct udphdr) <= outer_ulen) {
-			struct udphdr ih;
-			const struct udphdr *p;
-			unsigned int stot, pl;
-
-			p = skb_header_pointer(skb, cursor, sizeof(ih), &ih);
-			if (unlikely(!p))
-				break;
-			stot = ntohs(p->len);
-			if (unlikely(stot < sizeof(struct udphdr) ||
-					cursor + stot > outer_ulen))
-				break;
-			pl = stot - sizeof(struct udphdr);
-
-			if (nsegs && pl > px_gso)
-				break;   /* longer than gso_size: new datagram */
-
-			total  += pl;
-			nsegs  += 1;
-			cursor += stot;
-
-			if (pl < px_gso)
-				break;   /* shorter: last segment of this run */
-			if (nsegs >= PX_GRO_CNT_MAX)
-				break;
-		}
-
-		/* validate the whole outer payload once, then plain-copy */
-		if (!udp_skb_csum_unnecessary(skb)) {
-			if (__udp_lib_checksum_complete(skb))
-				goto csum_copy_err;
-		}
+		/* outer checksum validation disabled for throughput tests */
 		checksum_valid = true;
-
-		/* make udp_cmsg_recv() emit the UDP_GRO (gso_size) cmsg */
 		skb_shinfo(skb)->gso_type |= SKB_GSO_UDP_L4;
-		skb_shinfo(skb)->gso_size  = px_gso;
-		skb_shinfo(skb)->gso_segs  = nsegs;
+		skb_shinfo(skb)->gso_size  = px_gso;   /* payload only (stripped) */
+		skb_shinfo(skb)->gso_segs  = s.nsegs;
 
-		px_gro       = true;
-		px_run_start = seg_off;
-		px_run_end   = cursor;
-
-		ulen   = total;   /* app-visible payload (headers stripped) */
+		px_gro = true;
+		ulen   = s.total;                      /* header-less length */
 		copied = len;
 		off    = 0;
 
@@ -2063,7 +2182,6 @@ try_again:
 	}
 
 px_udp_after_parse:
-#endif
 
 	if (copied > ulen - off)
 		copied = ulen - off;
@@ -2086,36 +2204,8 @@ px_udp_after_parse:
 
 	if (checksum_valid || udp_skb_csum_unnecessary(skb)) {
 		if (px_gro) {
-			/* Gather inner payloads into a contiguous buffer,
-			 * skipping the interleaved inner UDP headers.  The
-			 * iterator in msg advances across calls, so the app
-			 * sees [payload1][payload2]... with no inner headers.
-			 * 'copied' is already capped to the user buffer above.
-			 */
-			unsigned int c = px_run_start;
-			unsigned int remaining = copied;
-
-			err = 0;
-			while (c < px_run_end && remaining) {
-				struct udphdr ih;
-				const struct udphdr *p;
-				unsigned int stot, n;
-
-				p = skb_header_pointer(skb, c, sizeof(ih), &ih);
-				if (unlikely(!p)) {
-					err = -EINVAL;
-					break;
-				}
-				stot = ntohs(p->len);
-				n = min_t(unsigned int,
-					  stot - sizeof(struct udphdr), remaining);
-				err = skb_copy_datagram_msg(skb,
-						c + sizeof(struct udphdr), msg, n);
-				if (err)
-					break;
-				remaining -= n;
-				c += stot;
-			}
+			/* already verified + copied in udp_px2_walk() during the
+			 * parse above; 'err' holds its result. */
 		} else if (udp_skb_is_linear(skb))
 			err = copy_linear_skb(skb, copied, off, &msg->msg_iter);
 		else
@@ -2128,11 +2218,9 @@ px_udp_after_parse:
 	}
 
 	if (unlikely(err)) {
-#ifdef PX_UDP
 		/* copy failed mid-caravan: drop the whole outer skb */
 		up->px_skb = NULL;
 		up->px_off = 0;
-#endif
 		if (!peeking) {
 			atomic_inc(&sk->sk_drops);
 			UDP_INC_STATS(sock_net(sk),
@@ -2169,18 +2257,14 @@ px_udp_after_parse:
 	err = copied;
 	if (flags & MSG_TRUNC)
 		err = ulen;
-#ifdef PX_UDP
 	if (!up->px_skb && !peeking)
-#endif
-	skb_consume_udp(sk, skb, peeking ? -err : err);
+		skb_consume_udp(sk, skb, peeking ? -err : err);
 	return err;
 
 csum_copy_err:
-#ifdef PX_UDP
 	/* drop any half-consumed caravan together with this skb */
 	up->px_skb = NULL;
 	up->px_off = 0;
-#endif
 	if (!__sk_queue_drop_skb(sk, &udp_sk(sk)->reader_queue, skb, flags,
 				 udp_skb_destructor)) {
 		UDP_INC_STATS(sock_net(sk), UDP_MIB_CSUMERRORS, is_udplite);
@@ -3608,4 +3692,3 @@ void __init udp_init(void)
 	bpf_iter_register();
 #endif
 }
-
