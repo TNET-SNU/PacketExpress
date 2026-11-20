@@ -2,6 +2,8 @@
 
 This figure shows the throughputs of PXGW, PXGW-hdr-only, and a baseline based on DPDK GRO. Simply running all-in-one.sh would work.
 
+To check step by step that PXGW works (start PXGW, start iperf, read the PXGW log, stop iperf), see [FUNCTIONALITY.md](FUNCTIONALITY.md).
+
 ```Bash
 cd ~/PacketExpress/artifact-eval/9a
 ./all-in-one.sh

@@ -28,7 +28,6 @@
 #include <rte_spinlock.h>
 #include <rte_eal_memconfig.h>
 #include <rte_mbuf_core.h>
-#include <rte_thread.h>
 #include <rte_lcore.h>
 #include <px.h>
 /*----------------------------------------------------------------------------*/

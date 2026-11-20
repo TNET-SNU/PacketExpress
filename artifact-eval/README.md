@@ -1,6 +1,13 @@
 # Artifact Evaluation
 This page is for the Artifact Evaluation of PacketExpress.
-First, log in to rapids1.snu.ac.kr on port 12789 as sigcomm26, using the SSH private key whose public key is registered on rapids1. To see the visual graphs, we recommend using X-window (X11 forwarding).
+PacketExpress needs NVIDIA ConnectX-7 400GbE NICs and a multi-host testbed, so all experiments run on our testbed.
+
+## Getting access
+1. Post your **SSH public key** (e.g., the contents of `~/.ssh/id_ed25519.pub`) as a HotCRP comment.
+2. We register the key on rapids1 and reply with the **password of the sigcomm26 account** in a HotCRP comment visible only to reviewers. You need it for `sudo -iu junghan` below.
+
+## Logging in
+First, log in to rapids1.snu.ac.kr on port 12789 as sigcomm26, using the SSH private key you registered above. To see the visual graphs, we recommend using X-window (X11 forwarding).
 
 ```bash
 # at your local machine
@@ -11,13 +18,16 @@ Then, switch to the junghan account and go to the /home/junghan/PacketExpress/ar
 
 ```bash
 # at rapids1, logged in as sigcomm26
-sudo -iu junghan # enter sigcomm26's password (announced in advance)
+sudo -iu junghan # enter sigcomm26's password (sent via HotCRP)
 # now you are junghan
 cd ~/PacketExpress/artifact-eval
 ```
 
 In this directory, each figure has its own directory.
 From 9a to 13, there are 9 figures provided by this AE.
+
+## Minimal working example
+Before running the full experiments, we recommend the step-by-step functionality check in [9a/FUNCTIONALITY.md](9a/FUNCTIONALITY.md). It starts PXGW, starts 800 TCP flows with iperf, shows what to look for in the PXGW log, and stops everything (about 5 minutes).
 
 
 # Notes
@@ -41,7 +51,7 @@ ssh -p 12789 -Y sigcomm26@rapids1.snu.ac.kr
 
 ```bash
 # at rapids1, logged in as sigcomm26
-sudo -iu junghan # enter sigcomm26's password (announced in advance)
+sudo -iu junghan # enter sigcomm26's password (sent via HotCRP)
 cd ~/PacketExpress/artifact-eval
 ```
 
