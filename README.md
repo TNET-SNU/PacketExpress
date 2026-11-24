@@ -86,10 +86,11 @@ To adapt this to your environment, the minimum is one client, one server, and on
    cd build
    ninja
    ```
-5. Install DPDK system wide. This step is required: PX GW, mOS, and PX NAT find the DPDK headers and libraries in /usr/local.
+5. Install DPDK system wide. This step is required: PX GW, BESS (PX UPF), mOS (PX NAT), and DPVS (PX L4LB) find the DPDK headers and libraries in /usr/local.
    ```Bash
    sudo ninja install
    sudo ldconfig
+   pkg-config --modversion libdpdk   # should print 20.11.10
    ```
 
 ## Configuring and building PX GW
@@ -114,7 +115,7 @@ To adapt this to your environment, the minimum is one client, one server, and on
 Our prototype UPF is implemented as modular network functions on BESS. So, build BESS first.
 1. Configure bess/core/Makefile to turn on LRO and GRO.
 2. Modify BDF codes of PCIe devices in bess/core/dpdk.cc
-3. Run below for data plane (It will build and install DPDK in bess/deps/, and run "make -j" on bess/core/)
+3. Run below for data plane (It runs "make -j" on bess/core/ against the system-wide DPDK installed above. It does not build DPDK in bess/deps/, which would not include the PX library.)
    ```Bash
    cd $rootdir/bess
    ./build.py
